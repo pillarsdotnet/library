@@ -1,7 +1,8 @@
 'use strict';
 
 const $ = (sel) => document.querySelector(sel);
-const api = (path, opts) => fetch('/api' + path, opts).then(async (r) => {
+// Relative to the document <base>, so the app works under any mount path (/library).
+const api = (path, opts) => fetch('api' + path, opts).then(async (r) => {
   if (!r.ok && r.status !== 204) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
   return r.status === 204 ? null : r.json();
 });

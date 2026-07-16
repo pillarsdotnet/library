@@ -1,16 +1,28 @@
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import db from './db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
+// Sub-path the whole app is served under, e.g. "/library". Empty = root.
+const BASE = (process.env.BASE_PATH || '').replace(/\/+$/, '');
 
 app.use(express.json());
-app.use(express.static(join(__dirname, 'public')));
+
+// Everything (UI + API) hangs off this router so it can be mounted under BASE.
+const router = express.Router();
+
+// Serve index.html with the right <base> href injected for the mount point,
+// so every relative asset/API URL resolves under BASE regardless of the host.
+const indexHtml = readFileSync(join(__dirname, 'public/index.html'), 'utf8');
+router.get('/', (_req, res) => res.type('html').send(indexHtml.replace('__BASE__', BASE)));
+
+router.use(express.static(join(__dirname, 'public'), { index: false }));
 // Serve the scanning library shipped via npm so the app works fully offline.
-app.use('/vendor/html5-qrcode', express.static(join(__dirname, 'node_modules/html5-qrcode')));
+router.use('/vendor/html5-qrcode', express.static(join(__dirname, 'node_modules/html5-qrcode')));
 
 const DEFAULT_THICKNESS_MM = 30; // fallback when estimating remaining shelf capacity
 
@@ -56,7 +68,7 @@ function update(table, id, data) {
 // ---------------------------------------------------------------------------
 // Books CRUD
 // ---------------------------------------------------------------------------
-app.get('/api/books', (req, res) => {
+router.get('/api/books', (req, res) => {
   const { q, status, room, genre, format, shelf_id } = req.query;
   const where = [];
   const params = {};
@@ -80,27 +92,27 @@ app.get('/api/books', (req, res) => {
   res.json(db.prepare(sql).all(params));
 });
 
-app.get('/api/books/:id', (req, res) => {
+router.get('/api/books/:id', (req, res) => {
   const book = db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id);
   if (!book) return res.status(404).json({ error: 'Not found' });
   res.json(book);
 });
 
-app.post('/api/books', (req, res) => {
+router.post('/api/books', (req, res) => {
   const data = pick(req.body, BOOK_COLS);
   if (!data.title) return res.status(400).json({ error: 'title is required' });
   const id = insert('books', data);
   res.status(201).json(db.prepare('SELECT * FROM books WHERE id = ?').get(id));
 });
 
-app.put('/api/books/:id', (req, res) => {
+router.put('/api/books/:id', (req, res) => {
   if (!db.prepare('SELECT id FROM books WHERE id = ?').get(req.params.id))
     return res.status(404).json({ error: 'Not found' });
   update('books', req.params.id, pick(req.body, BOOK_COLS));
   res.json(db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/books/:id', (req, res) => {
+router.delete('/api/books/:id', (req, res) => {
   const info = db.prepare('DELETE FROM books WHERE id = ?').run(req.params.id);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
   res.status(204).end();
@@ -113,13 +125,13 @@ function avgThickness() {
   return db.prepare('SELECT AVG(thickness_mm) AS t FROM books WHERE thickness_mm > 0').get().t || DEFAULT_THICKNESS_MM;
 }
 
-app.get('/api/shelves', (_req, res) => {
+router.get('/api/shelves', (_req, res) => {
   const avg = avgThickness();
   const shelves = db.prepare('SELECT * FROM shelves ORDER BY room, bookcase, label COLLATE NOCASE').all();
   res.json(shelves.map((s) => ({ ...s, ...shelfStats(s, avg) })));
 });
 
-app.get('/api/shelves/:id', (req, res) => {
+router.get('/api/shelves/:id', (req, res) => {
   const shelf = db.prepare('SELECT * FROM shelves WHERE id = ?').get(req.params.id);
   if (!shelf) return res.status(404).json({ error: 'Not found' });
   res.json({ ...shelf, ...shelfStats(shelf, avgThickness()) });
@@ -129,7 +141,7 @@ app.get('/api/shelves/:id', (req, res) => {
 // Body: { height_mm, width_mm, thickness_mm, book_id? }.
 // book_id lets an already-shelved book ignore its own spine when re-checking
 // its current shelf (otherwise it double-counts against the free width).
-app.post('/api/suggest-shelf', (req, res) => {
+router.post('/api/suggest-shelf', (req, res) => {
   const num = (v) => (v === '' || v == null ? null : Number(v));
   const h = num(req.body.height_mm);
   const w = num(req.body.width_mm);
@@ -177,21 +189,21 @@ app.post('/api/suggest-shelf', (req, res) => {
   });
 });
 
-app.post('/api/shelves', (req, res) => {
+router.post('/api/shelves', (req, res) => {
   const data = pick(req.body, SHELF_COLS);
   if (!data.label) return res.status(400).json({ error: 'label is required' });
   const id = insert('shelves', data);
   res.status(201).json(db.prepare('SELECT * FROM shelves WHERE id = ?').get(id));
 });
 
-app.put('/api/shelves/:id', (req, res) => {
+router.put('/api/shelves/:id', (req, res) => {
   if (!db.prepare('SELECT id FROM shelves WHERE id = ?').get(req.params.id))
     return res.status(404).json({ error: 'Not found' });
   update('shelves', req.params.id, pick(req.body, SHELF_COLS));
   res.json(db.prepare('SELECT * FROM shelves WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/shelves/:id', (req, res) => {
+router.delete('/api/shelves/:id', (req, res) => {
   // Books on this shelf become unshelved (ON DELETE SET NULL).
   const info = db.prepare('DELETE FROM shelves WHERE id = ?').run(req.params.id);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
@@ -230,7 +242,7 @@ function shelfStats(shelf, avgThickness) {
 // ---------------------------------------------------------------------------
 // Distinct values for autocomplete / filters.
 // ---------------------------------------------------------------------------
-app.get('/api/meta', (_req, res) => {
+router.get('/api/meta', (_req, res) => {
   const distinct = (table, col) =>
     db.prepare(`SELECT DISTINCT ${col} AS v FROM ${table} WHERE ${col} IS NOT NULL AND ${col} != '' ORDER BY v COLLATE NOCASE`)
       .all().map((r) => r.v);
@@ -247,7 +259,7 @@ app.get('/api/meta', (_req, res) => {
 // ---------------------------------------------------------------------------
 // ISBN lookup — merges Open Library and Google Books, incl. physical size.
 // ---------------------------------------------------------------------------
-app.get('/api/lookup/:isbn', async (req, res) => {
+router.get('/api/lookup/:isbn', async (req, res) => {
   const isbn = req.params.isbn.replace(/[^0-9Xx]/g, '');
   if (!isbn) return res.status(400).json({ error: 'invalid isbn' });
 
@@ -333,4 +345,6 @@ async function fetchGoogleBooks(isbn) {
   };
 }
 
-app.listen(PORT, () => console.log(`📚 Home Library running on http://localhost:${PORT}`));
+app.use(BASE || '/', router);
+
+app.listen(PORT, () => console.log(`📚 Home Library on http://localhost:${PORT}${BASE}/`));

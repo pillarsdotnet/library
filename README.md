@@ -56,10 +56,47 @@ npm start            # http://localhost:3000
 
 Environment variables:
 
-| Variable  | Default              | Purpose                          |
-|-----------|----------------------|----------------------------------|
-| `PORT`    | `3000`               | HTTP port                        |
-| `DB_PATH` | `./data/library.db`  | SQLite file location             |
+| Variable    | Default              | Purpose                                             |
+|-------------|----------------------|-----------------------------------------------------|
+| `PORT`      | `3000`               | HTTP port                                           |
+| `DB_PATH`   | `./data/library.db`  | SQLite file location                                |
+| `BASE_PATH` | `` (root)            | Sub-path to serve under, e.g. `/library`            |
+
+`BASE_PATH` makes the whole app (UI + API) live under a sub-path. The server
+injects a matching `<base href>` so every asset and API call is relative — the
+app works at `/` or under any prefix with no rebuild.
+
+### On the homelab Kubernetes cluster
+
+This repo is deployed to the k8s cluster and served at
+`http://homelab/library/` (also `http://10.0.0.2/library/` and
+`http://100.84.6.113/library/`). The manifests are in [`k8s/`](./k8s).
+
+Because the cluster has no image registry, ingress controller, or dynamic
+storage, the deployment:
+
+- runs the app as a Deployment pinned to the `homelab` node, with `BASE_PATH=/library`;
+- persists the SQLite DB on a node `hostPath` (`/var/lib/home-library`);
+- exposes it via a NodePort (`30800`);
+- is fronted by the node's existing nginx, which proxies `location /library/`
+  to the NodePort (see [`deploy/nginx-library.conf`](./deploy/nginx-library.conf)).
+
+Deploy / update:
+
+```bash
+# 1. Build and import the image into the homelab node's containerd (no registry):
+docker build -t library.local/home-library:1.0.0 .
+docker save library.local/home-library:1.0.0 | ssh homelab 'sudo ctr -n k8s.io images import -'
+
+# 2. Apply manifests:
+kubectl apply -f k8s/home-library.yaml
+
+# 3. (first time only) add the nginx proxy snippet to the homelab node and reload:
+#    see deploy/nginx-library.conf, then: sudo nginx -t && sudo systemctl reload nginx
+
+# Roll out a new image build (same tag) by restarting the deployment:
+kubectl -n home-library rollout restart deploy/home-library
+```
 
 ## ⚠️ Camera access needs HTTPS
 

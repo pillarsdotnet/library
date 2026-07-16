@@ -147,11 +147,13 @@ function renderShelfCard(s) {
       ${flags.length ? `<div class="badges">${flags.map((f) => `<span class="badge muted">${f}</span>`).join('')}</div>` : ''}
       <div class="shelf-actions">
         <button type="button" class="link" data-view="${s.id}">View books</button>
+        <button type="button" class="link" data-copy="${s.id}">Copy</button>
         <button type="button" class="link" data-edit="${s.id}">Edit</button>
       </div>
     </div>`;
 
   card.querySelector('[data-view]').onclick = () => viewShelfBooks(s.id);
+  card.querySelector('[data-copy]').onclick = () => openCopyShelf(s);
   card.querySelector('[data-edit]').onclick = () => openEditShelf(s);
   return card;
 }
@@ -278,6 +280,44 @@ function openEditShelf(shelf) {
   }
   DIM_FIELDS.forEach((f) => { if (shelfForm.elements[f]) shelfForm.elements[f].value = mmToUnit(shelf[f]); });
   shelfDialog.showModal();
+}
+
+// Duplicate a shelf's room/bookcase/dimensions/notes as a NEW shelf (books are
+// not copied) — handy for the many like-sized shelves in one bookcase.
+function openCopyShelf(shelf) {
+  editingShelfId = null;                 // null => save creates a new shelf
+  shelfForm.reset();
+  $('#shelfDialogTitle').textContent = 'Copy shelf';
+  $('#deleteShelfBtn').hidden = true;
+  for (const key of ['room', 'bookcase', 'notes']) {
+    if (shelfForm.elements[key]) shelfForm.elements[key].value = shelf[key] ?? '';
+  }
+  DIM_FIELDS.forEach((f) => { if (shelfForm.elements[f]) shelfForm.elements[f].value = mmToUnit(shelf[f]); });
+  shelfForm.elements.label.value = suggestCopyLabel(shelf);
+  shelfDialog.showModal();
+  shelfForm.elements.label.select();     // pre-select the name for quick editing
+}
+
+// Suggest a fresh, non-colliding label: bump a trailing number ("Shelf 1" ->
+// "Shelf 2"), otherwise append "copy". Only considers shelves in the same
+// room + bookcase so numbering restarts per bookcase.
+function suggestCopyLabel(shelf) {
+  const sameCase = (a, b) => (a || '') === (b || '');
+  const taken = new Set(shelvesCache
+    .filter((s) => sameCase(s.room, shelf.room) && sameCase(s.bookcase, shelf.bookcase))
+    .map((s) => s.label));
+
+  const m = String(shelf.label).match(/^(.*?)(\d+)(\D*)$/);
+  if (m) {
+    const [, prefix, num, suffix] = m;
+    let n = parseInt(num, 10) + 1;
+    let candidate = `${prefix}${n}${suffix}`;
+    while (taken.has(candidate)) candidate = `${prefix}${++n}${suffix}`;
+    return candidate;
+  }
+  let candidate = `${shelf.label} copy`;
+  for (let i = 2; taken.has(candidate); i++) candidate = `${shelf.label} copy ${i}`;
+  return candidate;
 }
 
 async function saveShelf(e) {

@@ -98,21 +98,28 @@ kubectl apply -f k8s/home-library.yaml
 kubectl -n home-library rollout restart deploy/home-library
 ```
 
-## ⚠️ Camera access needs HTTPS
+## HTTPS (for camera scanning)
 
-Browsers only allow camera access over **HTTPS** or on `localhost`. On your
-homelab, put the app behind a reverse proxy with TLS (Caddy, Traefik, or
-Nginx + Let's Encrypt / a Tailscale HTTPS cert) so scanning works from your
-phone. You can still add books by typing the ISBN or details manually over plain
-HTTP.
+Browsers only allow camera access over **HTTPS** or on `localhost`, so barcode
+scanning needs an HTTPS URL. This deployment uses a **Tailscale cert** via
+`tailscale serve`, which terminates TLS and proxies to the node's nginx:
 
-Example Caddyfile:
-
+```bash
+# One-time: enable "HTTPS Certificates" in the Tailscale admin console
+# (https://login.tailscale.com/admin/dns), then on the homelab node:
+sudo tailscale serve --bg --https=443 http://127.0.0.1:80
 ```
-library.yourdomain.com {
-    reverse_proxy localhost:3000
-}
-```
+
+Tailscale obtains and auto-renews the Let's Encrypt cert; no cron needed. The
+app is then available over HTTPS at:
+
+**https://homelab.dala-hue.ts.net/library/**  (reachable from any device on the tailnet)
+
+A Tailscale cert is only valid for the node's MagicDNS name, so the bare IPs
+(`10.0.0.2`, `100.84.6.113`) and the short name `homelab` stay on plain **HTTP**
+— fine for browsing on the LAN, but use the `ts.net` URL from your phone when you
+want to scan. Because Tailscale proxies to nginx over http, the nginx `/library`
+redirect uses `absolute_redirect off` so it preserves the client's scheme.
 
 ## API
 

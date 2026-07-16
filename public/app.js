@@ -449,9 +449,44 @@ async function startScanner() {
   } catch (err) {
     await teardownScanner();
     setScanUI('📷 Scan', null);
-    alert('Could not start the camera: ' + (err && err.message ? err.message : err) +
-      '\n\nOpen the app over HTTPS (e.g. https://homelab.dala-hue.ts.net/library/) and allow camera access.');
+    alert(scannerErrorHelp(err));
   }
+}
+
+// Turn a getUserMedia failure into advice that actually matches the situation
+// (the raw NotAllowedError, and iOS's Safari-only camera quirk, are confusing).
+function scannerErrorHelp(err) {
+  const ua = navigator.userAgent || '';
+  const iOS = /iP(ad|hone|od)/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const iOSNonSafari = iOS && /(CriOS|FxiOS|EdgiOS|OPiOS|GSA|DuckDuckGo)/i.test(ua);
+  // html5-qrcode wraps the DOMException, so the original type only survives in
+  // the message text — match against both name and message.
+  const hay = `${(err && err.name) || ''} ${(err && err.message) || ''}`;
+  const denied = /NotAllowedError|SecurityError|PermissionDenied/i.test(hay);
+  const notFound = /NotFoundError|OverconstrainedError|DevicesNotFound/i.test(hay);
+
+  if (!window.isSecureContext) {
+    return 'The camera needs a secure (HTTPS) connection. Open the app at ' +
+      'https://homelab.dala-hue.ts.net/library/ and try again.';
+  }
+  if (denied) {
+    if (iOSNonSafari) {
+      return 'On iPhone/iPad, camera scanning works reliably only in Safari — Chrome and ' +
+        'other browsers usually block it.\n\nOpen this page in Safari and tap “Allow”. ' +
+        '(To keep using Chrome instead, first enable Settings → Chrome → Camera.)';
+    }
+    if (iOS) {
+      return 'Camera access was blocked. On iPhone/iPad: tap “aA” in the address bar → ' +
+        'Website Settings → Camera → Allow (or Settings → Safari → Camera → Ask), make sure ' +
+        'Lockdown Mode is off, then reload and tap Allow.';
+    }
+    return 'Camera access was blocked. Allow camera permission for this site (address-bar / ' +
+      'site settings), then tap Scan again.';
+  }
+  if (notFound) {
+    return 'No usable camera was found on this device. You can type the ISBN in manually instead.';
+  }
+  return 'Could not start the camera: ' + (err && err.message ? err.message : err);
 }
 
 async function stopScanner() {

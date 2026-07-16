@@ -1,0 +1,7 @@
+#!/bin/sh
+# Run linters before every commit. Bypass with `git commit --no-verify`.
+echo "Running linters…"
+npm run lint || {
+  echo "\n✖ Lint failed. Fix the issues above (or run 'npm run lint:fix') before committing."
+  exit 1
+}

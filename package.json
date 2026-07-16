@@ -1,0 +1,31 @@
+{
+  "name": "home-library",
+  "version": "1.0.0",
+  "description": "Catalogue books in a private library with ISBN scanning, location tracking, and SQLite storage.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "lint": "npm run lint:js && npm run lint:css",
+    "lint:js": "eslint .",
+    "lint:css": "stylelint \"public/**/*.css\"",
+    "lint:fix": "eslint . --fix && stylelint \"public/**/*.css\" --fix",
+    "prepare": "git config core.hooksPath .githooks || true"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2",
+    "html5-qrcode": "^2.3.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "stylelint": "^16.12.0",
+    "stylelint-config-standard": "^36.0.1"
+  }
+}

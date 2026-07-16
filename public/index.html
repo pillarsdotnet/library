@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#6d4aa8" />
+  <title>Home Library</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+</head>
+<body>
+  <header>
+    <h1>📚 Home Library</h1>
+    <div class="header-actions">
+      <span id="count" class="count"></span>
+      <button id="unitToggle" class="unit-toggle" title="Toggle units">mm</button>
+      <button id="addBtn" class="primary">+ Add book</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="books">Books</button>
+    <button class="tab" data-tab="shelves">Shelves</button>
+  </nav>
+
+  <!-- ============ BOOKS TAB ============ -->
+  <div id="tab-books" class="tab-panel">
+    <section class="toolbar">
+      <input id="search" type="search" placeholder="Search title, author, ISBN, genre…" />
+      <select id="filterStatus">
+        <option value="">All statuses</option>
+        <option value="tbr">To be read</option>
+        <option value="reading">Reading</option>
+        <option value="read">Read</option>
+        <option value="loaned">Loaned out</option>
+      </select>
+      <select id="filterRoom"><option value="">All rooms</option></select>
+      <select id="filterGenre"><option value="">All genres</option></select>
+      <select id="filterShelf">
+        <option value="">All shelves</option>
+        <option value="none">Unshelved</option>
+      </select>
+    </section>
+
+    <main id="list" class="grid"></main>
+    <p id="empty" class="empty" hidden>No books yet. Tap <strong>+ Add book</strong> to scan or enter one.</p>
+  </div>
+
+  <!-- ============ SHELVES TAB ============ -->
+  <div id="tab-shelves" class="tab-panel" hidden>
+    <section class="toolbar">
+      <p class="hint grow">Model your shelves with real dimensions to see how full they are and what still fits.</p>
+      <button id="addShelfBtn" class="primary">+ Add shelf</button>
+    </section>
+    <main id="shelfList" class="grid"></main>
+    <p id="shelfEmpty" class="empty" hidden>No shelves yet. Add one to start tracking capacity.</p>
+  </div>
+
+  <!-- ============ BOOK DIALOG ============ -->
+  <dialog id="editDialog">
+    <form id="bookForm" method="dialog">
+      <div class="dialog-head">
+        <h2 id="dialogTitle">Add book</h2>
+        <button type="button" class="icon" id="closeDialog" aria-label="Close">✕</button>
+      </div>
+
+      <div class="scan-row">
+        <input id="isbn" name="isbn" placeholder="ISBN" inputmode="numeric" />
+        <button type="button" id="lookupBtn">Look up</button>
+        <button type="button" id="scanBtn" class="primary">📷 Scan</button>
+      </div>
+      <div id="scanner" hidden></div>
+      <p id="lookupMsg" class="msg" hidden></p>
+
+      <div class="cover-row">
+        <img id="coverPreview" alt="" hidden />
+        <div class="grow">
+          <label>Title <input name="title" required /></label>
+          <label>Author(s) <input name="authors" placeholder="Comma separated" /></label>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <label>Publisher <input name="publisher" /></label>
+        <label>Published <input name="published_date" /></label>
+        <label>Pages <input name="page_count" type="number" min="0" /></label>
+        <label>Cover URL <input name="cover_url" /></label>
+      </div>
+
+      <fieldset>
+        <legend>Physical</legend>
+        <div class="two-col">
+          <label>Format
+            <select name="format">
+              <option value="paperback">Paperback</option>
+              <option value="hardback">Hardback</option>
+              <option value="ebook">E-book</option>
+              <option value="audiobook">Audiobook</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label>Dust jacket
+            <select name="jacket">
+              <option value="na">N/A</option>
+              <option value="present">Present</option>
+              <option value="missing">Missing</option>
+            </select>
+          </label>
+        </div>
+        <div class="three-col">
+          <label>Height (<span class="unit">mm</span>) <input name="height_mm" type="number" step="any" min="0" data-dim /></label>
+          <label>Width (<span class="unit">mm</span>) <input name="width_mm" type="number" step="any" min="0" data-dim /></label>
+          <label>Spine / thickness (<span class="unit">mm</span>) <input name="thickness_mm" type="number" step="any" min="0" data-dim /></label>
+        </div>
+        <p class="hint">Height = upright height · Width = depth into shelf · Thickness = spine width (drives shelf capacity).</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Classification</legend>
+        <div class="two-col">
+          <label>Genre <input name="genre" list="genreList" /></label>
+          <label>Subgenre <input name="subgenre" list="subgenreList" /></label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Location</legend>
+        <div class="shelf-row">
+          <label class="grow">Shelf
+            <select name="shelf_id" id="shelfSelect"><option value="">— Unshelved —</option></select>
+          </label>
+          <button type="button" id="suggestBtn" title="Find the best shelf for this book's size">✨ Suggest</button>
+        </div>
+        <p id="fitWarning" class="msg err" hidden></p>
+        <div id="suggestResult" class="msg" hidden></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Status</legend>
+        <div class="two-col">
+          <label>Status
+            <select name="status" id="statusSelect">
+              <option value="tbr">To be read</option>
+              <option value="reading">Reading</option>
+              <option value="read">Read</option>
+              <option value="loaned">Loaned out</option>
+            </select>
+          </label>
+          <label id="loanedField" hidden>Loaned to <input name="loaned_to" /></label>
+        </div>
+        <label class="checkbox">
+          <input type="checkbox" name="is_library_book" id="isLibraryBook" />
+          This is a library book I have checked out
+        </label>
+        <div class="two-col" id="libraryFields" hidden>
+          <label>Library <input name="library_name" /></label>
+          <label>Due date <input name="due_date" type="date" /></label>
+        </div>
+      </fieldset>
+
+      <label>Notes <textarea name="notes" rows="2"></textarea></label>
+
+      <div class="dialog-actions">
+        <button type="button" id="deleteBtn" class="danger" hidden>Delete</button>
+        <span class="grow"></span>
+        <button type="button" id="cancelBtn">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ SHELF DIALOG ============ -->
+  <dialog id="shelfDialog">
+    <form id="shelfForm" method="dialog">
+      <div class="dialog-head">
+        <h2 id="shelfDialogTitle">Add shelf</h2>
+        <button type="button" class="icon" id="closeShelfDialog" aria-label="Close">✕</button>
+      </div>
+      <div class="two-col">
+        <label>Room <input name="room" list="roomList" /></label>
+        <label>Bookcase <input name="bookcase" list="bookcaseList" /></label>
+      </div>
+      <label>Shelf label <input name="label" required placeholder="e.g. Shelf 3 / Top left" /></label>
+      <fieldset>
+        <legend>Dimensions</legend>
+        <div class="three-col">
+          <label>Height (<span class="unit">mm</span>) <input name="height_mm" type="number" step="any" min="0" data-dim /></label>
+          <label>Width (<span class="unit">mm</span>) <input name="width_mm" type="number" step="any" min="0" data-dim /></label>
+          <label>Depth (<span class="unit">mm</span>) <input name="depth_mm" type="number" step="any" min="0" data-dim /></label>
+        </div>
+        <p class="hint">Width = usable horizontal run · Height = clearance · Depth = front-to-back.</p>
+      </fieldset>
+      <label>Notes <textarea name="notes" rows="2"></textarea></label>
+      <div class="dialog-actions">
+        <button type="button" id="deleteShelfBtn" class="danger" hidden>Delete</button>
+        <span class="grow"></span>
+        <button type="button" id="cancelShelfBtn">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <datalist id="roomList"></datalist>
+  <datalist id="bookcaseList"></datalist>
+  <datalist id="genreList"></datalist>
+  <datalist id="subgenreList"></datalist>
+
+  <script src="/vendor/html5-qrcode/html5-qrcode.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

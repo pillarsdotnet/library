@@ -223,6 +223,8 @@ dialog::backdrop { background: rgba(20, 15, 30, 0.55); }
 .scan-row input { flex: 1; }
 .scan-row button { white-space: nowrap; }
 #scanner { border-radius: 10px; overflow: hidden; }
+#scanner:not([hidden]) { min-height: 220px; background: #000; }
+#scanner video { width: 100% !important; height: auto !important; display: block; }
 
 .cover-row { display: flex; gap: 12px; align-items: flex-start; }
 #coverPreview { width: 72px; height: 108px; object-fit: cover; border-radius: 6px; }

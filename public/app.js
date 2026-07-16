@@ -174,6 +174,7 @@ function openAddBook() {
   $('#lookupMsg').hidden = true;
   $('#fitWarning').hidden = true;
   $('#suggestResult').hidden = true;
+  setScanUI('📷 Scan', null);
   syncBookFields();
   bookDialog.showModal();
   $('#isbn').focus();
@@ -194,6 +195,7 @@ function openEditBook(book) {
   showCover(book.cover_url);
   $('#lookupMsg').hidden = true;
   $('#suggestResult').hidden = true;
+  setScanUI('📷 Scan', null);
   syncBookFields();
   bookDialog.showModal();
 }
@@ -368,10 +370,30 @@ function setDimIfEmpty(name, mm) {
   if (f && mm != null && mm !== '' && !f.value) f.value = mmToUnit(mm);
 }
 
-async function toggleScanner() {
-  if (scanner) return stopScanner();
+// State machine so clicks during camera start-up/tear-down are ignored rather
+// than orphaning the stream (which used to break every scan after the first).
+let scanState = 'idle'; // idle | starting | running | stopping
+let pendingStop = false;
+
+function setScanUI(label, status) {
+  $('#scanBtn').textContent = label;
+  const s = $('#scanStatus');
+  if (status) { s.hidden = false; s.textContent = status; } else { s.hidden = true; }
+}
+
+function onScanButton() {
+  if (scanState === 'idle') startScanner();
+  else if (scanState === 'running') stopScanner();
+  // starting / stopping: ignore extra clicks
+}
+
+async function startScanner() {
+  if (scanState !== 'idle') return;
+  scanState = 'starting';
+  pendingStop = false;
   $('#scanner').hidden = false;
-  scanner = new Html5Qrcode('scanner');
+  setScanUI('…', 'Requesting camera — allow access if prompted.');
+  scanner = new Html5Qrcode('scanner', { verbose: false });
   const config = {
     fps: 10, qrbox: { width: 250, height: 150 },
     formatsToSupport: [
@@ -381,20 +403,41 @@ async function toggleScanner() {
   };
   try {
     await scanner.start({ facingMode: 'environment' }, config, onScan, () => {});
+    scanState = 'running';
+    setScanUI('■ Stop', 'Center the barcode in the box.');
+    if (pendingStop) stopScanner();   // dialog was closed while the camera was starting
   } catch (err) {
-    alert('Could not start camera: ' + err.message + '\nBrowsers require HTTPS (or localhost) for camera access.');
-    stopScanner();
+    await teardownScanner();
+    setScanUI('📷 Scan', null);
+    alert('Could not start the camera: ' + (err && err.message ? err.message : err) +
+      '\n\nOpen the app over HTTPS (e.g. https://homelab.dala-hue.ts.net/library/) and allow camera access.');
   }
 }
 
-function onScan(text) { $('#isbn').value = text.replace(/[^0-9Xx]/g, ''); stopScanner(); lookup(); }
-
 async function stopScanner() {
+  if (scanState === 'starting') { pendingStop = true; return; } // stop once start() resolves
+  if (scanState !== 'running') return;
+  scanState = 'stopping';
+  await teardownScanner();
+  setScanUI('📷 Scan', null);
+}
+
+// Stop the stream and dispose the instance, tolerating any half-started state.
+async function teardownScanner() {
   if (scanner) {
-    try { await scanner.stop(); } catch { /* already stopped */ }
-    scanner.clear(); scanner = null;
+    try { await scanner.stop(); } catch { /* wasn't running */ }
+    try { scanner.clear(); } catch { /* already cleared */ }
+    scanner = null;
   }
   $('#scanner').hidden = true;
+  scanState = 'idle';
+  pendingStop = false;
+}
+
+function onScan(text) {
+  if (scanState !== 'running') return;   // ignore late/duplicate decode callbacks
+  $('#isbn').value = text.replace(/[^0-9Xx]/g, '');
+  stopScanner().then(lookup);
 }
 
 // ---------------------------------------------------------------------------
@@ -511,7 +554,7 @@ $('#suggestBtn').addEventListener('click', suggestShelf);
 $('#closeDialog').addEventListener('click', closeBookDialog);
 $('#cancelBtn').addEventListener('click', closeBookDialog);
 $('#lookupBtn').addEventListener('click', lookup);
-$('#scanBtn').addEventListener('click', toggleScanner);
+$('#scanBtn').addEventListener('click', onScanButton);
 $('#deleteBtn').addEventListener('click', deleteBook);
 $('#statusSelect').addEventListener('change', syncBookFields);
 $('#isLibraryBook').addEventListener('change', syncBookFields);

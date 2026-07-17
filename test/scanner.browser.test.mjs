@@ -122,7 +122,7 @@ test('cover photo: file → crop dialog → "Use photo" sets a data-URL cover', 
   await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
   await page.click('#addBtn');
   await page.waitForSelector('#editDialog[open]');
-  const input = await page.$('#coverFile');
+  const input = await page.$('#coverUploadFile');
   await input.uploadFile(join(ROOT, 'test', 'fixtures', 'sample-cover.png'));
   await page.waitForSelector('#cropDialog[open]', { timeout: 5000 });
   await new Promise((r) => setTimeout(r, 900)); // let Cropper initialise

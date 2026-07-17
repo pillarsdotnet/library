@@ -38,7 +38,7 @@ const BOOK_COLS = [
   'genre', 'subgenre', 'shelf_id',
   'status', 'loaned_to',
   'is_library_book', 'library_name', 'due_date',
-  'notes',
+  'source', 'notes',
 ];
 const SHELF_COLS = ['room', 'bookcase', 'label', 'height_mm', 'width_mm', 'depth_mm', 'notes'];
 const NUMERIC = new Set(['page_count', 'height_mm', 'width_mm', 'thickness_mm', 'depth_mm', 'shelf_id']);

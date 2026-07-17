@@ -9,6 +9,7 @@ const api = (path, opts) => fetch('api' + path, opts).then(async (r) => {
 
 const STATUS_LABELS = { tbr: 'To be read', reading: 'Reading', read: 'Read', loaned: 'Loaned out' };
 const FORMAT_LABELS = { paperback: 'Paperback', hardback: 'Hardback', ebook: 'E-book', audiobook: 'Audiobook', other: 'Other' };
+const SOURCE_LABELS = { openlibrary: 'Open Library', googlebooks: 'Google Books', barnesnoble: 'Barnes & Noble', bookofthemonth: 'Book of the Month', manual: 'Manual' };
 
 // --- Units. Everything is stored in mm; the toggle only affects display/input. ---
 const MM_PER_IN = 25.4;
@@ -89,6 +90,7 @@ function renderBookCard(b) {
       ${dims ? `<p class="loc">📐 ${dims}</p>` : ''}
       ${b.status === 'loaned' && b.loaned_to ? `<p class="loc">👤 ${esc(b.loaned_to)}</p>` : ''}
       ${b.is_library_book && b.due_date ? `<p class="loc due">⏰ Due ${esc(b.due_date)}</p>` : ''}
+      ${b.source ? `<p class="loc muted-text">via ${esc(SOURCE_LABELS[b.source] || b.source)}</p>` : ''}
     </div>`;
   return card;
 }
@@ -392,8 +394,9 @@ async function lookup() {
     setDimIfEmpty('width_mm', d.width_mm);
     setDimIfEmpty('thickness_mm', d.thickness_mm);
     if (d.cover_url) { bookForm.elements.cover_url.value = d.cover_url; showCover(d.cover_url); }
+    if (d.source && bookForm.elements.source) bookForm.elements.source.value = d.source;
     const gotDims = d.height_mm || d.thickness_mm;
-    msg.textContent = `Found via ${d.source}.` + (gotDims ? ' Dimensions included.' : ' No dimensions available — measure manually for shelf fit.');
+    msg.textContent = `Found via ${SOURCE_LABELS[d.source] || d.source}.` + (gotDims ? ' Dimensions included.' : ' No dimensions available — measure manually for shelf fit.');
     msg.classList.add(gotDims ? 'ok' : 'warn');
     checkFit();
   } catch (err) { msg.textContent = err.message; msg.classList.add('err'); }

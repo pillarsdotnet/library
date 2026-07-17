@@ -57,6 +57,10 @@ db.exec(`
     library_name    TEXT,
     due_date        TEXT,
 
+    -- where the metadata came from: openlibrary | googlebooks | barnesnoble |
+    -- bookofthemonth | manual (auto-filled from lookup, user-editable)
+    source          TEXT,
+
     notes           TEXT,
     created_at      TEXT DEFAULT (datetime('now')),
     updated_at      TEXT DEFAULT (datetime('now'))
@@ -67,5 +71,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_books_title  ON books(title);
   CREATE INDEX IF NOT EXISTS idx_books_shelf  ON books(shelf_id);
 `);
+
+// Migrations for databases created before a column existed. ALTER TABLE ADD
+// COLUMN is non-destructive (existing rows get NULL).
+const bookColumns = db.prepare('PRAGMA table_info(books)').all().map((c) => c.name);
+if (!bookColumns.includes('source')) {
+  db.exec('ALTER TABLE books ADD COLUMN source TEXT');
+}
 
 export default db;

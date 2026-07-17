@@ -147,6 +147,39 @@ test('B&N fallback still runs when Google Books is rate-limited', async () => {
   assert.equal(data.source, 'barnesnoble');
 });
 
+// Fetch where Google Books returns 503 for its first `googleFailFirst` calls,
+// then a real result — to exercise the transient-5xx retry.
+function flakyGoogleFetch({ googleFailFirst = 0, googleTitle = null }) {
+  let g = 0;
+  const empty = { status: 200, ok: true, json: async () => ({}), text: async () => '' };
+  return async (url) => {
+    if (url.includes('openlibrary.org') || url.includes('barnesandnoble.com')) return empty;
+    g += 1;
+    if (g <= googleFailFirst) {
+      return { status: 503, ok: false, json: async () => ({ error: { code: 503 } }), text: async () => '' };
+    }
+    const body = googleTitle ? { totalItems: 1, items: [{ volumeInfo: { title: googleTitle } }] } : { totalItems: 0 };
+    return { status: 200, ok: true, json: async () => body, text: async () => '' };
+  };
+}
+
+test('retries a transient 503 from Google Books, then succeeds', async () => {
+  const data = await lookupIsbn('9781643857220', {
+    apiKey: 'k', retryDelayMs: 0,
+    fetch: flakyGoogleFetch({ googleFailFirst: 2, googleTitle: 'Practical Magic' }),
+  });
+  assert.equal(data.title, 'Practical Magic');
+  assert.equal(data.source, 'googlebooks');
+});
+
+test('gives up after retries when 503 persists (returns null, not a false rate-limit)', async () => {
+  const data = await lookupIsbn('9781643857220', {
+    apiKey: 'k', retries: 2, retryDelayMs: 0,
+    fetch: flakyGoogleFetch({ googleFailFirst: 99 }),
+  });
+  assert.equal(data, null);
+});
+
 test('toMm converts cm/mm/inches', () => {
   assert.equal(toMm('24.00 cm'), 240);
   assert.equal(toMm('15 mm'), 15);

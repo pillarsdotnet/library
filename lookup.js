@@ -11,6 +11,30 @@ export class RateLimitError extends Error {
 }
 
 const round1 = (n) => Math.round(n * 10) / 10;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Transient server errors worth retrying (a freshly-enabled Google API key
+// returns 503 while it warms up). 429 is NOT here — that's a real rate limit.
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+
+// Wrap a fetch so transient 5xx responses (and network errors) are retried a few
+// times with linear backoff. Definitive results (2xx/4xx) return immediately.
+function withRetry(doFetch, retries, delayMs) {
+  return async (url, opts) => {
+    for (let attempt = 1; ; attempt++) {
+      let res;
+      try {
+        res = await doFetch(url, opts);
+      } catch (err) {
+        if (attempt >= retries) throw err;
+        await sleep(delayMs * attempt);
+        continue;
+      }
+      if (!RETRYABLE_STATUS.has(res.status) || attempt >= retries) return res;
+      await sleep(delayMs * attempt);
+    }
+  };
+}
 
 // Parse strings like "9.1 x 6.1 x 1.2 inches" or "24.00 cm" into millimetres.
 export function toMm(value) {
@@ -129,8 +153,10 @@ async function fetchGoogleBooks(isbn, doFetch, apiKey) {
 // filling gaps), null if neither source has the book, or throws RateLimitError
 // if a source was throttled and nothing else answered.
 export async function lookupIsbn(isbn, opts = {}) {
-  const doFetch = opts.fetch || globalThis.fetch;
+  const baseFetch = opts.fetch || globalThis.fetch;
   const apiKey = opts.apiKey ?? process.env.GOOGLE_BOOKS_API_KEY;
+  // Retry transient 5xx on the JSON APIs (smooths Google's new-key warm-up 503s).
+  const doFetch = withRetry(baseFetch, opts.retries ?? 3, opts.retryDelayMs ?? 250);
 
   const [openlib, google] = await Promise.allSettled([
     fetchOpenLibrary(isbn, doFetch),
@@ -158,7 +184,8 @@ export async function lookupIsbn(isbn, opts = {}) {
 
   // Last-resort fallback: scrape Barnes & Noble. Runs only when the primary
   // sources have nothing, so it also covers the case where Google was throttled.
-  const bn = await fetchBarnesNoble(isbn, doFetch);
+  // Uses baseFetch (it has its own single-shot timeout, no retry needed).
+  const bn = await fetchBarnesNoble(isbn, baseFetch);
   if (bn) return { isbn, ...bn, source: 'barnesnoble' };
 
   // Still nothing — if a source was rate-limited, that's why (not a missing book).

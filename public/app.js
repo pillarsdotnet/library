@@ -299,6 +299,33 @@ async function checkDuplicate() {
   }
 }
 
+// Three-way prompt for a duplicate ISBN. Resolves to 'add' | 'edit' | 'cancel'.
+function askDuplicate(dups) {
+  return new Promise((resolve) => {
+    const dlg = $('#dupDialog');
+    $('#dupDialogMsg').textContent =
+      `This ISBN is already in your library: ${dups.map((b) => b.title).join(', ')}.`;
+    $('#dupEditBtn').textContent = dups.length > 1 ? `Edit “${dups[0].title}”` : 'Edit original';
+    const finish = (choice) => {
+      $('#dupAddBtn').removeEventListener('click', onAdd);
+      $('#dupCancelBtn').removeEventListener('click', onCancel);
+      $('#dupEditBtn').removeEventListener('click', onEdit);
+      dlg.removeEventListener('cancel', onEsc);
+      dlg.close();
+      resolve(choice);
+    };
+    const onAdd = () => finish('add');
+    const onCancel = () => finish('cancel');
+    const onEdit = () => finish('edit');
+    const onEsc = (e) => { e.preventDefault(); finish('cancel'); };
+    $('#dupAddBtn').addEventListener('click', onAdd);
+    $('#dupCancelBtn').addEventListener('click', onCancel);
+    $('#dupEditBtn').addEventListener('click', onEdit);
+    dlg.addEventListener('cancel', onEsc);
+    dlg.showModal();
+  });
+}
+
 async function saveBook(e) {
   e.preventDefault();
   const data = Object.fromEntries(new FormData(bookForm).entries());
@@ -309,8 +336,10 @@ async function saveBook(e) {
   if (!editingBookId) {
     const dups = await findByIsbn(data.isbn).catch(() => []);
     if (dups.length) {
-      const titles = dups.map((b) => `“${b.title}”`).join(', ');
-      if (!confirm(`This ISBN is already in your library: ${titles}.\n\nAdd another copy anyway?`)) return;
+      const choice = await askDuplicate(dups);
+      if (choice === 'cancel') return;
+      if (choice === 'edit') { closeBookDialog(); openEditBook(dups[0]); return; }
+      // 'add' → fall through and create another copy
     }
   }
 

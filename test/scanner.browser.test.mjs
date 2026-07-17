@@ -117,28 +117,59 @@ test('Quagga (iOS/no-BarcodeDetector) fallback path starts the camera', { skip }
   await page.close();
 });
 
-test('asks before creating a duplicate ISBN (cancel does not add it)', { skip }, async () => {
+const metaCount = async () => (await (await fetch(`${BASE}/api/meta`)).json()).count;
+
+test('duplicate ISBN prompt: Cancel keeps the record, Edit opens the original', { skip }, async () => {
   const isbn = '9780316158541';
   await fetch(`${BASE}/api/books`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title: 'Dup Seed', isbn }),
   });
-  const afterSeed = (await (await fetch(`${BASE}/api/meta`)).json()).count;
+  const seeded = await metaCount();
 
   const page = await browser.newPage();
-  let dialogMsg = '';
-  page.on('dialog', async (d) => { dialogMsg = d.message(); await d.dismiss(); }); // Cancel
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
   await page.click('#addBtn');
   await page.waitForSelector('#editDialog[open]');
   await page.type('#bookForm [name="title"]', 'Dup Attempt');
   await page.type('#isbn', isbn);
-  await page.click('#bookForm button[type="submit"]');
-  await new Promise((r) => setTimeout(r, 600));
 
-  assert.match(dialogMsg, /already in your library/i, 'should ask before duplicating');
-  const afterCancel = (await (await fetch(`${BASE}/api/meta`)).json()).count;
-  assert.equal(afterCancel, afterSeed, 'cancelling the prompt must not create the duplicate');
+  // Save → the three-way duplicate dialog appears.
+  await page.click('#bookForm button[type="submit"]');
+  await page.waitForSelector('#dupDialog[open]', { timeout: 4000 });
+  assert.match(await page.$eval('#dupDialogMsg', (el) => el.textContent), /already in your library/i);
+
+  // Cancel → nothing created, add dialog still open.
+  await page.click('#dupCancelBtn');
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(await metaCount(), seeded, 'Cancel must not create a copy');
+  assert.ok(await page.$('#editDialog[open]'), 'add dialog stays open after Cancel');
+
+  // Save again → Edit original loads the existing record for editing.
+  await page.click('#bookForm button[type="submit"]');
+  await page.waitForSelector('#dupDialog[open]', { timeout: 4000 });
+  await page.click('#dupEditBtn');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await page.$eval('#dialogTitle', (el) => el.textContent), 'Edit book');
+  assert.equal(await page.$eval('#bookForm [name="title"]', (el) => el.value), 'Dup Seed', 'Edit opens the original');
+  assert.equal(await metaCount(), seeded, 'Edit must not create a copy');
+  await page.close();
+});
+
+test('duplicate ISBN prompt: Add copy creates another entry', { skip }, async () => {
+  const isbn = '9780316158541'; // already seeded by the previous test
+  const before = await metaCount();
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+  await page.type('#bookForm [name="title"]', 'Second Copy');
+  await page.type('#isbn', isbn);
+  await page.click('#bookForm button[type="submit"]');
+  await page.waitForSelector('#dupDialog[open]', { timeout: 4000 });
+  await page.click('#dupAddBtn');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(await metaCount(), before + 1, 'Add copy should create the duplicate');
   await page.close();
 });
 

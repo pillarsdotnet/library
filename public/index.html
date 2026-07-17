@@ -8,6 +8,7 @@
   <base href="__BASE__/" />
   <title>Home Library</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="vendor/cropper/cropper.min.css" />
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -78,7 +79,11 @@
       <p id="lookupMsg" class="msg" hidden></p>
 
       <div class="cover-row">
-        <img id="coverPreview" alt="" hidden />
+        <div class="cover-col">
+          <img id="coverPreview" alt="" hidden />
+          <button type="button" id="coverPickBtn" class="cover-pick">📷 Photo</button>
+          <input type="file" id="coverFile" accept="image/*" hidden />
+        </div>
         <div class="grow">
           <label>Title <input name="title" required /></label>
           <label>Author(s) <input name="authors" placeholder="Comma separated" /></label>
@@ -215,8 +220,25 @@
     </form>
   </dialog>
 
+  <!-- ============ CROP DIALOG ============ -->
+  <dialog id="cropDialog" class="crop-dialog">
+    <div class="dialog-head">
+      <h2>Adjust cover</h2>
+      <button type="button" class="icon" id="closeCropDialog" aria-label="Close">✕</button>
+    </div>
+    <div class="crop-area"><img id="cropImage" alt="Cover to crop" /></div>
+    <p class="hint">Drag to reposition · pinch/scroll to zoom · corners to resize the crop.</p>
+    <div class="dialog-actions">
+      <button type="button" id="cropRotate" title="Rotate 90°">⟳ Rotate</button>
+      <span class="grow"></span>
+      <button type="button" id="cropCancel">Cancel</button>
+      <button type="button" id="cropUse" class="primary">Use photo</button>
+    </div>
+  </dialog>
+
   <script src="vendor/html5-qrcode/html5-qrcode.min.js"></script>
   <script src="vendor/quagga/quagga.min.js"></script>
+  <script src="vendor/cropper/cropper.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

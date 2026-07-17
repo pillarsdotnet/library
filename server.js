@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 // Sub-path the whole app is served under, e.g. "/library". Empty = root.
 const BASE = (process.env.BASE_PATH || '').replace(/\/+$/, '');
 
-app.use(express.json());
+app.use(express.json({ limit: '6mb' })); // headroom for uploaded (data-URL) covers
 
 // Everything (UI + API) hangs off this router so it can be mounted under BASE.
 const router = express.Router();
@@ -25,6 +25,7 @@ router.use(express.static(join(__dirname, 'public'), { index: false }));
 // Serve the scanning libraries shipped via npm so the app works fully offline.
 router.use('/vendor/html5-qrcode', express.static(join(__dirname, 'node_modules/html5-qrcode')));
 router.use('/vendor/quagga', express.static(join(__dirname, 'node_modules/@ericblade/quagga2/dist')));
+router.use('/vendor/cropper', express.static(join(__dirname, 'node_modules/cropperjs/dist')));
 
 const DEFAULT_THICKNESS_MM = 30; // fallback when estimating remaining shelf capacity
 const round1 = (n) => Math.round(n * 10) / 10;

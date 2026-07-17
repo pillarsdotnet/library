@@ -116,3 +116,24 @@ test('Quagga (iOS/no-BarcodeDetector) fallback path starts the camera', { skip }
   assert.match(button, /Stop/);
   await page.close();
 });
+
+test('cover photo: file → crop dialog → "Use photo" sets a data-URL cover', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+  const input = await page.$('#coverFile');
+  await input.uploadFile(join(ROOT, 'test', 'fixtures', 'sample-cover.png'));
+  await page.waitForSelector('#cropDialog[open]', { timeout: 5000 });
+  await new Promise((r) => setTimeout(r, 900)); // let Cropper initialise
+  await page.click('#cropUse');
+  await new Promise((r) => setTimeout(r, 300));
+  const cover = await page.$eval('#bookForm [name="cover_url"]', (el) => el.value);
+  assert.match(cover, /^data:image\/jpeg/, 'cover should be a cropped JPEG data URL');
+  const previewShown = await page.evaluate(() => {
+    const i = document.querySelector('#coverPreview');
+    return !!i && !i.hidden;
+  });
+  assert.ok(previewShown, 'preview should display the cropped cover');
+  await page.close();
+});

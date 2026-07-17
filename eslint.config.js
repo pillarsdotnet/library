@@ -42,6 +42,7 @@ export default [
         Html5Qrcode: 'readonly',
         Html5QrcodeSupportedFormats: 'readonly',
         Quagga: 'readonly',
+        Cropper: 'readonly',
       },
     },
     rules: { 'no-unused-vars': noUnused },

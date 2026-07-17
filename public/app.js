@@ -209,6 +209,45 @@ function showCover(url) {
   if (url) { img.src = url; img.hidden = false; } else { img.hidden = true; img.removeAttribute('src'); }
 }
 
+// ---------------------------------------------------------------------------
+// Cover photo: pick from camera or file (the file input offers both on phones),
+// then crop/resize with Cropper.js. Result is stored as a downscaled data URL.
+// ---------------------------------------------------------------------------
+const cropDialog = $('#cropDialog');
+let cropper = null;
+let cropObjectUrl = null;
+
+function onCoverFile(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = ''; // let the same file be re-picked later
+  if (!file) return;
+  if (cropObjectUrl) URL.revokeObjectURL(cropObjectUrl);
+  cropObjectUrl = URL.createObjectURL(file);
+  const img = $('#cropImage');
+  img.src = cropObjectUrl;
+  cropDialog.showModal();
+  if (cropper) cropper.destroy();
+  cropper = new Cropper(img, { viewMode: 1, autoCropArea: 1, background: false, dragMode: 'move' });
+}
+
+function useCroppedCover() {
+  if (cropper) {
+    const canvas = cropper.getCroppedCanvas({ maxWidth: 800, maxHeight: 1200, imageSmoothingQuality: 'high' });
+    if (canvas) {
+      const url = canvas.toDataURL('image/jpeg', 0.85);
+      bookForm.elements.cover_url.value = url;
+      showCover(url);
+    }
+  }
+  closeCropDialog();
+}
+
+function closeCropDialog() {
+  if (cropper) { cropper.destroy(); cropper = null; }
+  if (cropObjectUrl) { URL.revokeObjectURL(cropObjectUrl); cropObjectUrl = null; }
+  cropDialog.close();
+}
+
 function syncBookFields() {
   $('#loanedField').hidden = $('#statusSelect').value !== 'loaned';
   $('#libraryFields').hidden = !$('#isLibraryBook').checked;
@@ -754,6 +793,13 @@ $('#closeDialog').addEventListener('click', closeBookDialog);
 $('#cancelBtn').addEventListener('click', closeBookDialog);
 $('#lookupBtn').addEventListener('click', lookup);
 $('#scanBtn').addEventListener('click', onScanButton);
+$('#coverPickBtn').addEventListener('click', () => $('#coverFile').click());
+$('#coverFile').addEventListener('change', onCoverFile);
+$('#cropRotate').addEventListener('click', () => { if (cropper) cropper.rotate(90); });
+$('#cropUse').addEventListener('click', useCroppedCover);
+$('#cropCancel').addEventListener('click', closeCropDialog);
+$('#closeCropDialog').addEventListener('click', closeCropDialog);
+cropDialog.addEventListener('cancel', (e) => { e.preventDefault(); closeCropDialog(); });
 $('#deleteBtn').addEventListener('click', deleteBook);
 $('#statusSelect').addEventListener('change', syncBookFields);
 $('#isLibraryBook').addEventListener('change', syncBookFields);

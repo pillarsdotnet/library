@@ -25,6 +25,59 @@ export function toMm(value) {
   return round1(n * 25.4); // inches
 }
 
+const BROWSER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+  + '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+function decodeEntities(s) {
+  return String(s)
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&rsquo;/g, '’')
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+}
+
+// Parse a Barnes & Noble product page. Prefers the schema.org Product JSON-LD
+// (stable structured data); author isn't in it, so it's read from the
+// contributor link. Exported for testing. Returns null if it's not a product page.
+export function parseBarnesNoble(html) {
+  let product = null;
+  for (const m of html.matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const d = JSON.parse(m[1].trim());
+      if (d && d['@type'] === 'Product' && d.name) { product = d; break; }
+    } catch { /* skip malformed JSON-LD block */ }
+  }
+  if (!product) return null;
+
+  const author = html.match(/href=["']\/authors\/[^"']+["'][^>]*>\s*([^<]+?)\s*<\/a>/i);
+  return {
+    title: decodeEntities(product.name),
+    authors: author ? decodeEntities(author[1]) : '',
+    publisher: product.brand?.name ? decodeEntities(product.brand.name) : '',
+    published_date: '',
+    page_count: null,
+    cover_url: product.image || '',
+    height_mm: null, width_mm: null, thickness_mm: null,
+  };
+}
+
+// Barnes & Noble has no API; scrape the public product page as a last resort
+// (B&N-exclusive editions often aren't in Open Library or Google Books). This is
+// best-effort and tolerant: any failure just yields null.
+async function fetchBarnesNoble(isbn, doFetch) {
+  try {
+    const r = await doFetch(`https://www.barnesandnoble.com/w/?ean=${isbn}`, {
+      headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'en-US,en;q=0.9' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return null;
+    return parseBarnesNoble(await r.text());
+  } catch {
+    return null; // network error, timeout, or bot block — don't break the lookup
+  }
+}
+
 async function fetchOpenLibrary(isbn, doFetch) {
   const r = await doFetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
   if (r.status === 429) throw new RateLimitError('Open Library rate-limited');
@@ -103,7 +156,12 @@ export async function lookupIsbn(isbn, opts = {}) {
     };
   }
 
-  // Nothing found — if a source was rate-limited, that's why (not a missing book).
+  // Last-resort fallback: scrape Barnes & Noble. Runs only when the primary
+  // sources have nothing, so it also covers the case where Google was throttled.
+  const bn = await fetchBarnesNoble(isbn, doFetch);
+  if (bn) return { isbn, ...bn, source: 'barnesnoble' };
+
+  // Still nothing — if a source was rate-limited, that's why (not a missing book).
   const throttled = [openlib, google].some(
     (r) => r.status === 'rejected' && r.reason instanceof RateLimitError,
   );

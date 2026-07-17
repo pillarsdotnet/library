@@ -3,17 +3,27 @@
 // surface as a RateLimitError, not a silent "no metadata found".
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lookupIsbn, RateLimitError, toMm } from '../lookup.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { lookupIsbn, RateLimitError, toMm, parseBarnesNoble } from '../lookup.js';
 
-// Build a fake fetch from per-host responders.
-function fakeFetch(routes) {
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
+const bnFoxglove = readFileSync(join(FIXTURES, 'barnesnoble-foxglove.html'), 'utf8');
+
+// Build a fake fetch from per-host responders (ol / gb / bn).
+function fakeFetch(routes, calls) {
   return async (url) => {
-    const which = url.includes('openlibrary.org') ? 'ol' : 'gb';
-    const res = routes[which] ?? { status: 200, body: {} };
+    if (calls) calls.push(url);
+    const which = url.includes('openlibrary.org') ? 'ol'
+      : url.includes('barnesandnoble.com') ? 'bn' : 'gb';
+    const res = routes[which] ?? { status: 200, body: {}, text: '' };
+    const status = res.status ?? 200;
     return {
-      status: res.status ?? 200,
-      ok: (res.status ?? 200) >= 200 && (res.status ?? 200) < 300,
+      status,
+      ok: status >= 200 && status < 300,
       json: async () => res.body ?? {},
+      text: async () => res.text ?? '',
       __url: url,
     };
   };
@@ -83,10 +93,58 @@ test('appends the Google Books API key when provided', async () => {
   let seenGoogleUrl = '';
   const fetch = async (url) => {
     if (url.includes('googleapis.com')) seenGoogleUrl = url;
-    return { status: 200, ok: true, json: async () => ({}) };
+    return { status: 200, ok: true, json: async () => ({}), text: async () => '' };
   };
   await lookupIsbn('9780316579896', { apiKey: 'TESTKEY123', fetch });
   assert.match(seenGoogleUrl, /[?&]key=TESTKEY123(&|$)/);
+});
+
+test('parseBarnesNoble extracts title/author/publisher/cover from a product page', () => {
+  const bn = parseBarnesNoble(bnFoxglove);
+  assert.equal(bn.title, 'Foxglove (B&N Exclusive Edition) (Belladonna Series #2)');
+  assert.equal(bn.authors, 'Adalyn Grace');
+  assert.equal(bn.publisher, 'Little, Brown Books for Young Readers');
+  assert.match(bn.cover_url, /9780316579896_p0\.jpg/);
+});
+
+test('parseBarnesNoble returns null for a non-product page', () => {
+  assert.equal(parseBarnesNoble('<html><body>nope</body></html>'), null);
+});
+
+test('falls back to Barnes & Noble when Open Library and Google Books both miss', async () => {
+  const data = await lookupIsbn('9780316579896', {
+    apiKey: null,
+    fetch: fakeFetch({
+      ol: { body: {} },
+      gb: { body: { totalItems: 0 } },
+      bn: { text: bnFoxglove },
+    }),
+  });
+  assert.equal(data.source, 'barnesnoble');
+  assert.equal(data.title, 'Foxglove (B&N Exclusive Edition) (Belladonna Series #2)');
+  assert.equal(data.authors, 'Adalyn Grace');
+});
+
+test('does NOT hit Barnes & Noble when a primary source already has the book', async () => {
+  const calls = [];
+  const isbn = '9780134685991';
+  await lookupIsbn(isbn, {
+    apiKey: null,
+    fetch: fakeFetch({ ol: { body: { [`ISBN:${isbn}`]: { title: 'Effective Java' } } } }, calls),
+  });
+  assert.ok(!calls.some((u) => u.includes('barnesandnoble.com')), 'B&N should not be queried when OL/GB succeed');
+});
+
+test('B&N fallback still runs when Google Books is rate-limited', async () => {
+  const data = await lookupIsbn('9780316579896', {
+    apiKey: null,
+    fetch: fakeFetch({
+      ol: { body: {} },
+      gb: { status: 429, body: {} },
+      bn: { text: bnFoxglove },
+    }),
+  });
+  assert.equal(data.source, 'barnesnoble');
 });
 
 test('toMm converts cm/mm/inches', () => {

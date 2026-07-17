@@ -30,6 +30,7 @@ export default [
         ...globals.browser,
         Html5Qrcode: 'readonly',
         Html5QrcodeSupportedFormats: 'readonly',
+        Quagga: 'readonly',
       },
     },
     rules: { 'no-unused-vars': noUnused },

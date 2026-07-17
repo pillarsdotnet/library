@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --omit=dev
+# Skip optional deps (e.g. quagga2's node-side sharp) — only the browser bundle is used.
+RUN npm install --omit=dev --omit=optional
 
 COPY . .
 

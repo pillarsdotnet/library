@@ -21,8 +21,9 @@ const indexHtml = readFileSync(join(__dirname, 'public/index.html'), 'utf8');
 router.get('/', (_req, res) => res.type('html').send(indexHtml.replace('__BASE__', BASE)));
 
 router.use(express.static(join(__dirname, 'public'), { index: false }));
-// Serve the scanning library shipped via npm so the app works fully offline.
+// Serve the scanning libraries shipped via npm so the app works fully offline.
 router.use('/vendor/html5-qrcode', express.static(join(__dirname, 'node_modules/html5-qrcode')));
+router.use('/vendor/quagga', express.static(join(__dirname, 'node_modules/@ericblade/quagga2/dist')));
 
 const DEFAULT_THICKNESS_MM = 30; // fallback when estimating remaining shelf capacity
 

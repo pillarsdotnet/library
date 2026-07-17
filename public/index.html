@@ -123,8 +123,8 @@
       <fieldset>
         <legend>Classification</legend>
         <div class="two-col">
-          <label>Genre <input name="genre" list="genreList" /></label>
-          <label>Subgenre <input name="subgenre" list="subgenreList" /></label>
+          <label>Genre <input name="genre" autocomplete="off" /></label>
+          <label>Subgenre <input name="subgenre" autocomplete="off" /></label>
         </div>
       </fieldset>
 
@@ -182,8 +182,8 @@
         <button type="button" class="icon" id="closeShelfDialog" aria-label="Close">✕</button>
       </div>
       <div class="two-col">
-        <label>Room <input name="room" list="roomList" /></label>
-        <label>Bookcase <input name="bookcase" list="bookcaseList" /></label>
+        <label>Room <input name="room" autocomplete="off" /></label>
+        <label>Bookcase <input name="bookcase" autocomplete="off" /></label>
       </div>
       <label>Shelf label <input name="label" required placeholder="e.g. Shelf 3 / Top left" /></label>
       <fieldset>
@@ -205,12 +205,8 @@
     </form>
   </dialog>
 
-  <datalist id="roomList"></datalist>
-  <datalist id="bookcaseList"></datalist>
-  <datalist id="genreList"></datalist>
-  <datalist id="subgenreList"></datalist>
-
   <script src="vendor/html5-qrcode/html5-qrcode.min.js"></script>
+  <script src="vendor/quagga/quagga.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

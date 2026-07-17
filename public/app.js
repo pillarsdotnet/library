@@ -414,6 +414,12 @@ function setDimIfEmpty(name, mm) {
 // than orphaning the stream (which used to break every scan after the first).
 let scanState = 'idle'; // idle | starting | running | stopping
 let pendingStop = false;
+// Devices WITHOUT the native BarcodeDetector (all iOS/WebKit browsers) use the
+// Quagga2 1D decoder; devices WITH it (Android Chrome) keep the fast native path
+// via html5-qrcode — so Android's instant scan isn't regressed.
+const NATIVE_DETECTOR = typeof window !== 'undefined' && 'BarcodeDetector' in window;
+let lastCode = null;
+let lastCount = 0;
 
 function setScanUI(label, status) {
   $('#scanBtn').textContent = label;
@@ -431,45 +437,89 @@ async function startScanner() {
   if (scanState !== 'idle') return;
   scanState = 'starting';
   pendingStop = false;
+  lastCode = null;
+  lastCount = 0;
   $('#scanner').hidden = false;
   setScanUI('…', 'Requesting camera — allow access if prompted.');
-  scanner = new Html5Qrcode('scanner', {
-    verbose: false,
-    // Only retail 1D formats -> the decoder spends every frame on what we want.
-    formatsToSupport: [
-      Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
-      Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
-    ],
-    // Use the OS barcode detector where present (Android Chrome) — faster/robuster.
-    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-  });
-  const config = {
-    fps: 15,
-    // Wide, short window that adapts to the viewfinder: EAN barcodes are wide,
-    // and a larger window puts more pixels on the bars = far better decoding.
-    qrbox: (vw, vh) => ({
-      width: Math.round(Math.min(vw * 0.9, 480)),
-      height: Math.round(Math.min(vh * 0.5, 220)),
-    }),
-  };
-  // Request a high-resolution, continuously-focused rear camera. Low-res or
-  // out-of-focus frames are the usual reason a barcode won't decode on a phone.
-  const cameraConstraints = {
-    facingMode: 'environment',
-    width: { ideal: 1920 },
-    height: { ideal: 1080 },
-    advanced: [{ focusMode: 'continuous' }],
-  };
   try {
-    await scanner.start(cameraConstraints, config, onScan, () => {});
+    if (NATIVE_DETECTOR) await startNativeScanner();
+    else await startQuaggaScanner();
     scanState = 'running';
-    setScanUI('■ Stop', 'Fill the box with the barcode · ~10–20 cm away · good light.');
+    setScanUI('■ Stop', 'Fill the box with the barcode · hold steady · good light.');
     if (pendingStop) stopScanner();   // dialog was closed while the camera was starting
   } catch (err) {
     await teardownScanner();
     setScanUI('📷 Scan', null);
     alert(scannerErrorHelp(err));
   }
+}
+
+// Fast path: native BarcodeDetector via html5-qrcode (Android Chrome).
+async function startNativeScanner() {
+  scanner = new Html5Qrcode('scanner', {
+    verbose: false,
+    formatsToSupport: [
+      Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
+    ],
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+  });
+  await scanner.start(
+    { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, advanced: [{ focusMode: 'continuous' }] },
+    { fps: 15, qrbox: (vw, vh) => ({ width: Math.round(Math.min(vw * 0.9, 480)), height: Math.round(Math.min(vh * 0.5, 220)) }) },
+    (text) => acceptScan(text),
+    () => {},
+  );
+}
+
+// Fallback path: Quagga2 1D decoder for iOS/WebKit (no native BarcodeDetector).
+async function startQuaggaScanner() {
+  const box = $('#scanner');
+  box.innerHTML = '';
+  await new Promise((resolve, reject) => {
+    Quagga.init({
+      inputStream: {
+        type: 'LiveStream',
+        target: box,
+        constraints: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      },
+      locator: { patchSize: 'medium', halfSample: true },
+      numOfWorkers: 0,   // no web workers -> avoids worker-URL issues, robust everywhere
+      frequency: 10,
+      decoder: { readers: ['ean_reader', 'ean_8_reader', 'upc_reader', 'upc_e_reader'] },
+      locate: true,
+    }, (err) => (err ? reject(err) : resolve()));
+  });
+  Quagga.onDetected(onQuaggaDetected);
+  Quagga.start();
+}
+
+// Quagga can misread; require the same, checksum-valid code twice before trusting it.
+function onQuaggaDetected(result) {
+  if (scanState !== 'running') return;
+  const code = result && result.codeResult && result.codeResult.code;
+  if (!code || !isValidEan(code)) return;
+  if (code === lastCode) lastCount += 1;
+  else { lastCode = code; lastCount = 1; }
+  if (lastCount >= 2) acceptScan(code);
+}
+
+// Validate an EAN-13 / EAN-8 / UPC-A check digit to reject misreads.
+function isValidEan(code) {
+  if (!/^\d+$/.test(code) || ![8, 12, 13].includes(code.length)) return false;
+  const digits = code.split('').map(Number);
+  const check = digits.pop();
+  let sum = 0;
+  for (let i = digits.length - 1, weight = 3; i >= 0; i--, weight = weight === 3 ? 1 : 3) {
+    sum += digits[i] * weight;
+  }
+  return (10 - (sum % 10)) % 10 === check;
+}
+
+function acceptScan(text) {
+  if (scanState !== 'running') return;   // ignore late/duplicate detections
+  $('#isbn').value = String(text).replace(/[^0-9Xx]/g, '');
+  stopScanner().then(lookup);
 }
 
 // Turn a getUserMedia failure into advice that actually matches the situation
@@ -516,47 +566,93 @@ async function stopScanner() {
   setScanUI('📷 Scan', null);
 }
 
-// Stop the stream and dispose the instance, tolerating any half-started state.
+// Stop the stream and dispose the engine, tolerating any half-started state.
 async function teardownScanner() {
-  if (scanner) {
-    try { await scanner.stop(); } catch { /* wasn't running */ }
-    try { scanner.clear(); } catch { /* already cleared */ }
-    scanner = null;
+  if (NATIVE_DETECTOR) {
+    if (scanner) {
+      try { await scanner.stop(); } catch { /* wasn't running */ }
+      try { scanner.clear(); } catch { /* already cleared */ }
+      scanner = null;
+    }
+  } else {
+    try { Quagga.offDetected(onQuaggaDetected); } catch { /* not initialised */ }
+    try { await Quagga.stop(); } catch { /* not running */ }
+    $('#scanner').innerHTML = '';
   }
   $('#scanner').hidden = true;
   scanState = 'idle';
   pendingStop = false;
-}
-
-function onScan(text) {
-  if (scanState !== 'running') return;   // ignore late/duplicate decode callbacks
-  $('#isbn').value = text.replace(/[^0-9Xx]/g, '');
-  stopScanner().then(lookup);
+  lastCode = null;
+  lastCount = 0;
 }
 
 // ---------------------------------------------------------------------------
 // Metadata + refresh
 // ---------------------------------------------------------------------------
+// Distinct values powering the custom autocomplete dropdowns; refreshed by loadMeta.
+const META = { rooms: [], bookcases: [], genres: [], subgenres: [] };
+
 async function loadMeta() {
   const meta = await api('/meta');
   $('#count').textContent = `${meta.count} book${meta.count === 1 ? '' : 's'}` +
     (meta.unshelved ? ` · ${meta.unshelved} unshelved` : '');
-  fillDatalist('roomList', meta.rooms);
-  fillDatalist('bookcaseList', meta.bookcases);
-  fillDatalist('genreList', meta.genres);
-  fillDatalist('subgenreList', meta.subgenres);
+  Object.assign(META, {
+    rooms: meta.rooms, bookcases: meta.bookcases, genres: meta.genres, subgenres: meta.subgenres,
+  });
   fillSelect('filterRoom', meta.rooms, 'All rooms');
   fillSelect('filterGenre', meta.genres, 'All genres');
 }
 
-function fillDatalist(id, values) {
-  document.getElementById(id).innerHTML = values.map((v) => `<option value="${esc(v)}"></option>`).join('');
-}
 function fillSelect(id, values, allLabel) {
   const sel = document.getElementById(id);
   const current = sel.value;
   sel.innerHTML = `<option value="">${allLabel}</option>` + values.map((v) => `<option>${esc(v)}</option>`).join('');
   sel.value = current;
+}
+
+// Lightweight autocomplete to replace <datalist>, whose native popup covered the
+// keyboard on Android with no way to dismiss it. This dropdown sits in the dialog
+// below the field, is dismissible (tap away / Esc), and never blocks free typing.
+function attachCombo(input, getItems) {
+  const label = input.closest('label');
+  label.classList.add('combo');
+  const list = document.createElement('ul');
+  list.className = 'combo-list';
+  list.hidden = true;
+  label.appendChild(list);
+  let active = -1;
+
+  const close = () => { list.hidden = true; list.innerHTML = ''; active = -1; };
+  const render = () => {
+    const q = input.value.trim().toLowerCase();
+    const items = getItems()
+      .filter((v) => v.toLowerCase().includes(q) && v.toLowerCase() !== q)
+      .slice(0, 6);
+    if (!items.length) return close();
+    list.innerHTML = items.map((v) => `<li role="option">${esc(v)}</li>`).join('');
+    list.hidden = false;
+    active = -1;
+  };
+  const choose = (li) => { input.value = li.textContent; close(); input.focus(); };
+
+  input.addEventListener('input', render);
+  input.addEventListener('focus', render);
+  input.addEventListener('blur', () => setTimeout(close, 150));
+  // pointerdown fires before blur and preventDefault keeps the field focused.
+  list.addEventListener('pointerdown', (e) => {
+    const li = e.target.closest('li');
+    if (li) { e.preventDefault(); choose(li); }
+  });
+  input.addEventListener('keydown', (e) => {
+    if (list.hidden) return;
+    const items = [...list.children];
+    if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, items.length - 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); }
+    else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); choose(items[active]); return; }
+    else if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    else return;
+    items.forEach((li, i) => li.classList.toggle('active', i === active));
+  });
 }
 
 async function refresh() {
@@ -661,6 +757,12 @@ $('#closeShelfDialog').addEventListener('click', () => shelfDialog.close());
 $('#cancelShelfBtn').addEventListener('click', () => shelfDialog.close());
 $('#deleteShelfBtn').addEventListener('click', deleteShelf);
 shelfForm.addEventListener('submit', saveShelf);
+
+// Autocomplete for the free-text classification/location fields.
+attachCombo(bookForm.elements.genre, () => META.genres);
+attachCombo(bookForm.elements.subgenre, () => META.subgenres);
+attachCombo(shelfForm.elements.room, () => META.rooms);
+attachCombo(shelfForm.elements.bookcase, () => META.bookcases);
 
 applyUnitLabels();
 refresh().catch((err) => alert('Failed to load: ' + err.message));

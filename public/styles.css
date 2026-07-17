@@ -199,6 +199,33 @@ button.link {
   font-weight: 600;
 }
 
+/* Custom autocomplete (replaces native <datalist>) */
+.combo { position: relative; }
+.combo-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  margin: 3px 0 0;
+  padding: 0;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  max-height: 190px;
+  overflow-y: auto;
+}
+.combo-list li {
+  padding: 10px 11px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+.combo-list li.active,
+.combo-list li:hover { background: var(--bg); }
+
 .shelf-row { display: flex; align-items: flex-end; gap: 8px; }
 .shelf-row button { white-space: nowrap; }
 .sug-list { margin: 6px 0 0; padding-left: 18px; font-size: 0.82rem; }
@@ -222,9 +249,11 @@ dialog::backdrop { background: rgba(20, 15, 30, 0.55); }
 .scan-row { display: flex; gap: 8px; }
 .scan-row input { flex: 1; }
 .scan-row button { white-space: nowrap; }
-#scanner { border-radius: 10px; overflow: hidden; }
+#scanner { position: relative; border-radius: 10px; overflow: hidden; }
 #scanner:not([hidden]) { min-height: 220px; background: #000; }
-#scanner video { width: 100% !important; height: auto !important; display: block; }
+#scanner video, #scanner canvas { width: 100% !important; height: auto !important; display: block; }
+/* Quagga overlays a detection canvas — sit it exactly on top of the video. */
+#scanner canvas.drawingBuffer { position: absolute; top: 0; left: 0; }
 
 .cover-row { display: flex; gap: 12px; align-items: flex-start; }
 #coverPreview { width: 72px; height: 108px; object-fit: cover; border-radius: 6px; }

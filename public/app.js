@@ -178,6 +178,7 @@ function openAddBook() {
   $('#lookupMsg').hidden = true;
   $('#fitWarning').hidden = true;
   $('#suggestResult').hidden = true;
+  $('#dupWarning').hidden = true;
   setScanUI('📷 Scan', null);
   syncBookFields();
   bookDialog.showModal();
@@ -199,6 +200,7 @@ function openEditBook(book) {
   showCover(book.cover_url);
   $('#lookupMsg').hidden = true;
   $('#suggestResult').hidden = true;
+  $('#dupWarning').hidden = true;
   setScanUI('📷 Scan', null);
   syncBookFields();
   bookDialog.showModal();
@@ -277,11 +279,41 @@ function checkFit() {
   warn.textContent = issues.length ? '⚠️ On this shelf: ' + issues.join('; ') : '';
 }
 
+// Books already in the library with the same ISBN (excluding the one being edited).
+async function findByIsbn(isbn) {
+  const norm = String(isbn || '').replace(/[^0-9Xx]/g, '');
+  if (!norm) return [];
+  const books = await api('/books?q=' + encodeURIComponent(norm));
+  return books.filter((b) => (b.isbn || '').replace(/[^0-9Xx]/g, '') === norm && b.id !== editingBookId);
+}
+
+// Non-blocking heads-up in the dialog when the scanned/entered ISBN is a dup.
+async function checkDuplicate() {
+  const el = $('#dupWarning');
+  const dups = await findByIsbn($('#isbn').value).catch(() => []);
+  if (dups.length) {
+    el.hidden = false;
+    el.textContent = `⚠️ Already in your library: ${dups.map((b) => b.title).join(', ')}. Saving adds another copy.`;
+  } else {
+    el.hidden = true;
+  }
+}
+
 async function saveBook(e) {
   e.preventDefault();
   const data = Object.fromEntries(new FormData(bookForm).entries());
   data.is_library_book = $('#isLibraryBook').checked;
   DIM_FIELDS.forEach((f) => { if (f in data) data[f] = unitToMm(data[f]); });
+
+  // Ask before creating a duplicate (only when adding, not editing).
+  if (!editingBookId) {
+    const dups = await findByIsbn(data.isbn).catch(() => []);
+    if (dups.length) {
+      const titles = dups.map((b) => `“${b.title}”`).join(', ');
+      if (!confirm(`This ISBN is already in your library: ${titles}.\n\nAdd another copy anyway?`)) return;
+    }
+  }
+
   try {
     if (editingBookId) await api('/books/' + editingBookId, { method: 'PUT', headers: json(), body: JSON.stringify(data) });
     else await api('/books', { method: 'POST', headers: json(), body: JSON.stringify(data) });
@@ -420,6 +452,7 @@ function populateShelfFilter() {
 async function lookup() {
   const isbn = $('#isbn').value.trim();
   if (!isbn) return;
+  checkDuplicate();   // heads-up if this ISBN is already in the library
   const msg = $('#lookupMsg');
   msg.hidden = false; msg.className = 'msg'; msg.textContent = 'Looking up…';
   try {

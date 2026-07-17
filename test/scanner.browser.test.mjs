@@ -117,6 +117,31 @@ test('Quagga (iOS/no-BarcodeDetector) fallback path starts the camera', { skip }
   await page.close();
 });
 
+test('asks before creating a duplicate ISBN (cancel does not add it)', { skip }, async () => {
+  const isbn = '9780316158541';
+  await fetch(`${BASE}/api/books`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'Dup Seed', isbn }),
+  });
+  const afterSeed = (await (await fetch(`${BASE}/api/meta`)).json()).count;
+
+  const page = await browser.newPage();
+  let dialogMsg = '';
+  page.on('dialog', async (d) => { dialogMsg = d.message(); await d.dismiss(); }); // Cancel
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+  await page.type('#bookForm [name="title"]', 'Dup Attempt');
+  await page.type('#isbn', isbn);
+  await page.click('#bookForm button[type="submit"]');
+  await new Promise((r) => setTimeout(r, 600));
+
+  assert.match(dialogMsg, /already in your library/i, 'should ask before duplicating');
+  const afterCancel = (await (await fetch(`${BASE}/api/meta`)).json()).count;
+  assert.equal(afterCancel, afterSeed, 'cancelling the prompt must not create the duplicate');
+  await page.close();
+});
+
 test('cover photo: file → crop dialog → "Use photo" sets a data-URL cover', { skip }, async () => {
   const page = await browser.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });

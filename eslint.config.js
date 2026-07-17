@@ -21,6 +21,17 @@ export default [
     rules: { 'no-unused-vars': noUnused },
   },
   {
+    // Test suite: Node ESM (node:test). Browser globals are allowed too because
+    // puppeteer page.evaluate() callbacks run in the browser context.
+    files: ['test/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: { ...globals.node, ...globals.browser },
+    },
+    rules: { 'no-unused-vars': noUnused },
+  },
+  {
     // Browser: classic script, plus globals from the vendored scanner library.
     files: ['public/**/*.js'],
     languageOptions: {

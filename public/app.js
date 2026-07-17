@@ -464,9 +464,15 @@ async function startNativeScanner() {
     ],
     experimentalFeatures: { useBarCodeDetectorIfSupported: true },
   });
+  // html5-qrcode requires cameraIdOrConfig to be a single-key object (a deviceId
+  // or facingMode) — resolution/focus hints must go in videoConstraints, not here.
   await scanner.start(
-    { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, advanced: [{ focusMode: 'continuous' }] },
-    { fps: 15, qrbox: (vw, vh) => ({ width: Math.round(Math.min(vw * 0.9, 480)), height: Math.round(Math.min(vh * 0.5, 220)) }) },
+    { facingMode: 'environment' },
+    {
+      fps: 15,
+      qrbox: (vw, vh) => ({ width: Math.round(Math.min(vw * 0.9, 480)), height: Math.round(Math.min(vh * 0.5, 220)) }),
+      videoConstraints: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+    },
     (text) => acceptScan(text),
     () => {},
   );

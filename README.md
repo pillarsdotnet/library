@@ -61,6 +61,47 @@ Environment variables:
 | `PORT`      | `3000`               | HTTP port                                           |
 | `DB_PATH`   | `./data/library.db`  | SQLite file location                                |
 | `BASE_PATH` | `` (root)            | Sub-path to serve under, e.g. `/library`            |
+| `GOOGLE_BOOKS_API_KEY` | _(none)_  | Optional; raises the Google Books lookup quota      |
+
+### ISBN lookup sources & the Google Books quota
+
+Lookups merge **Open Library** (preferred) and **Google Books**. Open Library
+doesn't have every book, and **keyless Google Books has a very small shared daily
+quota** — when it's exhausted the API returns HTTP 429, and a book that's only on
+Google Books will fail to auto-fill (the app now says it's rate-limited rather
+than "not found"). A free Google Books API key raises the quota to ~1,000
+lookups/day and makes this reliable.
+
+#### Obtain a key (free, no billing required)
+
+1. Go to the [Google Cloud console](https://console.cloud.google.com/) and sign in.
+2. Create a project (top bar → project dropdown → **New Project**), or reuse one.
+3. Enable the API: **APIs & Services → Library → search "Books API" → Enable**
+   (a.k.a. "Google Books API"). It has a free daily quota; no billing needed.
+4. Create the key: **APIs & Services → Credentials → Create credentials → API key**.
+   Copy the key. Recommended: **Edit API key → API restrictions → restrict to
+   "Books API"** so the key can't be used for anything else.
+
+#### Install the key
+
+**Kubernetes (homelab):** store it in a secret the Deployment already references
+(via an optional `secretKeyRef`, so the app also runs fine without one):
+
+```bash
+kubectl -n home-library create secret generic home-library-secrets \
+  --from-literal=google-books-api-key=YOUR_KEY
+kubectl -n home-library rollout restart deploy/home-library
+```
+
+To rotate later: `kubectl -n home-library delete secret home-library-secrets`,
+recreate it, then roll out again.
+
+**Docker / local:** pass it as an environment variable:
+
+```bash
+GOOGLE_BOOKS_API_KEY=YOUR_KEY npm start
+# docker run: add  -e GOOGLE_BOOKS_API_KEY=YOUR_KEY
+```
 
 `BASE_PATH` makes the whole app (UI + API) live under a sub-path. The server
 injects a matching `<base href>` so every asset and API call is relative — the

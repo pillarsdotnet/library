@@ -52,6 +52,16 @@ spec:
               value: "/library"
             - name: DB_PATH
               value: "/data/library.db"
+            # Optional: raises the Google Books lookup quota well above the tiny
+            # keyless daily limit. Create the secret to enable it (see README):
+            #   kubectl -n home-library create secret generic home-library-secrets \
+            #     --from-literal=google-books-api-key=YOUR_KEY
+            - name: GOOGLE_BOOKS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: home-library-secrets
+                  key: google-books-api-key
+                  optional: true
           readinessProbe:
             httpGet:
               path: /library/api/meta

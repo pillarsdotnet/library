@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import db from './db.js';
+import { lookupIsbn, RateLimitError } from './lookup.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -26,6 +27,7 @@ router.use('/vendor/html5-qrcode', express.static(join(__dirname, 'node_modules/
 router.use('/vendor/quagga', express.static(join(__dirname, 'node_modules/@ericblade/quagga2/dist')));
 
 const DEFAULT_THICKNESS_MM = 30; // fallback when estimating remaining shelf capacity
+const round1 = (n) => Math.round(n * 10) / 10;
 
 // ---------------------------------------------------------------------------
 // Writable columns. Anything else in a request body is ignored.
@@ -258,93 +260,27 @@ router.get('/api/meta', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// ISBN lookup — merges Open Library and Google Books, incl. physical size.
+// ISBN lookup — merges Open Library and Google Books (see lookup.js).
 // ---------------------------------------------------------------------------
 router.get('/api/lookup/:isbn', async (req, res) => {
   const isbn = req.params.isbn.replace(/[^0-9Xx]/g, '');
   if (!isbn) return res.status(400).json({ error: 'invalid isbn' });
 
   try {
-    const [openlib, google] = await Promise.allSettled([fetchOpenLibrary(isbn), fetchGoogleBooks(isbn)]);
-    const ol = openlib.status === 'fulfilled' ? openlib.value : null;
-    const gb = google.status === 'fulfilled' ? google.value : null;
-    if (!ol && !gb) return res.status(404).json({ error: 'No metadata found for this ISBN' });
-
-    const first = (...vals) => vals.find((v) => v != null && v !== '') ?? '';
-    res.json({
-      isbn,
-      title: first(ol?.title, gb?.title),
-      authors: first(ol?.authors, gb?.authors),
-      publisher: first(ol?.publisher, gb?.publisher),
-      published_date: first(ol?.published_date, gb?.published_date),
-      page_count: first(ol?.page_count, gb?.page_count) || null,
-      cover_url: first(ol?.cover_url, gb?.cover_url),
-      height_mm: ol?.height_mm ?? gb?.height_mm ?? null,
-      width_mm: ol?.width_mm ?? gb?.width_mm ?? null,
-      thickness_mm: ol?.thickness_mm ?? gb?.thickness_mm ?? null,
-      source: ol ? 'openlibrary' : 'googlebooks',
-    });
+    const data = await lookupIsbn(isbn);
+    if (!data) return res.status(404).json({ error: 'No metadata found for this ISBN' });
+    res.json(data);
   } catch (err) {
+    if (err instanceof RateLimitError) {
+      return res.status(503).json({
+        error: 'Google Books is rate-limited right now (no API key set). Try again later, '
+          + 'or set GOOGLE_BOOKS_API_KEY. This book may just not be in Open Library.',
+      });
+    }
     console.error('lookup failed', err);
     res.status(502).json({ error: 'Lookup service failed' });
   }
 });
-
-// Parse strings like "9.1 x 6.1 x 1.2 inches" or "24.00 cm" into millimetres.
-function toMm(value) {
-  if (!value) return null;
-  const m = String(value).match(/([\d.]+)\s*(cm|mm|inch|inches|in|")?/i);
-  if (!m) return null;
-  const n = parseFloat(m[1]);
-  if (!isFinite(n)) return null;
-  const unit = (m[2] || 'cm').toLowerCase();
-  if (unit === 'mm') return round1(n);
-  if (unit === 'cm') return round1(n * 10);
-  return round1(n * 25.4); // inches
-}
-const round1 = (n) => Math.round(n * 10) / 10;
-
-async function fetchOpenLibrary(isbn) {
-  const r = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
-  if (!r.ok) return null;
-  const data = (await r.json())[`ISBN:${isbn}`];
-  if (!data) return null;
-
-  // e.g. "20.3 x 13.3 x 2.5 centimeters"
-  let h = null, w = null, t = null;
-  if (data.dimensions) {
-    const parts = String(data.dimensions).split(/x|×/);
-    const unit = /inch/i.test(data.dimensions) ? 'inch' : /mm/i.test(data.dimensions) ? 'mm' : 'cm';
-    const nums = parts.map((p) => toMm(p.trim().replace(/[a-z"]/gi, '') + ' ' + unit)).filter((n) => n != null);
-    [h, w, t] = [nums[0] ?? null, nums[1] ?? null, nums[2] ?? null];
-  }
-  return {
-    title: data.title,
-    authors: (data.authors || []).map((a) => a.name).join(', '),
-    publisher: (data.publishers || []).map((p) => p.name).join(', '),
-    published_date: data.publish_date,
-    page_count: data.number_of_pages || null,
-    cover_url: data.cover?.large || data.cover?.medium || data.cover?.small || '',
-    height_mm: h, width_mm: w, thickness_mm: t,
-  };
-}
-
-async function fetchGoogleBooks(isbn) {
-  const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
-  if (!r.ok) return null;
-  const vol = (await r.json()).items?.[0]?.volumeInfo;
-  if (!vol) return null;
-  const d = vol.dimensions || {};
-  return {
-    title: vol.title + (vol.subtitle ? `: ${vol.subtitle}` : ''),
-    authors: (vol.authors || []).join(', '),
-    publisher: vol.publisher || '',
-    published_date: vol.publishedDate || '',
-    page_count: vol.pageCount || null,
-    cover_url: (vol.imageLinks?.thumbnail || '').replace('http://', 'https://'),
-    height_mm: toMm(d.height), width_mm: toMm(d.width), thickness_mm: toMm(d.thickness),
-  };
-}
 
 app.use(BASE || '/', router);
 

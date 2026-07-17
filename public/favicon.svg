@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Bookcase of colorful books">
+  <rect width="64" height="64" rx="12" fill="#2b2340"/>
+
+  <!-- wooden bookcase frame -->
+  <g fill="#9a6a3e">
+    <rect x="8" y="9" width="48" height="4" rx="1.5"/>
+    <rect x="8" y="51" width="48" height="4" rx="1.5"/>
+    <rect x="8" y="9" width="4" height="46" rx="1.5"/>
+    <rect x="52" y="9" width="4" height="46" rx="1.5"/>
+    <rect x="10" y="31" width="44" height="3" rx="1"/>
+  </g>
+
+  <!-- top shelf: books sit on the middle shelf (bottoms at y=31), varied heights -->
+  <g>
+    <rect x="13" y="15" width="6" height="16" rx="1" fill="#e05a4a"/>
+    <rect x="20" y="13" width="5" height="18" rx="1" fill="#f4c548"/>
+    <rect x="26" y="17" width="7" height="14" rx="1" fill="#3f82db"/>
+    <rect x="34" y="14" width="5" height="17" rx="1" fill="#43b06d"/>
+    <rect x="40" y="15" width="5" height="16" rx="1" fill="#db63a4" transform="rotate(9 45 31)"/>
+    <rect x="46" y="18" width="5" height="13" rx="1" fill="#33b3ab"/>
+  </g>
+
+  <!-- bottom shelf: books sit on the base (bottoms at y=51), varied widths/heights -->
+  <g>
+    <rect x="13" y="37" width="5" height="14" rx="1" fill="#6d4aa8"/>
+    <rect x="19" y="35" width="6" height="16" rx="1" fill="#ea9a3e"/>
+    <rect x="26" y="38" width="5" height="13" rx="1" fill="#e05a4a"/>
+    <rect x="32" y="34" width="6" height="17" rx="1" fill="#33b3ab"/>
+    <rect x="39" y="37" width="5" height="14" rx="1" fill="#3f82db"/>
+    <rect x="45" y="36" width="6" height="15" rx="1" fill="#f4c548"/>
+  </g>
+</svg>

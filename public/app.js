@@ -433,18 +433,37 @@ async function startScanner() {
   pendingStop = false;
   $('#scanner').hidden = false;
   setScanUI('…', 'Requesting camera — allow access if prompted.');
-  scanner = new Html5Qrcode('scanner', { verbose: false });
-  const config = {
-    fps: 10, qrbox: { width: 250, height: 150 },
+  scanner = new Html5Qrcode('scanner', {
+    verbose: false,
+    // Only retail 1D formats -> the decoder spends every frame on what we want.
     formatsToSupport: [
       Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
       Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
     ],
+    // Use the OS barcode detector where present (Android Chrome) — faster/robuster.
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+  });
+  const config = {
+    fps: 15,
+    // Wide, short window that adapts to the viewfinder: EAN barcodes are wide,
+    // and a larger window puts more pixels on the bars = far better decoding.
+    qrbox: (vw, vh) => ({
+      width: Math.round(Math.min(vw * 0.9, 480)),
+      height: Math.round(Math.min(vh * 0.5, 220)),
+    }),
+  };
+  // Request a high-resolution, continuously-focused rear camera. Low-res or
+  // out-of-focus frames are the usual reason a barcode won't decode on a phone.
+  const cameraConstraints = {
+    facingMode: 'environment',
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    advanced: [{ focusMode: 'continuous' }],
   };
   try {
-    await scanner.start({ facingMode: 'environment' }, config, onScan, () => {});
+    await scanner.start(cameraConstraints, config, onScan, () => {});
     scanState = 'running';
-    setScanUI('■ Stop', 'Center the barcode in the box.');
+    setScanUI('■ Stop', 'Fill the box with the barcode · ~10–20 cm away · good light.');
     if (pendingStop) stopScanner();   // dialog was closed while the camera was starting
   } catch (err) {
     await teardownScanner();

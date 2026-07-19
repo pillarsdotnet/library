@@ -87,6 +87,14 @@ db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_genres_name_parent
     ON genres(name COLLATE NOCASE, ifnull(parent_id, 0));
 
+  -- Many-to-many: a book has a set of genres (SQLite has no array column type).
+  CREATE TABLE IF NOT EXISTS book_genres (
+    book_id   INTEGER NOT NULL REFERENCES books(id)  ON DELETE CASCADE,
+    genre_id  INTEGER NOT NULL REFERENCES genres(id) ON DELETE CASCADE,
+    PRIMARY KEY (book_id, genre_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_book_genres_genre ON book_genres(genre_id);
+
   CREATE INDEX IF NOT EXISTS idx_books_isbn   ON books(isbn);
   CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
   CREATE INDEX IF NOT EXISTS idx_books_title  ON books(title);
@@ -118,6 +126,48 @@ db.exec(`
 const bookColumns = db.prepare('PRAGMA table_info(books)').all().map((c) => c.name);
 if (!bookColumns.includes('source')) {
   db.exec('ALTER TABLE books ADD COLUMN source TEXT');
+}
+if (!bookColumns.includes('genres_migrated')) {
+  db.exec('ALTER TABLE books ADD COLUMN genres_migrated INTEGER DEFAULT 0');
+}
+
+// One-time backfill: turn each book's legacy free-text genre/subgenre into
+// book_genres rows, resolving names to genre ids (creating any missing genres).
+// The old genre-vs-subgenre distinction disambiguates: genre tokens map to
+// top-level genres, subgenre tokens to children.
+if (bookColumns.includes('genre') && bookColumns.includes('subgenre')) {
+  const splitTokens = (s) => String(s || '').split(/[,;]/).map((t) => t.trim()).filter(Boolean);
+  const findByName = db.prepare('SELECT * FROM genres WHERE name = ? COLLATE NOCASE');
+  const findTop = db.prepare('SELECT * FROM genres WHERE name = ? COLLATE NOCASE AND parent_id IS NULL');
+  const findChild = db.prepare('SELECT * FROM genres WHERE name = ? COLLATE NOCASE AND parent_id IS NOT NULL');
+  const insGenre = db.prepare('INSERT INTO genres (name, definition, parent_id) VALUES (?, ?, ?)');
+  const link = db.prepare('INSERT OR IGNORE INTO book_genres (book_id, genre_id) VALUES (?, ?)');
+  const markDone = db.prepare('UPDATE books SET genres_migrated = 1 WHERE id = ?');
+
+  const migrate = db.transaction(() => {
+    const pending = db.prepare('SELECT id, genre, subgenre FROM books WHERE genres_migrated = 0').all();
+    for (const b of pending) {
+      const ids = new Set();
+      let firstTopId = null;
+      for (const name of splitTokens(b.genre)) {
+        const g = findTop.get(name) || insGenre.run(name, '', null);
+        const id = g.id ?? g.lastInsertRowid;
+        firstTopId = firstTopId ?? id;
+        ids.add(id);
+      }
+      for (const name of splitTokens(b.subgenre)) {
+        let g = findChild.get(name) || findByName.get(name);
+        if (!g) {
+          const info = insGenre.run(name, '', firstTopId); // child of the book's genre if any, else top-level
+          g = { id: info.lastInsertRowid };
+        }
+        ids.add(g.id);
+      }
+      for (const id of ids) link.run(b.id, id);
+      markDone.run(b.id);
+    }
+  });
+  migrate();
 }
 
 export default db;

@@ -180,14 +180,14 @@ test('duplicate ISBN prompt: the "new" option creates the copy and opens it for 
   await page.close();
 });
 
-test('genre tag field: comma/Enter commit existing genres as chips; new one prompts', { skip }, async () => {
+test('genres field: comma/Enter commit existing genres as chips; stored as genre_ids', { skip }, async () => {
   const page = await browser.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
   await page.click('#addBtn');
   await page.waitForSelector('#editDialog[open]');
   await page.type('#bookForm [name="title"]', 'Multi Genre Book');
 
-  const genreInput = '#bookForm [name="genre"]';
+  const genreInput = '#genreInput';
   // Existing genre committed with a comma.
   await page.type(genreInput, 'Science Fiction,');
   await new Promise((r) => setTimeout(r, 150));
@@ -195,10 +195,7 @@ test('genre tag field: comma/Enter commit existing genres as chips; new one prom
   await page.type(genreInput, 'Mystery');
   await page.keyboard.press('Enter');
   await new Promise((r) => setTimeout(r, 150));
-  let chips = await page.$$eval('#genreField .chip', (els) => els.map((e) => e.textContent.replace('✕', '').trim()));
-  assert.deepEqual(chips.sort(), ['Mystery', 'Science Fiction'], 'two chips committed');
-
-  // A brand-new genre triggers the definition prompt.
+  // A brand-new genre triggers the definition prompt (leave it top-level).
   const newG = 'Weird ' + Date.now();
   await page.type(genreInput, newG);
   await page.keyboard.press('Enter');
@@ -206,15 +203,22 @@ test('genre tag field: comma/Enter commit existing genres as chips; new one prom
   await page.type('#newGenreDefinition', 'A new kind.');
   await page.click('#newGenreSave');
   await new Promise((r) => setTimeout(r, 400));
-  chips = await page.$$eval('#genreField .chip', (els) => els.map((e) => e.textContent.replace('✕', '').trim()));
-  assert.ok(chips.includes(newG), 'new genre added as a chip after defining it');
 
-  // Save and confirm the book stored a comma-joined multi-value genre.
+  const chips = await page.$$eval('#genreField .chip', (els) => els.map((e) => e.textContent.replace('✕', '').trim()));
+  assert.deepEqual(chips.sort(), ['Mystery', 'Science Fiction', newG].sort(), 'three chips committed');
+
+  // Save; the book stores genre_ids referencing the genres table.
   await page.click('#bookForm button[type="submit"]');
   await new Promise((r) => setTimeout(r, 500));
   const books = await (await fetch(`${BASE}/api/books?q=Multi Genre Book`)).json();
   const saved = books.find((b) => b.title === 'Multi Genre Book');
-  assert.ok(saved.genre.includes('Science Fiction') && saved.genre.includes('Mystery') && saved.genre.includes(newG));
+  const names = saved.genres.map((g) => g.name).sort();
+  assert.deepEqual(names, ['Mystery', 'Science Fiction', newG].sort());
+  assert.equal(saved.genre_ids.length, 3, 'three genre_ids');
+  // Filtering by one of its genre ids returns this book.
+  const gid = saved.genres.find((g) => g.name === 'Mystery').id;
+  const filtered = await (await fetch(`${BASE}/api/books?genre_id=${gid}`)).json();
+  assert.ok(filtered.some((b) => b.id === saved.id), 'genre_id filter matches');
   await page.close();
 });
 
@@ -236,12 +240,12 @@ test('typing a new genre in the book form prompts for a definition and saves it'
   await page.waitForSelector('#editDialog[open]');
   await page.type('#bookForm [name="title"]', 'Genre Prompt Book');
   const newGenre = 'Steampunk ' + Date.now();
-  await page.type('#bookForm [name="genre"]', newGenre);
+  await page.type('#genreInput', newGenre);
   await page.click('#bookForm button[type="submit"]');
 
-  // New-genre definition dialog should appear.
+  // New-genre definition dialog should appear (commitPending on save).
   await page.waitForSelector('#newGenreDialog[open]', { timeout: 4000 });
-  assert.match(await page.$eval('#newGenrePrompt', (el) => el.textContent), /new genre/i);
+  assert.match(await page.$eval('#newGenrePrompt', (el) => el.textContent), /is new/i);
   await page.type('#newGenreDefinition', 'Gears and steam.');
   await page.click('#newGenreSave');
   await new Promise((r) => setTimeout(r, 600));

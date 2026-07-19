@@ -33,8 +33,7 @@ let editingBookId = null;
 let editingShelfId = null;
 let scanner = null;
 let shelvesCache = [];
-let genreTags = null;      // multi-select tag field for the book's genres
-let subgenreTags = null;   // multi-select tag field for the book's subgenres
+let genreTags = null;      // multi-select genres field (id-based)
 
 // ---------------------------------------------------------------------------
 // Tabs
@@ -62,7 +61,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
 // Search box + filter selects, mapped to their query params.
 const FILTER_CONTROLS = [
   ['#search', 'q'], ['#filterStatus', 'status'], ['#filterFormat', 'format'],
-  ['#filterGenre', 'genre'], ['#filterRoom', 'room'], ['#filterBookcase', 'bookcase'],
+  ['#filterGenre', 'genre_id'], ['#filterRoom', 'room'], ['#filterBookcase', 'bookcase'],
   ['#filterShelf', 'shelf_id'],
 ];
 
@@ -110,6 +109,7 @@ function renderBookCard(b) {
         ${b.format ? `<span class="badge muted">${FORMAT_LABELS[b.format] || b.format}</span>` : ''}
         ${b.jacket === 'missing' ? '<span class="badge muted">No jacket</span>' : ''}
       </div>
+      ${b.genres && b.genres.length ? `<p class="loc">🏷 ${esc(b.genres.map((g) => g.name).join(', '))}</p>` : ''}
       ${location ? `<p class="loc">📍 ${esc(location)}</p>` : '<p class="loc muted-text">Unshelved</p>'}
       ${dims ? `<p class="loc">📐 ${dims}</p>` : ''}
       ${b.status === 'loaned' && b.loaned_to ? `<p class="loc">👤 ${esc(b.loaned_to)}</p>` : ''}
@@ -204,14 +204,12 @@ function openAddBook() {
   $('#suggestResult').hidden = true;
   $('#dupWarning').hidden = true;
   genreTags.set([]);
-  subgenreTags.set([]);
   setScanUI('📷 Scan', null);
   syncBookFields();
   bookDialog.showModal();
   $('#isbn').focus();
 }
 
-const splitTags = (v) => String(v || '').split(/[,;]/).map((s) => s.trim()).filter(Boolean);
 
 function openEditBook(book) {
   editingBookId = book.id;
@@ -219,14 +217,12 @@ function openEditBook(book) {
   $('#dialogTitle').textContent = 'Edit book';
   $('#deleteBtn').hidden = false;
   for (const [key, value] of Object.entries(book)) {
-    if (key === 'genre' || key === 'subgenre') continue; // handled as tag fields
     const field = bookForm.elements[key];
     if (!field) continue;
     if (field.type === 'checkbox') field.checked = !!value;
     else field.value = value ?? '';
   }
-  genreTags.set(splitTags(book.genre));
-  subgenreTags.set(splitTags(book.subgenre));
+  genreTags.set(book.genre_ids || []);
   DIM_FIELDS.forEach((f) => { if (bookForm.elements[f]) bookForm.elements[f].value = mmToUnit(book[f]); });
   showCover(book.cover_url);
   $('#lookupMsg').hidden = true;
@@ -372,15 +368,13 @@ function askDuplicate(dups, newData) {
 
 async function saveBook(e) {
   e.preventDefault();
-  // Commit any leftover text in the genre/subgenre tag fields (prompting to
-  // define a new one). Bail if the user cancels a definition prompt.
+  // Commit any leftover text in the genres field (prompting to define a new
+  // one). Bail if the user cancels a definition prompt.
   if (!await genreTags.commitPending()) return;
-  if (!await subgenreTags.commitPending()) return;
 
   const data = Object.fromEntries(new FormData(bookForm).entries());
   data.is_library_book = $('#isLibraryBook').checked;
-  data.genre = genreTags.get().join(', ');
-  data.subgenre = subgenreTags.get().join(', ');
+  data.genre_ids = genreTags.get();
   DIM_FIELDS.forEach((f) => { if (f in data) data[f] = unitToMm(data[f]); });
 
   // On a duplicate ISBN (adding only), let the user edit an existing copy,
@@ -795,9 +789,20 @@ async function loadMeta() {
   });
   fillSelect('filterRoom', meta.rooms, 'All rooms');
   fillSelect('filterBookcase', meta.bookcases, 'All bookcases');
-  // Genre filter lists the taxonomy's top-level genres (book genre values are now
-  // comma-joined multi-values, so distinct-value listing would show combinations).
-  fillSelect('filterGenre', topGenres().map((g) => g.name).sort((a, b) => a.localeCompare(b)), 'All genres');
+  populateGenreFilter();
+}
+
+// Genre filter is id-based: one option per taxonomy entry (subgenres qualified
+// "Parent › Child"), so filtering matches book_genres exactly.
+function populateGenreFilter() {
+  const sel = $('#filterGenre');
+  const current = sel.value;
+  const opts = [...genresCache]
+    .map((g) => ({ id: g.id, label: genreLabel(g) }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  sel.innerHTML = '<option value="">All genres</option>'
+    + opts.map((o) => `<option value="${o.id}">${esc(o.label)}</option>`).join('');
+  sel.value = current;
 }
 
 function fillSelect(id, values, allLabel) {
@@ -860,13 +865,11 @@ let editingGenreId = null;
 
 const topGenres = () => genresCache.filter((g) => !g.parent_id);
 const subGenres = (parentId) => genresCache.filter((g) => g.parent_id === parentId);
-const findTopGenre = (name) => genresCache.find((g) => !g.parent_id && g.name.toLowerCase() === (name || '').trim().toLowerCase());
-const findSubGenre = (name, parentId) =>
-  genresCache.find((g) => g.parent_id === parentId && g.name.toLowerCase() === (name || '').trim().toLowerCase());
 
 async function loadGenres() {
   genresCache = await api('/genres');
   renderGenres();
+  populateGenreFilter();
 }
 
 function renderGenres() {
@@ -953,22 +956,20 @@ async function deleteGenre() {
   await loadGenres();
 }
 
-// Prompt for a definition when a brand-new genre/subgenre is typed. When
-// `candidates` (array of {id,name}) is given, a subgenre is being created and the
-// user picks its parent. Creates it (POST /api/genres) and resolves to the record
+// Prompt for a definition (and parent) when a brand-new genre is typed in the
+// book form. `candidates` are the top-level genres offered as a possible parent
+// (or leave top-level). Creates it (POST /api/genres) and resolves to the record
 // (or null if cancelled).
 function promptNewGenre(name, candidates) {
   return new Promise((resolve) => {
     const dlg = $('#newGenreDialog');
-    const isSub = Array.isArray(candidates) && candidates.length > 0;
-    $('#newGenreTitle').textContent = isSub ? 'New subgenre' : 'New genre';
-    $('#newGenrePrompt').textContent = isSub
-      ? `“${name}” is a new subgenre. Choose its parent and add a definition:`
-      : `“${name}” is a new genre. Add a definition:`;
-    const parentRow = $('#newGenreParentRow');
+    const list = Array.isArray(candidates) ? candidates : [];
+    $('#newGenreTitle').textContent = 'New genre';
+    $('#newGenrePrompt').textContent = `“${name}” is new. Pick a parent (or leave it top-level) and add a definition:`;
     const parentSel = $('#newGenreParent');
-    parentRow.hidden = !isSub;
-    if (isSub) parentSel.innerHTML = candidates.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    $('#newGenreParentRow').hidden = false;
+    parentSel.innerHTML = '<option value="">— top-level genre —</option>'
+      + list.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
     $('#newGenreDefinition').value = '';
     const saveBtn = $('#newGenreSave');
     const cancelBtn = $('#newGenreCancel');
@@ -977,7 +978,7 @@ function promptNewGenre(name, candidates) {
       try {
         const g = await api('/genres', {
           method: 'POST', headers: json(),
-          body: JSON.stringify({ name, definition: $('#newGenreDefinition').value, parent_id: isSub ? Number(parentSel.value) : null }),
+          body: JSON.stringify({ name, definition: $('#newGenreDefinition').value, parent_id: parentSel.value ? Number(parentSel.value) : null }),
         });
         if (!genresCache.some((x) => x.id === g.id)) genresCache.push(g);
         cleanup(); dlg.close(); resolve(g);
@@ -993,68 +994,80 @@ function promptNewGenre(name, candidates) {
   });
 }
 
-// Resolve a typed genre token to a canonical name (creating it if new). null = cancelled.
-async function resolveGenreToken(text) {
-  const existing = findTopGenre(text);
-  if (existing) return existing.name;
-  const created = await promptNewGenre(text, null);
-  return created ? created.name : null;
+// ---------------------------------------------------------------------------
+// Genre multi-select (id-based). Chips hold genre ids; the book stores its
+// genres via the book_genres join table (data.genre_ids). Suggestions cover the
+// whole taxonomy, subgenres shown as "Parent › Child" to disambiguate.
+// ---------------------------------------------------------------------------
+const genreById = (id) => genresCache.find((g) => g.id === id);
+function genreLabel(g) {
+  if (!g) return '';
+  if (!g.parent_id) return g.name;
+  const p = genreById(g.parent_id);
+  return p ? `${p.name} › ${g.name}` : g.name;
 }
 
-// Resolve a typed subgenre token. Parent candidates are the currently-selected
-// genres (falling back to all top-level genres if none chosen).
-async function resolveSubgenreToken(text) {
-  const selected = genreTags.get().map(findTopGenre).filter(Boolean);
-  for (const p of selected) { const s = findSubGenre(text, p.id); if (s) return s.name; }
-  const anySub = genresCache.find((g) => g.parent_id && g.name.toLowerCase() === text.trim().toLowerCase());
-  if (anySub) return anySub.name;
-  const candidates = (selected.length ? selected : topGenres()).map((g) => ({ id: g.id, name: g.name }));
-  const created = await promptNewGenre(text, candidates);
-  return created ? created.name : null;
-}
-
-// A tag/chip multi-select over an <input>. Commits the typed token on
-// , ; Tab or Enter (and on picking a suggestion); Backspace on empty removes the
-// last chip. resolve(token) -> canonical name string, or null to reject/cancel.
-function attachTagField(input, { getSuggestions, resolve }) {
+function createGenreField(input) {
   const field = input.closest('.tag-field');
-  let tags = [];
+  const label = field.closest('label');
+  let ids = [];
   const list = document.createElement('ul');
   list.className = 'combo-list';
   list.hidden = true;
-  field.closest('label').appendChild(list);
+  label.appendChild(list);
   let active = -1;
   let busy = false;
 
   const renderChips = () => {
     field.querySelectorAll('.chip').forEach((c) => c.remove());
-    for (const [i, name] of tags.entries()) {
+    ids.forEach((id, i) => {
       const chip = document.createElement('span');
       chip.className = 'chip';
-      chip.innerHTML = `${esc(name)} <button type="button" aria-label="Remove">✕</button>`;
-      chip.querySelector('button').onclick = () => { tags.splice(i, 1); renderChips(); };
+      chip.innerHTML = `${esc(genreLabel(genreById(id)))} <button type="button" aria-label="Remove">✕</button>`;
+      chip.querySelector('button').onclick = () => { ids.splice(i, 1); renderChips(); };
       field.insertBefore(chip, input);
-    }
+    });
   };
   const closeList = () => { list.hidden = true; list.innerHTML = ''; active = -1; };
-  const renderList = () => {
+  const suggestions = () => {
     const q = input.value.trim().toLowerCase();
-    const items = getSuggestions()
-      .filter((v) => !tags.some((t) => t.toLowerCase() === v.toLowerCase()))
-      .filter((v) => v.toLowerCase().includes(q)).slice(0, 6);
+    return genresCache
+      .filter((g) => !ids.includes(g.id))
+      .map((g) => ({ id: g.id, label: genreLabel(g), name: g.name }))
+      .filter((o) => o.label.toLowerCase().includes(q) || o.name.toLowerCase().includes(q))
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .slice(0, 8);
+  };
+  const renderList = () => {
+    const items = suggestions();
     if (!items.length) return closeList();
-    list.innerHTML = items.map((v) => `<li role="option">${esc(v)}</li>`).join('');
+    list.innerHTML = items.map((o) => `<li role="option" data-id="${o.id}">${esc(o.label)}</li>`).join('');
     list.hidden = false; active = -1;
   };
-  const addTag = (name) => {
-    if (name && !tags.some((t) => t.toLowerCase() === name.toLowerCase())) tags.push(name);
+  const addId = (id) => {
+    if (id && !ids.includes(id)) ids.push(id);
     input.value = ''; renderChips(); closeList();
   };
-  const commit = async (raw) => {
+  // Resolve typed text to a genre id, creating a new genre if none match.
+  // Returns an id, 'ambiguous', or null (cancelled / no match created).
+  const resolve = async (raw) => {
     const text = (raw || '').replace(/[,;]+$/, '').trim();
-    if (!text || busy) return;
+    if (!text) return null;
+    const lc = text.toLowerCase();
+    const matches = genresCache.filter((g) => g.name.toLowerCase() === lc || genreLabel(g).toLowerCase() === lc);
+    if (matches.length === 1) return matches[0].id;
+    if (matches.length > 1) return 'ambiguous';
+    const created = await promptNewGenre(text, topGenres().map((g) => ({ id: g.id, name: g.name })));
+    return created ? created.id : null;
+  };
+  const commit = async (raw) => {
+    if (busy) return;
     busy = true;
-    try { const name = await resolve(text); if (name) addTag(name); } finally { busy = false; }
+    try {
+      const r = await resolve(raw);
+      if (r === 'ambiguous') { renderList(); return; } // keep list open; user picks the specific one
+      if (r) addId(r);
+    } finally { busy = false; }
   };
 
   input.addEventListener('input', renderList);
@@ -1062,37 +1075,36 @@ function attachTagField(input, { getSuggestions, resolve }) {
   input.addEventListener('blur', () => setTimeout(closeList, 150));
   list.addEventListener('pointerdown', (e) => {
     const li = e.target.closest('li');
-    if (li) { e.preventDefault(); commit(li.textContent); }
+    if (li) { e.preventDefault(); addId(Number(li.dataset.id)); }
   });
   input.addEventListener('keydown', (e) => {
     if (!list.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault();
-      const items = [...list.children];
-      active = e.key === 'ArrowDown' ? Math.min(active + 1, items.length - 1) : Math.max(active - 1, 0);
-      items.forEach((li, i) => li.classList.toggle('active', i === active));
+      const lis = [...list.children];
+      active = e.key === 'ArrowDown' ? Math.min(active + 1, lis.length - 1) : Math.max(active - 1, 0);
+      lis.forEach((li, i) => li.classList.toggle('active', i === active));
       return;
     }
-    if (e.key === ',' || e.key === ';' || e.key === 'Tab' || e.key === 'Enter') {
-      if (e.key === 'Enter' && active >= 0 && !list.hidden) { e.preventDefault(); commit(list.children[active].textContent); return; }
-      // Don't trap Tab when the field is empty — let focus move on normally.
+    if (e.key === 'Enter' && active >= 0 && !list.hidden) { e.preventDefault(); addId(Number(list.children[active].dataset.id)); return; }
+    if (e.key === ',' || e.key === ';' || e.key === 'Enter' || e.key === 'Tab') {
       if (e.key === 'Tab' && !input.value.trim()) return;
       e.preventDefault();
       commit(input.value);
-    } else if (e.key === 'Backspace' && !input.value && tags.length) {
-      tags.pop(); renderChips();
+    } else if (e.key === 'Backspace' && !input.value && ids.length) {
+      ids.pop(); renderChips();
     }
   });
 
   return {
-    get: () => tags.slice(),
-    set: (arr) => { tags = (arr || []).filter(Boolean); renderChips(); input.value = ''; },
-    // Commit any leftover text (e.g. on Save). Returns false if the user cancelled a prompt.
+    get: () => ids.slice(),
+    set: (arr) => { ids = (arr || []).map(Number).filter((n) => genreById(n)); renderChips(); input.value = ''; },
     commitPending: async () => {
       const text = input.value.trim();
       if (!text) return true;
-      const name = await resolve(text);
-      if (!name) return false;
-      addTag(name);
+      const r = await resolve(text);
+      if (r === 'ambiguous') { alert(`"${text}" matches more than one genre — pick the specific one from the list.`); return false; }
+      if (!r) return false;
+      addId(r);
       return true;
     },
   };
@@ -1217,20 +1229,8 @@ $('#deleteShelfBtn').addEventListener('click', deleteShelf);
 shelfForm.addEventListener('submit', saveShelf);
 
 // Autocomplete for the free-text classification/location fields.
-// Genre suggests top-level genres; subgenre suggests children of the chosen
-// genre(s). Both are multi-select tag fields.
-genreTags = attachTagField(bookForm.elements.genre, {
-  getSuggestions: () => topGenres().map((g) => g.name),
-  resolve: resolveGenreToken,
-});
-subgenreTags = attachTagField(bookForm.elements.subgenre, {
-  getSuggestions: () => {
-    const selected = genreTags.get().map(findTopGenre).filter(Boolean);
-    const parents = selected.length ? selected : topGenres();
-    return [...new Set(parents.flatMap((p) => subGenres(p.id).map((g) => g.name)))];
-  },
-  resolve: resolveSubgenreToken,
-});
+// Single multi-select genres field (id-based, backed by book_genres).
+genreTags = createGenreField($('#genreInput'));
 $('#addGenreBtn').addEventListener('click', openAddGenre);
 $('#closeGenreDialog').addEventListener('click', () => genreDialog.close());
 $('#cancelGenreBtn').addEventListener('click', () => genreDialog.close());

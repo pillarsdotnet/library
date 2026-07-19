@@ -38,7 +38,7 @@ const round1 = (n) => Math.round(n * 10) / 10;
 const BOOK_COLS = [
   'isbn', 'title', 'authors', 'publisher', 'published_date', 'page_count', 'cover_url',
   'format', 'jacket', 'height_mm', 'width_mm', 'thickness_mm',
-  'genre', 'subgenre', 'shelf_id',
+  'shelf_id',
   'status', 'loaned_to',
   'is_library_book', 'library_name', 'due_date',
   'source', 'notes',
@@ -74,25 +74,53 @@ function update(table, id, data) {
 // ---------------------------------------------------------------------------
 // Books CRUD
 // ---------------------------------------------------------------------------
+
+// Replace a book's genres with the given list of genre ids (ignores unknown ids).
+function setBookGenres(bookId, genreIds) {
+  if (!Array.isArray(genreIds)) return;
+  db.prepare('DELETE FROM book_genres WHERE book_id = ?').run(bookId);
+  const link = db.prepare('INSERT OR IGNORE INTO book_genres (book_id, genre_id) VALUES (?, ?)');
+  const known = db.prepare('SELECT id FROM genres WHERE id = ?');
+  for (const gid of genreIds) {
+    const n = Number(gid);
+    if (n && known.get(n)) link.run(bookId, n);
+  }
+}
+
+// Attach each book's genres (id + name + parent_id) to the given rows.
+function attachGenres(books) {
+  if (!books.length) return books;
+  const rows = db.prepare(`
+    SELECT bg.book_id, g.id, g.name, g.parent_id
+    FROM book_genres bg JOIN genres g ON g.id = bg.genre_id
+    ORDER BY g.name COLLATE NOCASE`).all();
+  const byBook = new Map();
+  for (const r of rows) {
+    if (!byBook.has(r.book_id)) byBook.set(r.book_id, []);
+    byBook.get(r.book_id).push({ id: r.id, name: r.name, parent_id: r.parent_id });
+  }
+  for (const b of books) {
+    b.genres = byBook.get(b.id) || [];
+    b.genre_ids = b.genres.map((g) => g.id);
+  }
+  return books;
+}
+
 router.get('/api/books', (req, res) => {
-  const { q, status, room, bookcase, genre, format, shelf_id } = req.query;
+  const { q, status, room, bookcase, genre_id, format, shelf_id } = req.query;
   const where = [];
   const params = {};
 
   if (q) {
-    where.push('(b.title LIKE @q OR b.authors LIKE @q OR b.isbn LIKE @q OR b.genre LIKE @q OR b.subgenre LIKE @q)');
+    where.push('(b.title LIKE @q OR b.authors LIKE @q OR b.isbn LIKE @q)');
     params.q = `%${q}%`;
   }
   for (const [field, value] of [['status', status], ['format', format]]) {
     if (value) { where.push(`b.${field} = @${field}`); params[field] = value; }
   }
-  // genre/subgenre are comma-joined multi-values; match one token exactly by
-  // wrapping both the column and the needle in the ", " delimiter.
-  for (const [field, value] of [['genre', genre], ['subgenre', req.query.subgenre]]) {
-    if (value) {
-      where.push(`instr(', ' || b.${field} || ', ', @${field}) > 0`);
-      params[field] = `, ${value}, `;
-    }
+  if (genre_id) {
+    where.push('EXISTS (SELECT 1 FROM book_genres bg WHERE bg.book_id = b.id AND bg.genre_id = @genre_id)');
+    params.genre_id = Number(genre_id);
   }
   if (room) { where.push('s.room = @room'); params.room = room; }
   if (bookcase) { where.push('s.bookcase = @bookcase'); params.bookcase = bookcase; }
@@ -104,27 +132,29 @@ router.get('/api/books', (req, res) => {
     FROM books b LEFT JOIN shelves s ON s.id = b.shelf_id
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY sort_title(b.title)`;
-  res.json(db.prepare(sql).all(params));
+  res.json(attachGenres(db.prepare(sql).all(params)));
 });
 
 router.get('/api/books/:id', (req, res) => {
   const book = db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id);
   if (!book) return res.status(404).json({ error: 'Not found' });
-  res.json(book);
+  res.json(attachGenres([book])[0]);
 });
 
 router.post('/api/books', (req, res) => {
   const data = pick(req.body, BOOK_COLS);
   if (!data.title) return res.status(400).json({ error: 'title is required' });
   const id = insert('books', data);
-  res.status(201).json(db.prepare('SELECT * FROM books WHERE id = ?').get(id));
+  if (req.body.genre_ids !== undefined) setBookGenres(id, req.body.genre_ids);
+  res.status(201).json(attachGenres([db.prepare('SELECT * FROM books WHERE id = ?').get(id)])[0]);
 });
 
 router.put('/api/books/:id', (req, res) => {
   if (!db.prepare('SELECT id FROM books WHERE id = ?').get(req.params.id))
     return res.status(404).json({ error: 'Not found' });
   update('books', req.params.id, pick(req.body, BOOK_COLS));
-  res.json(db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id));
+  if (req.body.genre_ids !== undefined) setBookGenres(req.params.id, req.body.genre_ids);
+  res.json(attachGenres([db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id)])[0]);
 });
 
 router.delete('/api/books/:id', (req, res) => {

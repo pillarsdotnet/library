@@ -32,4 +32,10 @@ export const GENRE_SEED = [
   { name: 'Mystery', definition: 'Crime procedurals, spy novels, whodunnits.', children: [] },
   { name: 'Thriller', definition: 'Suspense, chase, action.', children: [] },
   { name: 'Occupational', definition: 'Focus on a specific industry, occupation, or vocation.', children: [] },
+
+  // Reader-level genres (classify by audience / protagonist maturity).
+  { name: 'Adult', definition: 'Protagonists are adult, or act from adult motivations.', children: [] },
+  { name: 'Young Adult', definition: 'Protagonists are between the ages of puberty and adulthood (generally 12-18).', children: [] },
+  { name: 'Middle-Grade', definition: 'Protagonists are literate but prepubescent.', children: [] },
+  { name: 'Children', definition: 'Books intended to be read to young children or by beginning readers.', children: [] },
 ];

@@ -33,6 +33,8 @@ let editingBookId = null;
 let editingShelfId = null;
 let scanner = null;
 let shelvesCache = [];
+let genreTags = null;      // multi-select tag field for the book's genres
+let subgenreTags = null;   // multi-select tag field for the book's subgenres
 
 // ---------------------------------------------------------------------------
 // Tabs
@@ -201,11 +203,15 @@ function openAddBook() {
   $('#fitWarning').hidden = true;
   $('#suggestResult').hidden = true;
   $('#dupWarning').hidden = true;
+  genreTags.set([]);
+  subgenreTags.set([]);
   setScanUI('📷 Scan', null);
   syncBookFields();
   bookDialog.showModal();
   $('#isbn').focus();
 }
+
+const splitTags = (v) => String(v || '').split(/[,;]/).map((s) => s.trim()).filter(Boolean);
 
 function openEditBook(book) {
   editingBookId = book.id;
@@ -213,11 +219,14 @@ function openEditBook(book) {
   $('#dialogTitle').textContent = 'Edit book';
   $('#deleteBtn').hidden = false;
   for (const [key, value] of Object.entries(book)) {
+    if (key === 'genre' || key === 'subgenre') continue; // handled as tag fields
     const field = bookForm.elements[key];
     if (!field) continue;
     if (field.type === 'checkbox') field.checked = !!value;
     else field.value = value ?? '';
   }
+  genreTags.set(splitTags(book.genre));
+  subgenreTags.set(splitTags(book.subgenre));
   DIM_FIELDS.forEach((f) => { if (bookForm.elements[f]) bookForm.elements[f].value = mmToUnit(book[f]); });
   showCover(book.cover_url);
   $('#lookupMsg').hidden = true;
@@ -363,11 +372,15 @@ function askDuplicate(dups, newData) {
 
 async function saveBook(e) {
   e.preventDefault();
-  // Prompt to define any newly-typed genre/subgenre before saving.
-  if (!await ensureBookGenres()) return;
+  // Commit any leftover text in the genre/subgenre tag fields (prompting to
+  // define a new one). Bail if the user cancels a definition prompt.
+  if (!await genreTags.commitPending()) return;
+  if (!await subgenreTags.commitPending()) return;
 
   const data = Object.fromEntries(new FormData(bookForm).entries());
   data.is_library_book = $('#isLibraryBook').checked;
+  data.genre = genreTags.get().join(', ');
+  data.subgenre = subgenreTags.get().join(', ');
   DIM_FIELDS.forEach((f) => { if (f in data) data[f] = unitToMm(data[f]); });
 
   // On a duplicate ISBN (adding only), let the user edit an existing copy,
@@ -782,9 +795,9 @@ async function loadMeta() {
   });
   fillSelect('filterRoom', meta.rooms, 'All rooms');
   fillSelect('filterBookcase', meta.bookcases, 'All bookcases');
-  // Genre filter: union of taxonomy top-level genres and any genres in use.
-  const genreNames = [...new Set([...topGenres().map((g) => g.name), ...meta.genres])].sort((a, b) => a.localeCompare(b));
-  fillSelect('filterGenre', genreNames, 'All genres');
+  // Genre filter lists the taxonomy's top-level genres (book genre values are now
+  // comma-joined multi-values, so distinct-value listing would show combinations).
+  fillSelect('filterGenre', topGenres().map((g) => g.name).sort((a, b) => a.localeCompare(b)), 'All genres');
 }
 
 function fillSelect(id, values, allLabel) {
@@ -940,17 +953,22 @@ async function deleteGenre() {
   await loadGenres();
 }
 
-// Prompt for a definition when the user types a brand-new genre/subgenre in the
-// book form. Creates it (POST /api/genres) and resolves to the created record,
-// or null if cancelled.
-function promptNewGenre(name, parentId) {
+// Prompt for a definition when a brand-new genre/subgenre is typed. When
+// `candidates` (array of {id,name}) is given, a subgenre is being created and the
+// user picks its parent. Creates it (POST /api/genres) and resolves to the record
+// (or null if cancelled).
+function promptNewGenre(name, candidates) {
   return new Promise((resolve) => {
     const dlg = $('#newGenreDialog');
-    const parent = parentId ? genresCache.find((g) => g.id === parentId) : null;
-    $('#newGenreTitle').textContent = parent ? 'New subgenre' : 'New genre';
-    $('#newGenrePrompt').textContent = parent
-      ? `“${name}” is a new subgenre of ${parent.name}. Add a definition:`
+    const isSub = Array.isArray(candidates) && candidates.length > 0;
+    $('#newGenreTitle').textContent = isSub ? 'New subgenre' : 'New genre';
+    $('#newGenrePrompt').textContent = isSub
+      ? `“${name}” is a new subgenre. Choose its parent and add a definition:`
       : `“${name}” is a new genre. Add a definition:`;
+    const parentRow = $('#newGenreParentRow');
+    const parentSel = $('#newGenreParent');
+    parentRow.hidden = !isSub;
+    if (isSub) parentSel.innerHTML = candidates.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
     $('#newGenreDefinition').value = '';
     const saveBtn = $('#newGenreSave');
     const cancelBtn = $('#newGenreCancel');
@@ -959,9 +977,9 @@ function promptNewGenre(name, parentId) {
       try {
         const g = await api('/genres', {
           method: 'POST', headers: json(),
-          body: JSON.stringify({ name, definition: $('#newGenreDefinition').value, parent_id: parentId || null }),
+          body: JSON.stringify({ name, definition: $('#newGenreDefinition').value, parent_id: isSub ? Number(parentSel.value) : null }),
         });
-        genresCache.push(g);
+        if (!genresCache.some((x) => x.id === g.id)) genresCache.push(g);
         cleanup(); dlg.close(); resolve(g);
       } catch (err) { alert('Could not add genre: ' + err.message); }
     };
@@ -975,24 +993,109 @@ function promptNewGenre(name, parentId) {
   });
 }
 
-// Before saving a book, make sure any newly-typed genre/subgenre exists in the
-// taxonomy, prompting for a definition. Returns false if the user cancelled.
-async function ensureBookGenres() {
-  const gName = bookForm.elements.genre.value.trim();
-  const sName = bookForm.elements.subgenre.value.trim();
-  let genre = null;
-  if (gName) {
-    genre = findTopGenre(gName);
-    if (!genre) { genre = await promptNewGenre(gName, null); if (!genre) return false; }
-  }
-  if (sName) {
-    const parentId = genre ? genre.id : null;
-    if (!findSubGenre(sName, parentId)) {
-      const created = await promptNewGenre(sName, parentId);
-      if (!created) return false;
+// Resolve a typed genre token to a canonical name (creating it if new). null = cancelled.
+async function resolveGenreToken(text) {
+  const existing = findTopGenre(text);
+  if (existing) return existing.name;
+  const created = await promptNewGenre(text, null);
+  return created ? created.name : null;
+}
+
+// Resolve a typed subgenre token. Parent candidates are the currently-selected
+// genres (falling back to all top-level genres if none chosen).
+async function resolveSubgenreToken(text) {
+  const selected = genreTags.get().map(findTopGenre).filter(Boolean);
+  for (const p of selected) { const s = findSubGenre(text, p.id); if (s) return s.name; }
+  const anySub = genresCache.find((g) => g.parent_id && g.name.toLowerCase() === text.trim().toLowerCase());
+  if (anySub) return anySub.name;
+  const candidates = (selected.length ? selected : topGenres()).map((g) => ({ id: g.id, name: g.name }));
+  const created = await promptNewGenre(text, candidates);
+  return created ? created.name : null;
+}
+
+// A tag/chip multi-select over an <input>. Commits the typed token on
+// , ; Tab or Enter (and on picking a suggestion); Backspace on empty removes the
+// last chip. resolve(token) -> canonical name string, or null to reject/cancel.
+function attachTagField(input, { getSuggestions, resolve }) {
+  const field = input.closest('.tag-field');
+  let tags = [];
+  const list = document.createElement('ul');
+  list.className = 'combo-list';
+  list.hidden = true;
+  field.closest('label').appendChild(list);
+  let active = -1;
+  let busy = false;
+
+  const renderChips = () => {
+    field.querySelectorAll('.chip').forEach((c) => c.remove());
+    for (const [i, name] of tags.entries()) {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.innerHTML = `${esc(name)} <button type="button" aria-label="Remove">✕</button>`;
+      chip.querySelector('button').onclick = () => { tags.splice(i, 1); renderChips(); };
+      field.insertBefore(chip, input);
     }
-  }
-  return true;
+  };
+  const closeList = () => { list.hidden = true; list.innerHTML = ''; active = -1; };
+  const renderList = () => {
+    const q = input.value.trim().toLowerCase();
+    const items = getSuggestions()
+      .filter((v) => !tags.some((t) => t.toLowerCase() === v.toLowerCase()))
+      .filter((v) => v.toLowerCase().includes(q)).slice(0, 6);
+    if (!items.length) return closeList();
+    list.innerHTML = items.map((v) => `<li role="option">${esc(v)}</li>`).join('');
+    list.hidden = false; active = -1;
+  };
+  const addTag = (name) => {
+    if (name && !tags.some((t) => t.toLowerCase() === name.toLowerCase())) tags.push(name);
+    input.value = ''; renderChips(); closeList();
+  };
+  const commit = async (raw) => {
+    const text = (raw || '').replace(/[,;]+$/, '').trim();
+    if (!text || busy) return;
+    busy = true;
+    try { const name = await resolve(text); if (name) addTag(name); } finally { busy = false; }
+  };
+
+  input.addEventListener('input', renderList);
+  input.addEventListener('focus', renderList);
+  input.addEventListener('blur', () => setTimeout(closeList, 150));
+  list.addEventListener('pointerdown', (e) => {
+    const li = e.target.closest('li');
+    if (li) { e.preventDefault(); commit(li.textContent); }
+  });
+  input.addEventListener('keydown', (e) => {
+    if (!list.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      const items = [...list.children];
+      active = e.key === 'ArrowDown' ? Math.min(active + 1, items.length - 1) : Math.max(active - 1, 0);
+      items.forEach((li, i) => li.classList.toggle('active', i === active));
+      return;
+    }
+    if (e.key === ',' || e.key === ';' || e.key === 'Tab' || e.key === 'Enter') {
+      if (e.key === 'Enter' && active >= 0 && !list.hidden) { e.preventDefault(); commit(list.children[active].textContent); return; }
+      // Don't trap Tab when the field is empty — let focus move on normally.
+      if (e.key === 'Tab' && !input.value.trim()) return;
+      e.preventDefault();
+      commit(input.value);
+    } else if (e.key === 'Backspace' && !input.value && tags.length) {
+      tags.pop(); renderChips();
+    }
+  });
+
+  return {
+    get: () => tags.slice(),
+    set: (arr) => { tags = (arr || []).filter(Boolean); renderChips(); input.value = ''; },
+    // Commit any leftover text (e.g. on Save). Returns false if the user cancelled a prompt.
+    commitPending: async () => {
+      const text = input.value.trim();
+      if (!text) return true;
+      const name = await resolve(text);
+      if (!name) return false;
+      addTag(name);
+      return true;
+    },
+  };
 }
 
 async function refresh() {
@@ -1114,11 +1217,19 @@ $('#deleteShelfBtn').addEventListener('click', deleteShelf);
 shelfForm.addEventListener('submit', saveShelf);
 
 // Autocomplete for the free-text classification/location fields.
-// Genre suggests top-level genres; subgenre suggests children of the chosen genre.
-attachCombo(bookForm.elements.genre, () => topGenres().map((g) => g.name));
-attachCombo(bookForm.elements.subgenre, () => {
-  const genre = findTopGenre(bookForm.elements.genre.value);
-  return subGenres(genre ? genre.id : null).map((g) => g.name);
+// Genre suggests top-level genres; subgenre suggests children of the chosen
+// genre(s). Both are multi-select tag fields.
+genreTags = attachTagField(bookForm.elements.genre, {
+  getSuggestions: () => topGenres().map((g) => g.name),
+  resolve: resolveGenreToken,
+});
+subgenreTags = attachTagField(bookForm.elements.subgenre, {
+  getSuggestions: () => {
+    const selected = genreTags.get().map(findTopGenre).filter(Boolean);
+    const parents = selected.length ? selected : topGenres();
+    return [...new Set(parents.flatMap((p) => subGenres(p.id).map((g) => g.name)))];
+  },
+  resolve: resolveSubgenreToken,
 });
 $('#addGenreBtn').addEventListener('click', openAddGenre);
 $('#closeGenreDialog').addEventListener('click', () => genreDialog.close());

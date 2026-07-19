@@ -93,16 +93,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_books_shelf  ON books(shelf_id);
 `);
 
-// Seed the genre taxonomy once, on an empty genres table.
-if (db.prepare('SELECT COUNT(*) AS n FROM genres').get().n === 0) {
+// Seed the genre taxonomy idempotently: insert any missing seed entries without
+// touching existing (possibly user-edited) rows. This also lets new seed genres
+// (e.g. reader-levels added later) propagate into an already-seeded database.
+{
+  const findGenre = db.prepare(
+    'SELECT id FROM genres WHERE name = ? COLLATE NOCASE AND ifnull(parent_id, 0) = ifnull(?, 0)',
+  );
   const insGenre = db.prepare('INSERT INTO genres (name, definition, parent_id) VALUES (?, ?, ?)');
-  const seed = db.transaction(() => {
+  const ensureSeed = db.transaction(() => {
     for (const g of GENRE_SEED) {
-      const parentId = insGenre.run(g.name, g.definition, null).lastInsertRowid;
-      for (const c of g.children || []) insGenre.run(c.name, c.definition, parentId);
+      const existing = findGenre.get(g.name, null);
+      const parentId = existing ? existing.id : insGenre.run(g.name, g.definition, null).lastInsertRowid;
+      for (const c of g.children || []) {
+        if (!findGenre.get(c.name, parentId)) insGenre.run(c.name, c.definition, parentId);
+      }
     }
   });
-  seed();
+  ensureSeed();
 }
 
 // Migrations for databases created before a column existed. ALTER TABLE ADD

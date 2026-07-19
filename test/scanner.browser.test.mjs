@@ -180,6 +180,55 @@ test('duplicate ISBN prompt: the "new" option creates the copy and opens it for 
   await page.close();
 });
 
+test('genre tag field: comma/Enter commit existing genres as chips; new one prompts', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+  await page.type('#bookForm [name="title"]', 'Multi Genre Book');
+
+  const genreInput = '#bookForm [name="genre"]';
+  // Existing genre committed with a comma.
+  await page.type(genreInput, 'Science Fiction,');
+  await new Promise((r) => setTimeout(r, 150));
+  // Existing genre committed with Enter.
+  await page.type(genreInput, 'Mystery');
+  await page.keyboard.press('Enter');
+  await new Promise((r) => setTimeout(r, 150));
+  let chips = await page.$$eval('#genreField .chip', (els) => els.map((e) => e.textContent.replace('✕', '').trim()));
+  assert.deepEqual(chips.sort(), ['Mystery', 'Science Fiction'], 'two chips committed');
+
+  // A brand-new genre triggers the definition prompt.
+  const newG = 'Weird ' + Date.now();
+  await page.type(genreInput, newG);
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('#newGenreDialog[open]', { timeout: 4000 });
+  await page.type('#newGenreDefinition', 'A new kind.');
+  await page.click('#newGenreSave');
+  await new Promise((r) => setTimeout(r, 400));
+  chips = await page.$$eval('#genreField .chip', (els) => els.map((e) => e.textContent.replace('✕', '').trim()));
+  assert.ok(chips.includes(newG), 'new genre added as a chip after defining it');
+
+  // Save and confirm the book stored a comma-joined multi-value genre.
+  await page.click('#bookForm button[type="submit"]');
+  await new Promise((r) => setTimeout(r, 500));
+  const books = await (await fetch(`${BASE}/api/books?q=Multi Genre Book`)).json();
+  const saved = books.find((b) => b.title === 'Multi Genre Book');
+  assert.ok(saved.genre.includes('Science Fiction') && saved.genre.includes('Mystery') && saved.genre.includes(newG));
+  await page.close();
+});
+
+test('reader-level genres are seeded and offered as top-level genres', { skip }, async () => {
+  const genres = await (await fetch(`${BASE}/api/genres`)).json();
+  const readerLevels = ['Adult', 'Young Adult', 'Middle-Grade', 'Children'];
+  for (const name of readerLevels) {
+    const g = genres.find((x) => x.name === name);
+    assert.ok(g, `${name} seeded`);
+    assert.equal(g.parent_id, null, `${name} is top-level`);
+    assert.ok(g.definition, `${name} has a definition`);
+  }
+});
+
 test('typing a new genre in the book form prompts for a definition and saves it', { skip }, async () => {
   const page = await browser.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });

@@ -106,6 +106,9 @@
   <dialog id="newGenreDialog" class="pad-dialog">
     <div class="dialog-head"><h2 id="newGenreTitle">New genre</h2></div>
     <p id="newGenrePrompt" class="hint"></p>
+    <label id="newGenreParentRow" hidden>Parent genre
+      <select id="newGenreParent"></select>
+    </label>
     <label>Definition <textarea id="newGenreDefinition" rows="3"></textarea></label>
     <div class="dialog-actions">
       <span class="grow"></span>
@@ -187,8 +190,16 @@
       <fieldset>
         <legend>Classification</legend>
         <div class="two-col">
-          <label>Genre <input name="genre" autocomplete="off" /></label>
-          <label>Subgenre <input name="subgenre" autocomplete="off" /></label>
+          <label>Genres
+            <div class="tag-field" id="genreField">
+              <input name="genre" autocomplete="off" placeholder="type, then , ; Tab or Enter" />
+            </div>
+          </label>
+          <label>Subgenres
+            <div class="tag-field" id="subgenreField">
+              <input name="subgenre" autocomplete="off" placeholder="type, then , ; Tab or Enter" />
+            </div>
+          </label>
         </div>
         <label>Metadata source
           <select name="source">

@@ -83,8 +83,16 @@ router.get('/api/books', (req, res) => {
     where.push('(b.title LIKE @q OR b.authors LIKE @q OR b.isbn LIKE @q OR b.genre LIKE @q OR b.subgenre LIKE @q)');
     params.q = `%${q}%`;
   }
-  for (const [field, value] of [['status', status], ['genre', genre], ['format', format]]) {
+  for (const [field, value] of [['status', status], ['format', format]]) {
     if (value) { where.push(`b.${field} = @${field}`); params[field] = value; }
+  }
+  // genre/subgenre are comma-joined multi-values; match one token exactly by
+  // wrapping both the column and the needle in the ", " delimiter.
+  for (const [field, value] of [['genre', genre], ['subgenre', req.query.subgenre]]) {
+    if (value) {
+      where.push(`instr(', ' || b.${field} || ', ', @${field}) > 0`);
+      params[field] = `, ${value}, `;
+    }
   }
   if (room) { where.push('s.room = @room'); params.room = room; }
   if (bookcase) { where.push('s.bookcase = @bookcase'); params.bookcase = bookcase; }

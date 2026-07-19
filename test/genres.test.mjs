@@ -38,7 +38,10 @@ test('seeds the taxonomy with the right hierarchy and definitions', async () => 
   const { body } = await api('/genres');
   const top = body.filter((g) => !g.parent_id);
   const names = top.map((g) => g.name).sort();
-  assert.deepEqual(names, ['Fantasy', 'Mystery', 'Occupational', 'Realism', 'Science Fiction', 'Thriller']);
+  assert.deepEqual(names, [
+    'Adult', 'Children', 'Fantasy', 'Middle-Grade', 'Mystery',
+    'Occupational', 'Realism', 'Science Fiction', 'Thriller', 'Young Adult',
+  ]);
 
   const fantasy = top.find((g) => g.name === 'Fantasy');
   assert.match(fantasy.definition, /supernatural entities, magic/);

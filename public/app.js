@@ -1008,6 +1008,7 @@ function genreLabel(g) {
 function createGenreField(input) {
   const field = input.closest('.tag-field');
   const label = field.closest('label');
+  label.classList.add('combo'); // position: relative, so the dropdown anchors here
   let ids = [];
   const list = document.createElement('ul');
   list.className = 'combo-list';

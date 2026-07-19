@@ -222,6 +222,34 @@ test('genres field: comma/Enter commit existing genres as chips; stored as genre
   await page.close();
 });
 
+test('genres field shows a suggestion dropdown, anchored below the field, and click adds a chip', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+  await page.type('#genreInput', 'Sc', { delay: 30 });
+  await new Promise((r) => setTimeout(r, 250));
+  const info = await page.evaluate(() => {
+    const field = document.querySelector('#genreField');
+    const list = field.closest('label').querySelector('.combo-list');
+    const fr = field.getBoundingClientRect();
+    const lr = list.getBoundingClientRect();
+    return {
+      hidden: list.hidden,
+      items: [...list.children].map((li) => li.textContent),
+      belowField: lr.top >= fr.bottom - 3 && lr.width > 0,
+    };
+  });
+  assert.equal(info.hidden, false, 'dropdown visible while typing');
+  assert.ok(info.items.includes('Science Fiction'), 'suggests matching genres');
+  assert.ok(info.belowField, 'dropdown is positioned below the field');
+  await page.click('.combo-list li');
+  await new Promise((r) => setTimeout(r, 150));
+  const chips = await page.$$eval('#genreField .chip', (els) => els.map((e) => e.textContent.replace('✕', '').trim()));
+  assert.ok(chips.length === 1, 'clicking a suggestion adds a chip');
+  await page.close();
+});
+
 test('genres field commits a new genre from a typed comma via the input event (mobile keyboards)', { skip }, async () => {
   const page = await browser.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });

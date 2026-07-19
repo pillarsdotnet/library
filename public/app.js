@@ -1047,10 +1047,14 @@ function createGenreField(input) {
     if (id && !ids.includes(id)) ids.push(id);
     input.value = ''; renderChips(); closeList();
   };
+  // Strip leading/trailing spaces & punctuation, keeping internal characters
+  // (so "Sci-Fi", "Middle-Grade" survive but "Technical, " → "Technical", "…" → "").
+  const clean = (raw) => String(raw || '').replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N}]+$/u, '');
+
   // Resolve typed text to a genre id, creating a new genre if none match.
-  // Returns an id, 'ambiguous', or null (cancelled / no match created).
+  // Returns an id, 'ambiguous', or null (empty / cancelled / no match created).
   const resolve = async (raw) => {
-    const text = (raw || '').replace(/[,;]+$/, '').trim();
+    const text = clean(raw);
     if (!text) return null;
     const lc = text.toLowerCase();
     const matches = genresCache.filter((g) => g.name.toLowerCase() === lc || genreLabel(g).toLowerCase() === lc);
@@ -1083,7 +1087,15 @@ function createGenreField(input) {
     renderList();
   });
   input.addEventListener('focus', renderList);
-  input.addEventListener('blur', () => setTimeout(closeList, 150));
+  // Leaving the field commits any pending text: an unmatched word pops the
+  // definition dialog; trailing spaces/punctuation with no word-characters are
+  // just trimmed away. The delay lets a suggestion click resolve first.
+  input.addEventListener('blur', () => setTimeout(() => {
+    closeList();
+    if (busy) return;                              // a save/commit is already handling it
+    if (!clean(input.value)) { input.value = ''; return; } // only spaces/punctuation → trim
+    commit(input.value);
+  }, 200));
   list.addEventListener('pointerdown', (e) => {
     const li = e.target.closest('li');
     if (li) { e.preventDefault(); addId(Number(li.dataset.id)); }
@@ -1110,13 +1122,16 @@ function createGenreField(input) {
     get: () => ids.slice(),
     set: (arr) => { ids = (arr || []).map(Number).filter((n) => genreById(n)); renderChips(); input.value = ''; },
     commitPending: async () => {
-      const text = input.value.trim();
-      if (!text) return true;
-      const r = await resolve(text);
-      if (r === 'ambiguous') { alert(`"${text}" matches more than one genre — pick the specific one from the list.`); return false; }
-      if (!r) return false;
-      addId(r);
-      return true;
+      if (busy) return true;                 // a blur commit is already handling it
+      if (!clean(input.value)) { input.value = ''; return true; } // nothing meaningful to commit
+      busy = true;
+      try {
+        const r = await resolve(input.value);
+        if (r === 'ambiguous') { alert(`"${clean(input.value)}" matches more than one genre — pick the specific one from the list.`); return false; }
+        if (!r) return false;
+        addId(r);
+        return true;
+      } finally { busy = false; }
     },
   };
 }

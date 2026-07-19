@@ -250,6 +250,35 @@ test('genres field shows a suggestion dropdown, anchored below the field, and cl
   await page.close();
 });
 
+test('leaving the genres field commits pending text (prompts for a new genre) but trims punctuation-only', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+
+  // Unmatched word + blur → definition prompt → chip.
+  const newG = 'Technical ' + Date.now();
+  await page.type('#genreInput', newG);
+  await page.focus('#bookForm [name="title"]');
+  await page.waitForSelector('#newGenreDialog[open]', { timeout: 4000 });
+  await page.type('#newGenreDefinition', 'Technical works.');
+  await page.click('#newGenreSave');
+  await new Promise((r) => setTimeout(r, 300));
+  let chips = await page.$$eval('#genreField .chip', (els) => els.map((e) => e.textContent.replace('✕', '').trim()));
+  assert.ok(chips.includes(newG), 'blur committed the unmatched word');
+
+  // Punctuation/space only + blur → no prompt, input trimmed to empty.
+  await page.focus('#genreInput');
+  await page.type('#genreInput', '  .. ');
+  await page.focus('#bookForm [name="title"]');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(await page.$eval('#newGenreDialog', (el) => el.open).catch(() => false), false, 'no prompt for punctuation-only');
+  assert.equal(await page.$eval('#genreInput', (e) => e.value), '', 'punctuation/space trimmed away');
+  chips = await page.$$eval('#genreField .chip', (els) => els.length);
+  assert.equal(chips, 1, 'no stray chip added');
+  await page.close();
+});
+
 test('genres field commits a new genre from a typed comma via the input event (mobile keyboards)', { skip }, async () => {
   const page = await browser.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });

@@ -52,8 +52,10 @@ async function loadBooks() {
   const params = new URLSearchParams();
   if ($('#search').value) params.set('q', $('#search').value);
   if ($('#filterStatus').value) params.set('status', $('#filterStatus').value);
-  if ($('#filterRoom').value) params.set('room', $('#filterRoom').value);
+  if ($('#filterFormat').value) params.set('format', $('#filterFormat').value);
   if ($('#filterGenre').value) params.set('genre', $('#filterGenre').value);
+  if ($('#filterRoom').value) params.set('room', $('#filterRoom').value);
+  if ($('#filterBookcase').value) params.set('bookcase', $('#filterBookcase').value);
   if ($('#filterShelf').value) params.set('shelf_id', $('#filterShelf').value);
 
   const books = await api('/books?' + params.toString());
@@ -756,6 +758,7 @@ async function loadMeta() {
     rooms: meta.rooms, bookcases: meta.bookcases, genres: meta.genres, subgenres: meta.subgenres,
   });
   fillSelect('filterRoom', meta.rooms, 'All rooms');
+  fillSelect('filterBookcase', meta.bookcases, 'All bookcases');
   fillSelect('filterGenre', meta.genres, 'All genres');
 }
 
@@ -891,7 +894,8 @@ window.placeholderCover = placeholderCover;
 
 let searchTimer;
 $('#search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadBooks, 250); });
-['#filterStatus', '#filterRoom', '#filterGenre', '#filterShelf'].forEach((s) => $(s).addEventListener('change', loadBooks));
+['#filterStatus', '#filterFormat', '#filterGenre', '#filterRoom', '#filterBookcase', '#filterShelf']
+  .forEach((s) => $(s).addEventListener('change', loadBooks));
 
 $('#addBtn').onclick = openAddBook; // reassigned per-tab by the tab handler
 $('#addShelfBtn').addEventListener('click', openAddShelf);

@@ -75,7 +75,7 @@ function update(table, id, data) {
 // Books CRUD
 // ---------------------------------------------------------------------------
 router.get('/api/books', (req, res) => {
-  const { q, status, room, genre, format, shelf_id } = req.query;
+  const { q, status, room, bookcase, genre, format, shelf_id } = req.query;
   const where = [];
   const params = {};
 
@@ -87,6 +87,7 @@ router.get('/api/books', (req, res) => {
     if (value) { where.push(`b.${field} = @${field}`); params[field] = value; }
   }
   if (room) { where.push('s.room = @room'); params.room = room; }
+  if (bookcase) { where.push('s.bookcase = @bookcase'); params.bookcase = bookcase; }
   if (shelf_id === 'none') where.push('b.shelf_id IS NULL');
   else if (shelf_id) { where.push('b.shelf_id = @shelf_id'); params.shelf_id = shelf_id; }
 

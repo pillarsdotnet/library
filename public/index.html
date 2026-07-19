@@ -55,7 +55,6 @@
         <option value="none">Unshelved</option>
       </select>
       <button id="clearFiltersBtn" type="button" hidden>✕ Clear</button>
-      <button id="importBtn" type="button">⬆ Import EPUBs</button>
     </section>
 
     <main id="list" class="grid"></main>
@@ -84,6 +83,9 @@
         <input id="isbn" name="isbn" placeholder="ISBN" inputmode="numeric" />
         <button type="button" id="lookupBtn">Look up</button>
         <button type="button" id="scanBtn" class="primary">📷 Scan</button>
+      </div>
+      <div class="scan-row">
+        <button type="button" id="importBtn">⬆ Import EPUB files instead</button>
       </div>
       <div id="scanner" hidden></div>
       <p id="scanStatus" class="hint" hidden></p>

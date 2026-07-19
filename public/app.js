@@ -917,7 +917,7 @@ $('#closeDialog').addEventListener('click', closeBookDialog);
 $('#cancelBtn').addEventListener('click', closeBookDialog);
 $('#lookupBtn').addEventListener('click', lookup);
 $('#scanBtn').addEventListener('click', onScanButton);
-$('#importBtn').addEventListener('click', openImportDialog);
+$('#importBtn').addEventListener('click', () => { closeBookDialog(); openImportDialog(); });
 $('#importRunBtn').addEventListener('click', runImport);
 $('#importCloseBtn').addEventListener('click', () => $('#importDialog').close());
 $('#closeImportDialog').addEventListener('click', () => $('#importDialog').close());

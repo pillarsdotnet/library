@@ -339,6 +339,50 @@ test('typing a new genre in the book form prompts for a definition and saves it'
   await page.close();
 });
 
+test('deleting a genre warns with the book count and removes the book_genres links', { skip }, async () => {
+  const stamp = Date.now();
+  const genre = await (await fetch(`${BASE}/api/genres`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'DelGenre ' + stamp, definition: 'x' }) })).json();
+  const book = await (await fetch(`${BASE}/api/books`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'DelBook ' + stamp, genre_ids: [genre.id] }) })).json();
+
+  const page = await browser.newPage();
+  let dialogMsg = '';
+  page.on('dialog', async (d) => { dialogMsg = d.message(); await d.accept(); }); // confirm the delete
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('.tab[data-tab="genres"]');
+  await page.waitForSelector('#tab-genres:not([hidden])');
+  await page.click(`[data-edit-genre="${genre.id}"]`);
+  await page.waitForSelector('#genreDialog[open]');
+  await page.click('#deleteGenreBtn');
+  await new Promise((r) => setTimeout(r, 400));
+
+  assert.match(dialogMsg, /1 book classified under it/i, `warning should state the book count (got: ${dialogMsg})`);
+  // Genre gone, and the book's genre link removed (book itself remains).
+  const genres = await (await fetch(`${BASE}/api/genres`)).json();
+  assert.ok(!genres.some((g) => g.id === genre.id), 'genre deleted');
+  const after = await (await fetch(`${BASE}/api/books/${book.id}`)).json();
+  assert.deepEqual(after.genre_ids, [], 'book_genres link removed');
+  assert.equal(after.title, book.title, 'book itself preserved');
+  await page.close();
+});
+
+test('genre filter has an Uncategorized option that finds books with no genres', { skip }, async () => {
+  const stamp = Date.now();
+  const g = await (await fetch(`${BASE}/api/genres`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'FilterGenre ' + stamp, definition: 'x' }) })).json();
+  await fetch(`${BASE}/api/books`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'NoGenre ' + stamp }) });
+  await fetch(`${BASE}/api/books`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'HasGenre ' + stamp, genre_ids: [g.id] }) });
+
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  const hasOpt = await page.$$eval('#filterGenre option', (els) => els.some((o) => o.value === 'none' && /uncategor/i.test(o.textContent)));
+  assert.ok(hasOpt, 'Uncategorized option present in genre filter');
+  await page.select('#filterGenre', 'none');
+  await new Promise((r) => setTimeout(r, 400));
+  const titles = await page.$$eval('#list .card h3', (els) => els.map((e) => e.textContent));
+  assert.ok(titles.includes('NoGenre ' + stamp), 'uncategorized book listed');
+  assert.ok(!titles.includes('HasGenre ' + stamp), 'categorized book excluded');
+  await page.close();
+});
+
 test('Genres tab supports multi-level subgenres and reparenting', { skip }, async () => {
   const stamp = Date.now();
   // Build Nonfiction > Technical via the API.

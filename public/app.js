@@ -798,7 +798,7 @@ function populateGenreFilter() {
   const opts = [...genresCache]
     .map((g) => ({ id: g.id, label: genreLabel(g) }))
     .sort((a, b) => a.label.localeCompare(b.label));
-  sel.innerHTML = '<option value="">All genres</option>'
+  sel.innerHTML = '<option value="">All genres</option><option value="none">Uncategorized</option>'
     + opts.map((o) => `<option value="${o.id}">${esc(o.label)}</option>`).join('');
   sel.value = current;
 }
@@ -885,9 +885,10 @@ function renderGenreRow(g, depth) {
   const row = document.createElement('div');
   row.className = `genre-row${depth ? ' sub' : ''}`;
   if (depth) row.style.marginLeft = `${depth * 24}px`;
+  const count = g.book_count ? `<span class="genre-count">${g.book_count} book${g.book_count === 1 ? '' : 's'}</span>` : '';
   row.innerHTML = `
     <div class="genre-main">
-      <span class="genre-name">${esc(g.name)}</span>
+      <span class="genre-name">${esc(g.name)} ${count}</span>
       <span class="genre-def">${esc(g.definition || 'No definition yet.')}</span>
     </div>
     <button type="button" class="link" data-edit-genre="${g.id}">Edit</button>`;
@@ -947,15 +948,33 @@ async function saveGenre(e) {
   } catch (err) { alert('Save failed: ' + err.message); }
 }
 
+const plural = (n) => (n === 1 ? '' : 's');
+
 async function deleteGenre() {
   if (!editingGenreId) return;
-  const g = genresCache.find((x) => x.id === editingGenreId);
-  const kids = g && !g.parent_id ? subGenres(g.id).length : 0;
-  const warn = kids ? `\n\nIts ${kids} subgenre(s) will also be deleted.` : '';
-  if (!confirm(`Delete the genre “${g ? g.name : ''}”?${warn}\n\nBooks keep their genre text.`)) return;
+  const g = genreById(editingGenreId);
+  if (!g) return;
+  const descIds = [...descendantIds(g.id)];
+  const directBooks = g.book_count || 0;
+  const descBooks = descIds.reduce((n, id) => n + (genreById(id)?.book_count || 0), 0);
+
+  const lines = [`Delete the genre “${g.name}”?`, ''];
+  if (descIds.length) lines.push(`Its ${descIds.length} subgenre${plural(descIds.length)} will also be deleted.`);
+  const affected = [];
+  if (directBooks) affected.push(`${directBooks} book${plural(directBooks)} classified under it`);
+  if (descBooks) affected.push(`${descBooks} under those subgenre${plural(descIds.length)}`);
+  if (affected.length) {
+    lines.push(`This will remove the genre from ${affected.join(' and ')}.`);
+  } else {
+    lines.push('No books are classified under it.');
+  }
+  lines.push('', 'This cannot be undone.');
+  if (!confirm(lines.join('\n'))) return;
+
   await api('/genres/' + editingGenreId, { method: 'DELETE' });
   genreDialog.close();
   await loadGenres();
+  await loadBooks(); // genre links changed → refresh book cards
 }
 
 // Prompt for a definition (and parent) when a brand-new genre is typed in the

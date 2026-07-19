@@ -118,7 +118,9 @@ router.get('/api/books', (req, res) => {
   for (const [field, value] of [['status', status], ['format', format]]) {
     if (value) { where.push(`b.${field} = @${field}`); params[field] = value; }
   }
-  if (genre_id) {
+  if (genre_id === 'none') {
+    where.push('NOT EXISTS (SELECT 1 FROM book_genres bg WHERE bg.book_id = b.id)');
+  } else if (genre_id) {
     where.push('EXISTS (SELECT 1 FROM book_genres bg WHERE bg.book_id = b.id AND bg.genre_id = @genre_id)');
     params.genre_id = Number(genre_id);
   }
@@ -303,7 +305,9 @@ router.get('/api/meta', (_req, res) => {
 // Genres — hierarchical taxonomy (parent_id NULL = top-level, else a subgenre).
 // ---------------------------------------------------------------------------
 router.get('/api/genres', (_req, res) => {
-  res.json(db.prepare('SELECT * FROM genres ORDER BY name COLLATE NOCASE').all());
+  res.json(db.prepare(`
+    SELECT g.*, (SELECT COUNT(*) FROM book_genres bg WHERE bg.genre_id = g.id) AS book_count
+    FROM genres g ORDER BY g.name COLLATE NOCASE`).all());
 });
 
 router.post('/api/genres', (req, res) => {

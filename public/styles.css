@@ -318,6 +318,7 @@ dialog::backdrop { background: rgba(20, 15, 30, 0.55); }
 .genre-row.sub { margin-left: 28px; border-left: 3px solid var(--accent); }
 .genre-main { flex: 1; min-width: 0; }
 .genre-name { font-weight: 600; display: block; }
+.genre-count { font-weight: 400; font-size: 0.78rem; color: var(--muted); }
 .genre-def { font-size: 0.85rem; color: var(--muted); }
 
 .pad-dialog { padding: 18px; width: min(440px, 94vw); }

@@ -778,15 +778,13 @@ async function runImport() {
 // Metadata + refresh
 // ---------------------------------------------------------------------------
 // Distinct values powering the custom autocomplete dropdowns; refreshed by loadMeta.
-const META = { rooms: [], bookcases: [], genres: [], subgenres: [] };
+const META = { rooms: [], bookcases: [] };
 
 async function loadMeta() {
   const meta = await api('/meta');
   $('#count').textContent = `${meta.count} book${meta.count === 1 ? '' : 's'}` +
     (meta.unshelved ? ` · ${meta.unshelved} unshelved` : '');
-  Object.assign(META, {
-    rooms: meta.rooms, bookcases: meta.bookcases, genres: meta.genres, subgenres: meta.subgenres,
-  });
+  Object.assign(META, { rooms: meta.rooms, bookcases: meta.bookcases });
   fillSelect('filterRoom', meta.rooms, 'All rooms');
   fillSelect('filterBookcase', meta.bookcases, 'All bookcases');
   populateGenreFilter();
@@ -1070,7 +1068,19 @@ function createGenreField(input) {
     } finally { busy = false; }
   };
 
-  input.addEventListener('input', renderList);
+  // Commit on a typed delimiter via the input event too. Mobile virtual
+  // keyboards often don't fire keydown with e.key === ',' (they report keyCode
+  // 229 / 'Unidentified'), so relying on keydown alone drops commits on phones.
+  input.addEventListener('input', async () => {
+    if (/[,;]/.test(input.value)) {
+      const parts = input.value.split(/[,;]/);
+      const tail = parts.pop();
+      input.value = '';
+      for (const part of parts) { if (part.trim()) await commit(part); }
+      input.value = tail;
+    }
+    renderList();
+  });
   input.addEventListener('focus', renderList);
   input.addEventListener('blur', () => setTimeout(closeList, 150));
   list.addEventListener('pointerdown', (e) => {

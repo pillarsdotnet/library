@@ -294,8 +294,6 @@ router.get('/api/meta', (_req, res) => {
   res.json({
     rooms: distinct('shelves', 'room'),
     bookcases: distinct('shelves', 'bookcase'),
-    genres: distinct('books', 'genre'),
-    subgenres: distinct('books', 'subgenre'),
     count: db.prepare('SELECT COUNT(*) AS n FROM books').get().n,
     unshelved: db.prepare('SELECT COUNT(*) AS n FROM books WHERE shelf_id IS NULL').get().n,
   });
@@ -343,7 +341,7 @@ router.put('/api/genres/:id', (req, res) => {
 });
 
 router.delete('/api/genres/:id', (req, res) => {
-  // Children cascade (ON DELETE CASCADE); books keep their free-text genre value.
+  // Children cascade (ON DELETE CASCADE); book_genres links cascade too.
   const info = db.prepare('DELETE FROM genres WHERE id = ?').run(req.params.id);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
   res.status(204).end();

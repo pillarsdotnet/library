@@ -46,9 +46,7 @@ db.exec(`
     width_mm        REAL,              -- cover width (depth into the shelf)
     thickness_mm    REAL,              -- spine thickness (run along the shelf)
 
-    -- classification
-    genre           TEXT,
-    subgenre        TEXT,
+    -- classification: genres are a many-to-many via the book_genres table.
 
     -- location: a book lives on a modelled shelf (or nowhere yet)
     shelf_id        INTEGER REFERENCES shelves(id) ON DELETE SET NULL,
@@ -168,6 +166,11 @@ if (bookColumns.includes('genre') && bookColumns.includes('subgenre')) {
     }
   });
   migrate();
+
+  // The legacy free-text columns are now fully backfilled into book_genres;
+  // drop them (genres live only in the join table + genres taxonomy now).
+  db.exec('ALTER TABLE books DROP COLUMN genre');
+  db.exec('ALTER TABLE books DROP COLUMN subgenre');
 }
 
 export default db;

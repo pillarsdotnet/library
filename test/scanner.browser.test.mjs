@@ -222,6 +222,29 @@ test('genres field: comma/Enter commit existing genres as chips; stored as genre
   await page.close();
 });
 
+test('genres field commits a new genre from a typed comma via the input event (mobile keyboards)', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+  // Mobile virtual keyboards deliver the comma via the input event, not a
+  // keydown with e.key === ',' — simulate that exactly.
+  const newG = 'Nonfiction ' + Date.now();
+  await page.evaluate((val) => {
+    const el = document.querySelector('#genreInput');
+    el.focus();
+    el.value = val + ',';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }, newG);
+  await page.waitForSelector('#newGenreDialog[open]', { timeout: 4000 });
+  await page.type('#newGenreDefinition', 'Not fiction.');
+  await page.click('#newGenreSave');
+  await new Promise((r) => setTimeout(r, 400));
+  const chips = await page.$$eval('#genreField .chip', (els) => els.map((e) => e.textContent.replace('✕', '').trim()));
+  assert.ok(chips.includes(newG), 'comma typed via input event committed the new genre');
+  await page.close();
+});
+
 test('reader-level genres are seeded and offered as top-level genres', { skip }, async () => {
   const genres = await (await fetch(`${BASE}/api/genres`)).json();
   const readerLevels = ['Adult', 'Young Adult', 'Middle-Grade', 'Children'];

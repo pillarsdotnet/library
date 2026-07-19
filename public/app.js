@@ -131,19 +131,55 @@ function placeholderCover() {
 // ---------------------------------------------------------------------------
 async function loadShelves() {
   shelvesCache = await api('/shelves');
+  renderShelves();
+  populateShelfSelect();
+  populateShelfFilter();
+}
+
+// Shelves are shown as nested groups: room › bookcase › its shelves.
+function renderShelves() {
   const list = $('#shelfList');
   list.innerHTML = '';
   $('#shelfEmpty').hidden = shelvesCache.length > 0;
-  for (const s of shelvesCache) list.appendChild(renderShelfCard(s));
-  populateShelfSelect();
-  populateShelfFilter();
+
+  const byRoom = new Map();
+  for (const s of shelvesCache) {
+    const room = s.room || '(no room)';
+    const bookcase = s.bookcase || '(no bookcase)';
+    if (!byRoom.has(room)) byRoom.set(room, new Map());
+    const cases = byRoom.get(room);
+    if (!cases.has(bookcase)) cases.set(bookcase, []);
+    cases.get(bookcase).push(s);
+  }
+
+  const cmp = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+  for (const room of [...byRoom.keys()].sort(cmp)) {
+    const cases = byRoom.get(room);
+    const shelfTotal = [...cases.values()].reduce((n, arr) => n + arr.length, 0);
+    const roomEl = document.createElement('section');
+    roomEl.className = 'room-group';
+    roomEl.innerHTML = `<h2 class="room-heading">${esc(room)} <span class="group-count">${shelfTotal} shelf${shelfTotal === 1 ? '' : 'ves'}</span></h2>`;
+
+    for (const bookcase of [...cases.keys()].sort(cmp)) {
+      const shelves = cases.get(bookcase).sort((a, b) => cmp(a.label, b.label));
+      const caseEl = document.createElement('div');
+      caseEl.className = 'bookcase-group';
+      const books = shelves.reduce((n, s) => n + (s.book_count || 0), 0);
+      caseEl.innerHTML = `<h3 class="bookcase-heading">${esc(bookcase)} <span class="group-count">${shelves.length} shelf${shelves.length === 1 ? '' : 'ves'} · ${books} book${books === 1 ? '' : 's'}</span></h3>`;
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+      for (const s of shelves) grid.appendChild(renderShelfCard(s));
+      caseEl.appendChild(grid);
+      roomEl.appendChild(caseEl);
+    }
+    list.appendChild(roomEl);
+  }
 }
 
 function renderShelfCard(s) {
   const card = document.createElement('article');
   card.className = 'card shelf-card';
 
-  const heading = [s.room, s.bookcase].filter(Boolean).join(' › ');
   const pct = s.fill_pct;
   const barClass = s.overfull ? 'bar over' : pct != null && pct > 90 ? 'bar warn' : 'bar';
   const capacity = s.width_mm == null
@@ -167,7 +203,6 @@ function renderShelfCard(s) {
   card.innerHTML = `
     <div class="card-body grow">
       <h3>${esc(s.label)}</h3>
-      ${heading ? `<p class="authors">${esc(heading)}</p>` : ''}
       <p class="loc">📐 ${s.width_mm ? dispDim(s.width_mm) + ' W' : '—'} × ${s.height_mm ? dispDim(s.height_mm) + ' H' : '—'} × ${s.depth_mm ? dispDim(s.depth_mm) + ' D' : '—'} ${UNIT}</p>
       ${capacity}
       ${flags.length ? `<div class="badges">${flags.map((f) => `<span class="badge muted">${f}</span>`).join('')}</div>` : ''}

@@ -338,6 +338,40 @@ test('typing a new genre in the book form prompts for a definition and saves it'
   await page.close();
 });
 
+test('Shelves tab nests shelves by room → bookcase → shelf, each sorted', { skip }, async () => {
+  const stamp = String(Date.now()).slice(-6);
+  const mk = (room, bookcase, label) => fetch(`${BASE}/api/shelves`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ room, bookcase, label }),
+  });
+  // Insert out of order to prove sorting.
+  await mk(`Zroom${stamp}`, 'Pine', 'Top');
+  await mk(`Aroom${stamp}`, 'Oak', '2L');
+  await mk(`Aroom${stamp}`, 'Oak', '1L');
+  await mk(`Aroom${stamp}`, 'Birch', 'Only');
+
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('.tab[data-tab="shelves"]');
+  await page.waitForSelector('#tab-shelves:not([hidden])');
+  const tree = await page.evaluate(() => [...document.querySelectorAll('.room-group')].map((rg) => ({
+    room: rg.querySelector('.room-heading').firstChild.textContent.trim(),
+    bookcases: [...rg.querySelectorAll('.bookcase-group')].map((bc) => ({
+      bookcase: bc.querySelector('.bookcase-heading').firstChild.textContent.trim(),
+      shelves: [...bc.querySelectorAll('.shelf-card h3')].map((h) => h.textContent.trim()),
+    })),
+  })));
+
+  const aRoom = tree.find((r) => r.room === `Aroom${stamp}`);
+  assert.ok(aRoom, 'room group rendered');
+  assert.deepEqual(aRoom.bookcases.map((b) => b.bookcase), ['Birch', 'Oak'], 'bookcases sorted within room');
+  assert.deepEqual(aRoom.bookcases.find((b) => b.bookcase === 'Oak').shelves, ['1L', '2L'], 'shelves sorted within bookcase');
+  // Rooms themselves are in sorted order.
+  const rooms = tree.map((r) => r.room);
+  assert.deepEqual([...rooms].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), rooms, 'rooms sorted');
+  await page.close();
+});
+
 test('deleting a genre warns with the book count and removes the book_genres links', { skip }, async () => {
   const stamp = Date.now();
   const genre = await (await fetch(`${BASE}/api/genres`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'DelGenre ' + stamp, definition: 'x' }) })).json();

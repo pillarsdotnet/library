@@ -11,6 +11,8 @@ import { existsSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import puppeteer from 'puppeteer-core';
+import sharp from 'sharp';
+import { zipSync, strToU8 } from 'fflate';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3199;
@@ -171,6 +173,36 @@ test('duplicate ISBN prompt: Add copy creates another entry', { skip }, async ()
   await new Promise((r) => setTimeout(r, 400));
   assert.equal(await metaCount(), before + 1, 'Add copy should create the duplicate');
   await page.close();
+});
+
+test('EPUB import endpoint: parses metadata, resizes cover, creates an e-book', { skip }, async () => {
+  const coverJpeg = await sharp({ create: { width: 600, height: 900, channels: 3, background: '#334455' } }).jpeg().toBuffer();
+  const opf = '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="b">'
+    + '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+    + '<dc:title>Imported Test Book</dc:title><dc:creator>Wells, Martha</dc:creator>'
+    + '<dc:identifier>9780765397539</dc:identifier><dc:publisher>Tor</dc:publisher><dc:date>2017</dc:date>'
+    + '<meta name="cover" content="c"/></metadata>'
+    + '<manifest><item id="c" href="cover.jpg" media-type="image/jpeg"/></manifest></package>';
+  const container = '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+    + '<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>';
+  const epub = zipSync({
+    mimetype: strToU8('application/epub+zip'),
+    'META-INF/container.xml': strToU8(container),
+    'OEBPS/content.opf': strToU8(opf),
+    'OEBPS/cover.jpg': new Uint8Array(coverJpeg),
+  });
+
+  const r = await fetch(`${BASE}/api/import/epub`, {
+    method: 'POST', headers: { 'Content-Type': 'application/epub+zip' }, body: epub,
+  });
+  assert.equal(r.status, 201);
+  const book = await r.json();
+  assert.equal(book.title, 'Imported Test Book');
+  assert.equal(book.authors, 'Martha Wells');
+  assert.equal(book.isbn, '9780765397539');
+  assert.equal(book.format, 'ebook');
+  assert.equal(book.source, 'epub');
+  assert.match(book.cover_url, /^data:image\/jpeg;base64,/);
 });
 
 test('cover photo: file → crop dialog → "Use photo" sets a data-URL cover', { skip }, async () => {

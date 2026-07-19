@@ -45,6 +45,7 @@
         <option value="">All shelves</option>
         <option value="none">Unshelved</option>
       </select>
+      <button id="importBtn" type="button">⬆ Import EPUBs</button>
     </section>
 
     <main id="list" class="grid"></main>
@@ -233,6 +234,27 @@
       <span class="grow"></span>
       <button type="button" id="dupCancelBtn">Cancel</button>
       <button type="button" id="dupAddBtn" class="primary">Add copy</button>
+    </div>
+  </dialog>
+
+  <!-- ============ EPUB IMPORT DIALOG ============ -->
+  <dialog id="importDialog" class="pad-dialog">
+    <div class="dialog-head">
+      <h2>Import EPUBs</h2>
+      <button type="button" class="icon" id="closeImportDialog" aria-label="Close">✕</button>
+    </div>
+    <label>EPUB files
+      <input type="file" id="importFiles" accept=".epub,application/epub+zip" multiple />
+    </label>
+    <label>Add to shelf
+      <select id="importShelf"><option value="">— none —</option></select>
+    </label>
+    <p class="hint">Each e-book's title, author, ISBN, publisher and cover are imported. Existing books are not affected.</p>
+    <p id="importProgress" class="msg" hidden></p>
+    <div class="dialog-actions">
+      <span class="grow"></span>
+      <button type="button" id="importCloseBtn">Close</button>
+      <button type="button" id="importRunBtn" class="primary">Import</button>
     </div>
   </dialog>
 

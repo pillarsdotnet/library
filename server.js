@@ -2,8 +2,10 @@ import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
+import sharp from 'sharp';
 import db from './db.js';
 import { lookupIsbn, RateLimitError } from './lookup.js';
+import { parseEpub } from './epub.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -281,6 +283,45 @@ router.get('/api/lookup/:isbn', async (req, res) => {
     console.error('lookup failed', err);
     res.status(502).json({ error: 'Lookup service failed' });
   }
+});
+
+// ---------------------------------------------------------------------------
+// EPUB import — parse an uploaded .epub (metadata + cover) into a book record.
+// Body is the raw EPUB; optional query: shelf_id, status.
+// ---------------------------------------------------------------------------
+router.post('/api/import/epub', express.raw({ type: () => true, limit: '80mb' }), async (req, res) => {
+  if (!req.body || !req.body.length) return res.status(400).json({ error: 'empty request body' });
+  let meta;
+  try {
+    meta = parseEpub(req.body);
+  } catch (err) {
+    return res.status(422).json({ error: `Could not parse EPUB: ${err.message}` });
+  }
+  if (!meta.title) return res.status(422).json({ error: 'EPUB has no title' });
+
+  let coverUrl = '';
+  if (meta.cover) {
+    try {
+      const jpeg = await sharp(meta.cover.data).resize({ width: 500, withoutEnlargement: true })
+        .jpeg({ quality: 82 }).toBuffer();
+      coverUrl = `data:image/jpeg;base64,${jpeg.toString('base64')}`;
+    } catch { /* unreadable cover image — import without one */ }
+  }
+
+  const data = pick({
+    title: meta.title,
+    authors: meta.authors,
+    isbn: meta.isbn,
+    publisher: meta.publisher,
+    published_date: meta.published_date,
+    cover_url: coverUrl,
+    format: 'ebook',
+    status: req.query.status || 'tbr',
+    source: 'epub',
+    shelf_id: req.query.shelf_id || null,
+  }, BOOK_COLS);
+  const id = insert('books', data);
+  res.status(201).json(db.prepare('SELECT * FROM books WHERE id = ?').get(id));
 });
 
 app.use(BASE || '/', router);

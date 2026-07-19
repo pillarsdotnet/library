@@ -7,8 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 
 WORKDIR /app
 COPY package*.json ./
-# Skip optional deps (e.g. quagga2's node-side sharp) — only the browser bundle is used.
-RUN npm install --omit=dev --omit=optional
+# Install prod deps incl. optional platform binaries (sharp needs its prebuilt
+# @img/sharp-linux-x64 for EPUB cover resizing).
+RUN npm install --omit=dev
 
 COPY . .
 

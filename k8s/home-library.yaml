@@ -77,10 +77,12 @@ spec:
           resources:
             requests:
               cpu: 50m
-              memory: 64Mi
+              memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 256Mi
+              cpu: "1"
+              # Headroom for EPUB import: a large cookbook .epub is unzipped and
+              # its cover re-encoded (sharp) in memory.
+              memory: 1Gi
           volumeMounts:
             - name: data
               mountPath: /data

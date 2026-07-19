@@ -138,7 +138,7 @@ function renderShelfCard(s) {
   const flags = [];
   if (s.too_tall) flags.push(`⚠️ ${s.too_tall} too tall`);
   if (s.too_deep) flags.push(`⚠️ ${s.too_deep} too deep`);
-  if (s.unknown_thickness) flags.push(`${s.unknown_thickness} missing thickness`);
+  if (s.width_mm && s.unknown_thickness) flags.push(`${s.unknown_thickness} missing thickness`);
 
   card.innerHTML = `
     <div class="card-body grow">
@@ -697,6 +697,61 @@ async function teardownScanner() {
 }
 
 // ---------------------------------------------------------------------------
+// EPUB import
+// ---------------------------------------------------------------------------
+function openImportDialog() {
+  const sel = $('#importShelf');
+  const current = sel.value;
+  const groups = {};
+  for (const s of shelvesCache) {
+    const key = [s.room, s.bookcase].filter(Boolean).join(' › ') || 'Other';
+    (groups[key] ||= []).push(s);
+  }
+  sel.innerHTML = '<option value="">— none —</option>';
+  for (const [group, items] of Object.entries(groups)) {
+    const og = document.createElement('optgroup');
+    og.label = group;
+    for (const s of items) {
+      const o = document.createElement('option');
+      o.value = s.id;
+      o.textContent = s.label;
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  }
+  sel.value = current;
+  $('#importFiles').value = '';
+  $('#importProgress').hidden = true;
+  $('#importDialog').showModal();
+}
+
+async function runImport() {
+  const files = [...$('#importFiles').files];
+  if (!files.length) { alert('Choose one or more .epub files first.'); return; }
+  const shelfId = $('#importShelf').value;
+  const prog = $('#importProgress');
+  const runBtn = $('#importRunBtn');
+  runBtn.disabled = true;
+  prog.hidden = false; prog.className = 'msg';
+  let ok = 0;
+  const failures = [];
+  for (let i = 0; i < files.length; i += 1) {
+    prog.textContent = `Importing ${i + 1} of ${files.length}… (${ok} added)`;
+    try {
+      const buf = await files[i].arrayBuffer();
+      await api('/import/epub' + (shelfId ? `?shelf_id=${shelfId}` : ''), {
+        method: 'POST', headers: { 'Content-Type': 'application/epub+zip' }, body: buf,
+      });
+      ok += 1;
+    } catch (err) { failures.push(`${files[i].name}: ${err.message}`); }
+  }
+  prog.className = `msg ${failures.length ? 'warn' : 'ok'}`;
+  prog.textContent = `Imported ${ok} of ${files.length}.${failures.length ? ` ${failures.length} failed.` : ''}`;
+  runBtn.disabled = false;
+  await refresh();
+}
+
+// ---------------------------------------------------------------------------
 // Metadata + refresh
 // ---------------------------------------------------------------------------
 // Distinct values powering the custom autocomplete dropdowns; refreshed by loadMeta.
@@ -855,6 +910,10 @@ $('#closeDialog').addEventListener('click', closeBookDialog);
 $('#cancelBtn').addEventListener('click', closeBookDialog);
 $('#lookupBtn').addEventListener('click', lookup);
 $('#scanBtn').addEventListener('click', onScanButton);
+$('#importBtn').addEventListener('click', openImportDialog);
+$('#importRunBtn').addEventListener('click', runImport);
+$('#importCloseBtn').addEventListener('click', () => $('#importDialog').close());
+$('#closeImportDialog').addEventListener('click', () => $('#importDialog').close());
 $('#coverCameraBtn').addEventListener('click', () => $('#coverCameraFile').click());
 $('#coverUploadBtn').addEventListener('click', () => $('#coverUploadFile').click());
 $('#coverCameraFile').addEventListener('change', onCoverFile);

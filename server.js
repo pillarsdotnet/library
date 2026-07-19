@@ -94,7 +94,7 @@ router.get('/api/books', (req, res) => {
     SELECT b.*, s.room, s.bookcase, s.label AS shelf_label
     FROM books b LEFT JOIN shelves s ON s.id = b.shelf_id
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-    ORDER BY b.title COLLATE NOCASE`;
+    ORDER BY sort_title(b.title)`;
   res.json(db.prepare(sql).all(params));
 });
 

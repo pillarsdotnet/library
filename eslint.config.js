@@ -12,7 +12,7 @@ export default [
   js.configs.recommended,
   {
     // Server-side: Node ESM.
-    files: ['server.js', 'db.js', 'lookup.js', 'epub.js', 'eslint.config.js'],
+    files: ['server.js', 'db.js', 'lookup.js', 'epub.js', 'sorttitle.js', 'eslint.config.js'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',

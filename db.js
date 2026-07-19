@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { sortTitle } from './sorttitle.js';
 
 const DB_PATH = process.env.DB_PATH || './data/library.db';
 mkdirSync(dirname(DB_PATH), { recursive: true });
@@ -8,6 +9,9 @@ mkdirSync(dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+
+// Custom SQL function for alphabetizing titles with a leading article skipped.
+db.function('sort_title', { deterministic: true }, (t) => sortTitle(t));
 
 // All physical dimensions are stored in millimetres (mm).
 db.exec(`

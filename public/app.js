@@ -461,34 +461,23 @@ async function deleteShelf() {
 // ---------------------------------------------------------------------------
 // Shelf selects
 // ---------------------------------------------------------------------------
+// Full "Room › Bookcase › Shelf" location for a shelf.
+const fullShelfPath = (s) => [s.room, s.bookcase, s.label].filter(Boolean).join(' › ');
+const shelvesByPath = () => [...shelvesCache].sort((a, b) => fullShelfPath(a).localeCompare(fullShelfPath(b)));
+
 function populateShelfSelect() {
   const sel = $('#shelfSelect');
   const current = sel.value;
-  const groups = {};
-  for (const s of shelvesCache) {
-    const key = [s.room, s.bookcase].filter(Boolean).join(' › ') || 'Other';
-    (groups[key] ||= []).push(s);
-  }
-  sel.innerHTML = '<option value="">— Unshelved —</option>';
-  for (const [group, items] of Object.entries(groups)) {
-    const og = document.createElement('optgroup');
-    og.label = group;
-    for (const s of items) {
-      const o = document.createElement('option');
-      o.value = s.id;
-      o.textContent = s.label;
-      og.appendChild(o);
-    }
-    sel.appendChild(og);
-  }
+  sel.innerHTML = '<option value="">— Unshelved —</option>'
+    + shelvesByPath().map((s) => `<option value="${s.id}">${esc(fullShelfPath(s))}</option>`).join('');
   sel.value = current;
 }
 
 function populateShelfFilter() {
   const sel = $('#filterShelf');
   const current = sel.value;
-  sel.innerHTML = '<option value="">All shelves</option><option value="none">Unshelved</option>' +
-    shelvesCache.map((s) => `<option value="${s.id}">${esc([s.room, s.bookcase, s.label].filter(Boolean).join(' › '))}</option>`).join('');
+  sel.innerHTML = '<option value="">All shelves</option><option value="none">Unshelved</option>'
+    + shelvesByPath().map((s) => `<option value="${s.id}">${esc(fullShelfPath(s))}</option>`).join('');
   sel.value = current;
 }
 
@@ -719,23 +708,8 @@ async function teardownScanner() {
 function openImportDialog() {
   const sel = $('#importShelf');
   const current = sel.value;
-  const groups = {};
-  for (const s of shelvesCache) {
-    const key = [s.room, s.bookcase].filter(Boolean).join(' › ') || 'Other';
-    (groups[key] ||= []).push(s);
-  }
-  sel.innerHTML = '<option value="">— none —</option>';
-  for (const [group, items] of Object.entries(groups)) {
-    const og = document.createElement('optgroup');
-    og.label = group;
-    for (const s of items) {
-      const o = document.createElement('option');
-      o.value = s.id;
-      o.textContent = s.label;
-      og.appendChild(o);
-    }
-    sel.appendChild(og);
-  }
+  sel.innerHTML = '<option value="">— none —</option>'
+    + shelvesByPath().map((s) => `<option value="${s.id}">${esc(fullShelfPath(s))}</option>`).join('');
   sel.value = current;
   $('#importFiles').value = '';
   $('#importProgress').hidden = true;

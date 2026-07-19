@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { sortTitle } from './sorttitle.js';
+import { GENRE_SEED } from './genres-seed.js';
 
 const DB_PATH = process.env.DB_PATH || './data/library.db';
 mkdirSync(dirname(DB_PATH), { recursive: true });
@@ -70,11 +71,39 @@ db.exec(`
     updated_at      TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS genres (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    definition  TEXT,
+    -- NULL = top-level genre; otherwise this row is a subgenre of parent_id.
+    parent_id   INTEGER REFERENCES genres(id) ON DELETE CASCADE,
+    created_at  TEXT DEFAULT (datetime('now')),
+    updated_at  TEXT DEFAULT (datetime('now'))
+  );
+
+  -- A name is unique within its parent scope (top-level names, and children of a
+  -- given parent). The same subgenre name may recur under different parents
+  -- (e.g. "Contemporary" under both Fantasy and Realism).
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_genres_name_parent
+    ON genres(name COLLATE NOCASE, ifnull(parent_id, 0));
+
   CREATE INDEX IF NOT EXISTS idx_books_isbn   ON books(isbn);
   CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
   CREATE INDEX IF NOT EXISTS idx_books_title  ON books(title);
   CREATE INDEX IF NOT EXISTS idx_books_shelf  ON books(shelf_id);
 `);
+
+// Seed the genre taxonomy once, on an empty genres table.
+if (db.prepare('SELECT COUNT(*) AS n FROM genres').get().n === 0) {
+  const insGenre = db.prepare('INSERT INTO genres (name, definition, parent_id) VALUES (?, ?, ?)');
+  const seed = db.transaction(() => {
+    for (const g of GENRE_SEED) {
+      const parentId = insGenre.run(g.name, g.definition, null).lastInsertRowid;
+      for (const c of g.children || []) insGenre.run(c.name, c.definition, parentId);
+    }
+  });
+  seed();
+}
 
 // Migrations for databases created before a column existed. ALTER TABLE ADD
 // COLUMN is non-destructive (existing rows get NULL).

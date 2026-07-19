@@ -264,6 +264,54 @@ router.get('/api/meta', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Genres — hierarchical taxonomy (parent_id NULL = top-level, else a subgenre).
+// ---------------------------------------------------------------------------
+router.get('/api/genres', (_req, res) => {
+  res.json(db.prepare('SELECT * FROM genres ORDER BY name COLLATE NOCASE').all());
+});
+
+router.post('/api/genres', (req, res) => {
+  const name = (req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const parentId = req.body.parent_id ? Number(req.body.parent_id) : null;
+  if (parentId && !db.prepare('SELECT id FROM genres WHERE id = ?').get(parentId)) {
+    return res.status(400).json({ error: 'parent genre not found' });
+  }
+  // Reuse an existing entry with the same name in the same parent scope.
+  const existing = db.prepare(
+    'SELECT * FROM genres WHERE name = ? COLLATE NOCASE AND ifnull(parent_id, 0) = ifnull(?, 0)',
+  ).get(name, parentId);
+  if (existing) {
+    if (req.body.definition && !existing.definition) {
+      db.prepare("UPDATE genres SET definition = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(req.body.definition, existing.id);
+    }
+    return res.status(200).json(db.prepare('SELECT * FROM genres WHERE id = ?').get(existing.id));
+  }
+  const info = db.prepare('INSERT INTO genres (name, definition, parent_id) VALUES (?, ?, ?)')
+    .run(name, req.body.definition || '', parentId);
+  res.status(201).json(db.prepare('SELECT * FROM genres WHERE id = ?').get(info.lastInsertRowid));
+});
+
+router.put('/api/genres/:id', (req, res) => {
+  const genre = db.prepare('SELECT * FROM genres WHERE id = ?').get(req.params.id);
+  if (!genre) return res.status(404).json({ error: 'Not found' });
+  const name = req.body.name !== undefined ? (req.body.name || '').trim() : genre.name;
+  if (!name) return res.status(400).json({ error: 'name cannot be empty' });
+  const definition = req.body.definition !== undefined ? req.body.definition : genre.definition;
+  db.prepare("UPDATE genres SET name = ?, definition = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(name, definition, req.params.id);
+  res.json(db.prepare('SELECT * FROM genres WHERE id = ?').get(req.params.id));
+});
+
+router.delete('/api/genres/:id', (req, res) => {
+  // Children cascade (ON DELETE CASCADE); books keep their free-text genre value.
+  const info = db.prepare('DELETE FROM genres WHERE id = ?').run(req.params.id);
+  if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
+  res.status(204).end();
+});
+
+// ---------------------------------------------------------------------------
 // ISBN lookup — merges Open Library and Google Books (see lookup.js).
 // ---------------------------------------------------------------------------
 router.get('/api/lookup/:isbn', async (req, res) => {

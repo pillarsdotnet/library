@@ -260,6 +260,24 @@ dialog::backdrop { background: rgba(20, 15, 30, 0.55); }
 #coverPreview { width: 72px; height: 108px; object-fit: cover; border-radius: 6px; }
 .cover-pick { font-size: 0.8rem; padding: 6px 10px; white-space: nowrap; }
 
+/* Genres tab */
+#genreList { max-width: 1100px; margin: 0 auto; padding: 0 16px 32px; }
+.genre-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  margin-bottom: 8px;
+}
+.genre-row.sub { margin-left: 28px; border-left: 3px solid var(--accent); }
+.genre-main { flex: 1; min-width: 0; }
+.genre-name { font-weight: 600; display: block; }
+.genre-def { font-size: 0.85rem; color: var(--muted); }
+
 .pad-dialog { padding: 18px; width: min(440px, 94vw); }
 .dup-options { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
 .dup-option {

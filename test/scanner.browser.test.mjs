@@ -180,6 +180,57 @@ test('duplicate ISBN prompt: the "new" option creates the copy and opens it for 
   await page.close();
 });
 
+test('typing a new genre in the book form prompts for a definition and saves it', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+  await page.type('#bookForm [name="title"]', 'Genre Prompt Book');
+  const newGenre = 'Steampunk ' + Date.now();
+  await page.type('#bookForm [name="genre"]', newGenre);
+  await page.click('#bookForm button[type="submit"]');
+
+  // New-genre definition dialog should appear.
+  await page.waitForSelector('#newGenreDialog[open]', { timeout: 4000 });
+  assert.match(await page.$eval('#newGenrePrompt', (el) => el.textContent), /new genre/i);
+  await page.type('#newGenreDefinition', 'Gears and steam.');
+  await page.click('#newGenreSave');
+  await new Promise((r) => setTimeout(r, 600));
+
+  // The genre now exists in the taxonomy with its definition.
+  const genres = await (await fetch(`${BASE}/api/genres`)).json();
+  const created = genres.find((g) => g.name === newGenre);
+  assert.ok(created, 'new genre was created');
+  assert.equal(created.definition, 'Gears and steam.');
+  assert.equal(created.parent_id, null);
+  await page.close();
+});
+
+test('Genres tab lists the taxonomy and can edit a definition', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('.tab[data-tab="genres"]');
+  await page.waitForSelector('#tab-genres:not([hidden])');
+  const rowCount = await page.$$eval('#genreList .genre-row', (els) => els.length);
+  assert.ok(rowCount >= 6, `expected the seeded genres, saw ${rowCount}`);
+
+  // Edit Thriller's definition.
+  const genres = await (await fetch(`${BASE}/api/genres`)).json();
+  const thriller = genres.find((g) => g.name === 'Thriller');
+  await page.click(`[data-edit-genre="${thriller.id}"]`);
+  await page.waitForSelector('#genreDialog[open]');
+  const def = await page.$('#genreForm [name="definition"]');
+  await def.click();
+  await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control');
+  await page.keyboard.press('Backspace');
+  await page.type('#genreForm [name="definition"]', 'Edited via UI.');
+  await page.click('#genreForm button[type="submit"]');
+  await new Promise((r) => setTimeout(r, 400));
+  const after = await (await fetch(`${BASE}/api/genres`)).json();
+  assert.equal(after.find((g) => g.id === thriller.id).definition, 'Edited via UI.');
+  await page.close();
+});
+
 test('Clear filters button resets all filters and is hidden when none are active', { skip }, async () => {
   const page = await browser.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });

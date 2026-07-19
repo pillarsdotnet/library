@@ -26,6 +26,7 @@
   <nav class="tabs">
     <button class="tab active" data-tab="books">Books</button>
     <button class="tab" data-tab="shelves">Shelves</button>
+    <button class="tab" data-tab="genres">Genres</button>
   </nav>
 
   <!-- ============ BOOKS TAB ============ -->
@@ -70,6 +71,48 @@
     <main id="shelfList" class="grid"></main>
     <p id="shelfEmpty" class="empty" hidden>No shelves yet. Add one to start tracking capacity.</p>
   </div>
+
+  <!-- ============ GENRES TAB ============ -->
+  <div id="tab-genres" class="tab-panel" hidden>
+    <section class="toolbar">
+      <p class="hint grow">Your genre taxonomy. Top-level genres and their subgenres, each with a definition you can edit.</p>
+      <button id="addGenreBtn" class="primary">+ Add genre</button>
+    </section>
+    <main id="genreList"></main>
+  </div>
+
+  <!-- ============ GENRE DIALOG ============ -->
+  <dialog id="genreDialog" class="pad-dialog">
+    <form id="genreForm" method="dialog">
+      <div class="dialog-head">
+        <h2 id="genreDialogTitle">Add genre</h2>
+        <button type="button" class="icon" id="closeGenreDialog" aria-label="Close">✕</button>
+      </div>
+      <label>Name <input name="name" required autocomplete="off" /></label>
+      <label>Parent genre
+        <select name="parent_id" id="genreParent"><option value="">— top-level genre —</option></select>
+      </label>
+      <label>Definition <textarea name="definition" rows="3"></textarea></label>
+      <div class="dialog-actions">
+        <button type="button" id="deleteGenreBtn" class="danger" hidden>Delete</button>
+        <span class="grow"></span>
+        <button type="button" id="cancelGenreBtn">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ NEW-GENRE DEFINITION DIALOG ============ -->
+  <dialog id="newGenreDialog" class="pad-dialog">
+    <div class="dialog-head"><h2 id="newGenreTitle">New genre</h2></div>
+    <p id="newGenrePrompt" class="hint"></p>
+    <label>Definition <textarea id="newGenreDefinition" rows="3"></textarea></label>
+    <div class="dialog-actions">
+      <span class="grow"></span>
+      <button type="button" id="newGenreCancel">Cancel</button>
+      <button type="button" id="newGenreSave" class="primary">Save genre</button>
+    </div>
+  </dialog>
 
   <!-- ============ BOOK DIALOG ============ -->
   <dialog id="editDialog">

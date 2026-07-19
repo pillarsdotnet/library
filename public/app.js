@@ -26,6 +26,8 @@ const bookDialog = $('#editDialog');
 const bookForm = $('#bookForm');
 const shelfDialog = $('#shelfDialog');
 const shelfForm = $('#shelfForm');
+const genreDialog = $('#genreDialog');
+const genreForm = $('#genreForm');
 
 let editingBookId = null;
 let editingShelfId = null;
@@ -35,13 +37,20 @@ let shelvesCache = [];
 // ---------------------------------------------------------------------------
 // Tabs
 // ---------------------------------------------------------------------------
+const ADD_BY_TAB = {
+  books: { label: '+ Add book', fn: () => openAddBook() },
+  shelves: { label: '+ Add shelf', fn: () => openAddShelf() },
+  genres: { label: '+ Add genre', fn: () => openAddGenre() },
+};
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => {
+    const which = tab.dataset.tab;
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
-    $('#tab-books').hidden = tab.dataset.tab !== 'books';
-    $('#tab-shelves').hidden = tab.dataset.tab !== 'shelves';
-    $('#addBtn').textContent = tab.dataset.tab === 'books' ? '+ Add book' : '+ Add shelf';
-    $('#addBtn').onclick = tab.dataset.tab === 'books' ? openAddBook : openAddShelf;
+    $('#tab-books').hidden = which !== 'books';
+    $('#tab-shelves').hidden = which !== 'shelves';
+    $('#tab-genres').hidden = which !== 'genres';
+    $('#addBtn').textContent = ADD_BY_TAB[which].label;
+    $('#addBtn').onclick = ADD_BY_TAB[which].fn;
   });
 });
 
@@ -354,6 +363,9 @@ function askDuplicate(dups, newData) {
 
 async function saveBook(e) {
   e.preventDefault();
+  // Prompt to define any newly-typed genre/subgenre before saving.
+  if (!await ensureBookGenres()) return;
+
   const data = Object.fromEntries(new FormData(bookForm).entries());
   data.is_library_book = $('#isLibraryBook').checked;
   DIM_FIELDS.forEach((f) => { if (f in data) data[f] = unitToMm(data[f]); });
@@ -770,7 +782,9 @@ async function loadMeta() {
   });
   fillSelect('filterRoom', meta.rooms, 'All rooms');
   fillSelect('filterBookcase', meta.bookcases, 'All bookcases');
-  fillSelect('filterGenre', meta.genres, 'All genres');
+  // Genre filter: union of taxonomy top-level genres and any genres in use.
+  const genreNames = [...new Set([...topGenres().map((g) => g.name), ...meta.genres])].sort((a, b) => a.localeCompare(b));
+  fillSelect('filterGenre', genreNames, 'All genres');
 }
 
 function fillSelect(id, values, allLabel) {
@@ -825,8 +839,164 @@ function attachCombo(input, getItems) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Genres (hierarchical taxonomy + definitions)
+// ---------------------------------------------------------------------------
+let genresCache = [];
+let editingGenreId = null;
+
+const topGenres = () => genresCache.filter((g) => !g.parent_id);
+const subGenres = (parentId) => genresCache.filter((g) => g.parent_id === parentId);
+const findTopGenre = (name) => genresCache.find((g) => !g.parent_id && g.name.toLowerCase() === (name || '').trim().toLowerCase());
+const findSubGenre = (name, parentId) =>
+  genresCache.find((g) => g.parent_id === parentId && g.name.toLowerCase() === (name || '').trim().toLowerCase());
+
+async function loadGenres() {
+  genresCache = await api('/genres');
+  renderGenres();
+}
+
+function renderGenres() {
+  const list = $('#genreList');
+  list.innerHTML = '';
+  for (const g of topGenres().sort((a, b) => a.name.localeCompare(b.name))) {
+    list.appendChild(renderGenreRow(g, 0));
+    for (const c of subGenres(g.id).sort((a, b) => a.name.localeCompare(b.name))) {
+      list.appendChild(renderGenreRow(c, 1));
+    }
+  }
+}
+
+function renderGenreRow(g, depth) {
+  const row = document.createElement('div');
+  row.className = `genre-row${depth ? ' sub' : ''}`;
+  row.innerHTML = `
+    <div class="genre-main">
+      <span class="genre-name">${esc(g.name)}</span>
+      <span class="genre-def">${esc(g.definition || 'No definition yet.')}</span>
+    </div>
+    <button type="button" class="link" data-edit-genre="${g.id}">Edit</button>`;
+  row.querySelector('[data-edit-genre]').onclick = () => openEditGenre(g);
+  return row;
+}
+
+function fillGenreParentSelect(excludeId) {
+  const sel = $('#genreParent');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— top-level genre —</option>'
+    + topGenres().filter((g) => g.id !== excludeId).sort((a, b) => a.name.localeCompare(b.name))
+      .map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  sel.value = current;
+}
+
+function openAddGenre() {
+  editingGenreId = null;
+  genreForm.reset();
+  $('#genreDialogTitle').textContent = 'Add genre';
+  $('#deleteGenreBtn').hidden = true;
+  fillGenreParentSelect(null);
+  $('#genreParent').disabled = false;
+  genreDialog.showModal();
+}
+
+function openEditGenre(g) {
+  editingGenreId = g.id;
+  genreForm.reset();
+  $('#genreDialogTitle').textContent = 'Edit genre';
+  $('#deleteGenreBtn').hidden = false;
+  fillGenreParentSelect(g.id);
+  genreForm.elements.name.value = g.name;
+  genreForm.elements.definition.value = g.definition || '';
+  genreForm.elements.parent_id.value = g.parent_id || '';
+  // Reparenting isn't supported here (would change hierarchy meaning); lock it.
+  $('#genreParent').disabled = true;
+  genreDialog.showModal();
+}
+
+async function saveGenre(e) {
+  e.preventDefault();
+  const data = {
+    name: genreForm.elements.name.value.trim(),
+    definition: genreForm.elements.definition.value,
+    parent_id: genreForm.elements.parent_id.value || null,
+  };
+  if (!data.name) return;
+  try {
+    if (editingGenreId) await api('/genres/' + editingGenreId, { method: 'PUT', headers: json(), body: JSON.stringify(data) });
+    else await api('/genres', { method: 'POST', headers: json(), body: JSON.stringify(data) });
+    genreDialog.close();
+    await loadGenres();
+  } catch (err) { alert('Save failed: ' + err.message); }
+}
+
+async function deleteGenre() {
+  if (!editingGenreId) return;
+  const g = genresCache.find((x) => x.id === editingGenreId);
+  const kids = g && !g.parent_id ? subGenres(g.id).length : 0;
+  const warn = kids ? `\n\nIts ${kids} subgenre(s) will also be deleted.` : '';
+  if (!confirm(`Delete the genre “${g ? g.name : ''}”?${warn}\n\nBooks keep their genre text.`)) return;
+  await api('/genres/' + editingGenreId, { method: 'DELETE' });
+  genreDialog.close();
+  await loadGenres();
+}
+
+// Prompt for a definition when the user types a brand-new genre/subgenre in the
+// book form. Creates it (POST /api/genres) and resolves to the created record,
+// or null if cancelled.
+function promptNewGenre(name, parentId) {
+  return new Promise((resolve) => {
+    const dlg = $('#newGenreDialog');
+    const parent = parentId ? genresCache.find((g) => g.id === parentId) : null;
+    $('#newGenreTitle').textContent = parent ? 'New subgenre' : 'New genre';
+    $('#newGenrePrompt').textContent = parent
+      ? `“${name}” is a new subgenre of ${parent.name}. Add a definition:`
+      : `“${name}” is a new genre. Add a definition:`;
+    $('#newGenreDefinition').value = '';
+    const saveBtn = $('#newGenreSave');
+    const cancelBtn = $('#newGenreCancel');
+    const cleanup = () => { saveBtn.removeEventListener('click', onSave); cancelBtn.removeEventListener('click', onCancel); dlg.removeEventListener('cancel', onEsc); };
+    const onSave = async () => {
+      try {
+        const g = await api('/genres', {
+          method: 'POST', headers: json(),
+          body: JSON.stringify({ name, definition: $('#newGenreDefinition').value, parent_id: parentId || null }),
+        });
+        genresCache.push(g);
+        cleanup(); dlg.close(); resolve(g);
+      } catch (err) { alert('Could not add genre: ' + err.message); }
+    };
+    const onCancel = () => { cleanup(); dlg.close(); resolve(null); };
+    const onEsc = (ev) => { ev.preventDefault(); onCancel(); };
+    saveBtn.addEventListener('click', onSave);
+    cancelBtn.addEventListener('click', onCancel);
+    dlg.addEventListener('cancel', onEsc);
+    dlg.showModal();
+    $('#newGenreDefinition').focus();
+  });
+}
+
+// Before saving a book, make sure any newly-typed genre/subgenre exists in the
+// taxonomy, prompting for a definition. Returns false if the user cancelled.
+async function ensureBookGenres() {
+  const gName = bookForm.elements.genre.value.trim();
+  const sName = bookForm.elements.subgenre.value.trim();
+  let genre = null;
+  if (gName) {
+    genre = findTopGenre(gName);
+    if (!genre) { genre = await promptNewGenre(gName, null); if (!genre) return false; }
+  }
+  if (sName) {
+    const parentId = genre ? genre.id : null;
+    if (!findSubGenre(sName, parentId)) {
+      const created = await promptNewGenre(sName, parentId);
+      if (!created) return false;
+    }
+  }
+  return true;
+}
+
 async function refresh() {
-  await loadShelves();          // shelves first so book cards & selects have shelf data
+  await Promise.all([loadShelves(), loadGenres()]); // shelves+genres before book cards/selects
   await Promise.all([loadBooks(), loadMeta()]);
 }
 
@@ -944,8 +1114,17 @@ $('#deleteShelfBtn').addEventListener('click', deleteShelf);
 shelfForm.addEventListener('submit', saveShelf);
 
 // Autocomplete for the free-text classification/location fields.
-attachCombo(bookForm.elements.genre, () => META.genres);
-attachCombo(bookForm.elements.subgenre, () => META.subgenres);
+// Genre suggests top-level genres; subgenre suggests children of the chosen genre.
+attachCombo(bookForm.elements.genre, () => topGenres().map((g) => g.name));
+attachCombo(bookForm.elements.subgenre, () => {
+  const genre = findTopGenre(bookForm.elements.genre.value);
+  return subGenres(genre ? genre.id : null).map((g) => g.name);
+});
+$('#addGenreBtn').addEventListener('click', openAddGenre);
+$('#closeGenreDialog').addEventListener('click', () => genreDialog.close());
+$('#cancelGenreBtn').addEventListener('click', () => genreDialog.close());
+$('#deleteGenreBtn').addEventListener('click', deleteGenre);
+genreForm.addEventListener('submit', saveGenre);
 attachCombo(shelfForm.elements.room, () => META.rooms);
 attachCombo(shelfForm.elements.bookcase, () => META.bookcases);
 

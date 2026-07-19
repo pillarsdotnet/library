@@ -38,19 +38,16 @@ test('seeds the taxonomy with the right hierarchy and definitions', async () => 
   const { body } = await api('/genres');
   const top = body.filter((g) => !g.parent_id);
   const names = top.map((g) => g.name).sort();
-  assert.deepEqual(names, [
-    'Adult', 'Children', 'Fantasy', 'Middle-Grade', 'Mystery',
-    'Occupational', 'Realism', 'Science Fiction', 'Thriller', 'Young Adult',
-  ]);
+  assert.deepEqual(names, ['Maturity', 'Nonfiction', 'Realism', 'Theme', 'Timeframe', 'World']);
 
-  const fantasy = top.find((g) => g.name === 'Fantasy');
-  assert.match(fantasy.definition, /supernatural entities, magic/);
-  const fantasyKids = body.filter((g) => g.parent_id === fantasy.id).map((g) => g.name).sort();
-  assert.deepEqual(fantasyKids, ['Contemporary', 'High', 'Historical']);
+  const realism = top.find((g) => g.name === 'Realism');
+  const realismKids = body.filter((g) => g.parent_id === realism.id).map((g) => g.name).sort();
+  assert.deepEqual(realismKids, ['Alternative', 'Future', 'Magical', 'Mundane']);
+  assert.match(body.find((g) => g.parent_id === realism.id && g.name === 'Magical').definition, /supernatural entities, magic/);
 
-  // "Contemporary" exists under both Fantasy and Realism (distinct rows).
-  const contemporaries = body.filter((g) => g.name === 'Contemporary');
-  assert.equal(contemporaries.length, 2);
+  // "Alternative" exists under both Realism and World (distinct rows).
+  const alternatives = body.filter((g) => g.name === 'Alternative');
+  assert.equal(alternatives.length, 2);
 });
 
 test('creates a new top-level genre with a definition', async () => {
@@ -63,10 +60,10 @@ test('creates a new top-level genre with a definition', async () => {
 
 test('creates a subgenre under a parent', async () => {
   const { body: all } = await api('/genres');
-  const sf = all.find((g) => g.name === 'Science Fiction');
-  const { status, body } = await api('/genres', json({ method: 'POST', data: { name: 'Cyberpunk', definition: 'High tech, low life.', parent_id: sf.id } }));
+  const realism = all.find((g) => g.name === 'Realism' && !g.parent_id);
+  const { status, body } = await api('/genres', json({ method: 'POST', data: { name: 'Cyberpunk', definition: 'High tech, low life.', parent_id: realism.id } }));
   assert.equal(status, 201);
-  assert.equal(body.parent_id, sf.id);
+  assert.equal(body.parent_id, realism.id);
 });
 
 test('creating a duplicate name in the same scope reuses the existing row', async () => {

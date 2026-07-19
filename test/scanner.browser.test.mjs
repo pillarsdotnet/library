@@ -189,10 +189,10 @@ test('genres field: comma/Enter commit existing genres as chips; stored as genre
 
   const genreInput = '#genreInput';
   // Existing genre committed with a comma.
-  await page.type(genreInput, 'Science Fiction,');
+  await page.type(genreInput, 'Mystery,');
   await new Promise((r) => setTimeout(r, 150));
   // Existing genre committed with Enter.
-  await page.type(genreInput, 'Mystery');
+  await page.type(genreInput, 'Horror');
   await page.keyboard.press('Enter');
   await new Promise((r) => setTimeout(r, 150));
   // A brand-new genre triggers the definition prompt (leave it top-level).
@@ -204,8 +204,7 @@ test('genres field: comma/Enter commit existing genres as chips; stored as genre
   await page.click('#newGenreSave');
   await new Promise((r) => setTimeout(r, 400));
 
-  const chips = await page.$$eval('#genreField .chip', (els) => els.map((e) => e.textContent.replace('✕', '').trim()));
-  assert.deepEqual(chips.sort(), ['Mystery', 'Science Fiction', newG].sort(), 'three chips committed');
+  assert.equal(await page.$$eval('#genreField .chip', (els) => els.length), 3, 'three chips committed');
 
   // Save; the book stores genre_ids referencing the genres table.
   await page.click('#bookForm button[type="submit"]');
@@ -213,7 +212,7 @@ test('genres field: comma/Enter commit existing genres as chips; stored as genre
   const books = await (await fetch(`${BASE}/api/books?q=Multi Genre Book`)).json();
   const saved = books.find((b) => b.title === 'Multi Genre Book');
   const names = saved.genres.map((g) => g.name).sort();
-  assert.deepEqual(names, ['Mystery', 'Science Fiction', newG].sort());
+  assert.deepEqual(names, ['Horror', 'Mystery', newG].sort());
   assert.equal(saved.genre_ids.length, 3, 'three genre_ids');
   // Filtering by one of its genre ids returns this book.
   const gid = saved.genres.find((g) => g.name === 'Mystery').id;
@@ -227,7 +226,7 @@ test('genres field shows a suggestion dropdown, anchored below the field, and cl
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
   await page.click('#addBtn');
   await page.waitForSelector('#editDialog[open]');
-  await page.type('#genreInput', 'Sc', { delay: 30 });
+  await page.type('#genreInput', 'Magic', { delay: 30 });
   await new Promise((r) => setTimeout(r, 250));
   const info = await page.evaluate(() => {
     const field = document.querySelector('#genreField');
@@ -241,7 +240,7 @@ test('genres field shows a suggestion dropdown, anchored below the field, and cl
     };
   });
   assert.equal(info.hidden, false, 'dropdown visible while typing');
-  assert.ok(info.items.includes('Science Fiction'), 'suggests matching genres');
+  assert.ok(info.items.some((i) => i.includes('Magical')), 'suggests matching genres (Realism › Magical)');
   assert.ok(info.belowField, 'dropdown is positioned below the field');
   await page.click('.combo-list li');
   await new Promise((r) => setTimeout(r, 150));
@@ -302,14 +301,14 @@ test('genres field commits a new genre from a typed comma via the input event (m
   await page.close();
 });
 
-test('reader-level genres are seeded and offered as top-level genres', { skip }, async () => {
+test('reader-level (Maturity) genres are seeded as subgenres of Maturity', { skip }, async () => {
   const genres = await (await fetch(`${BASE}/api/genres`)).json();
-  const readerLevels = ['Adult', 'Young Adult', 'Middle-Grade', 'Children'];
-  for (const name of readerLevels) {
-    const g = genres.find((x) => x.name === name);
-    assert.ok(g, `${name} seeded`);
-    assert.equal(g.parent_id, null, `${name} is top-level`);
-    assert.ok(g.definition, `${name} has a definition`);
+  const maturity = genres.find((x) => x.name === 'Maturity' && !x.parent_id);
+  assert.ok(maturity, 'Maturity top-level seeded');
+  for (const name of ['Adult', 'Child', 'Middle-Grade', 'Young-Adult']) {
+    const g = genres.find((x) => x.name === name && x.parent_id === maturity.id);
+    assert.ok(g, `Maturity›${name} seeded`);
+    assert.ok(g.definition, `Maturity›${name} has a definition`);
   }
 });
 

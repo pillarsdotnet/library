@@ -140,6 +140,8 @@ test('duplicate ISBN prompt: Cancel keeps the record, Edit opens the original', 
   await page.click('#bookForm button[type="submit"]');
   await page.waitForSelector('#dupDialog[open]', { timeout: 4000 });
   assert.match(await page.$eval('#dupDialogMsg', (el) => el.textContent), /already in your library/i);
+  // Existing option shows format + location.
+  assert.match(await page.$eval('#dupOptions .dup-option span', (el) => el.textContent), /Unshelved/);
 
   // Cancel → nothing created, add dialog still open.
   await page.click('#dupCancelBtn');
@@ -147,18 +149,18 @@ test('duplicate ISBN prompt: Cancel keeps the record, Edit opens the original', 
   assert.equal(await metaCount(), seeded, 'Cancel must not create a copy');
   assert.ok(await page.$('#editDialog[open]'), 'add dialog stays open after Cancel');
 
-  // Save again → Edit original loads the existing record for editing.
+  // Save again → clicking the existing option loads that record for editing.
   await page.click('#bookForm button[type="submit"]');
   await page.waitForSelector('#dupDialog[open]', { timeout: 4000 });
-  await page.click('#dupEditBtn');
+  await page.click('#dupOptions .dup-option'); // first = the existing book
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(await page.$eval('#dialogTitle', (el) => el.textContent), 'Edit book');
-  assert.equal(await page.$eval('#bookForm [name="title"]', (el) => el.value), 'Dup Seed', 'Edit opens the original');
-  assert.equal(await metaCount(), seeded, 'Edit must not create a copy');
+  assert.equal(await page.$eval('#bookForm [name="title"]', (el) => el.value), 'Dup Seed', 'opens the original');
+  assert.equal(await metaCount(), seeded, 'editing an existing copy must not create one');
   await page.close();
 });
 
-test('duplicate ISBN prompt: Add copy creates another entry', { skip }, async () => {
+test('duplicate ISBN prompt: the "new" option creates the copy and opens it for editing', { skip }, async () => {
   const isbn = '9780316158541'; // already seeded by the previous test
   const before = await metaCount();
   const page = await browser.newPage();
@@ -169,9 +171,12 @@ test('duplicate ISBN prompt: Add copy creates another entry', { skip }, async ()
   await page.type('#isbn', isbn);
   await page.click('#bookForm button[type="submit"]');
   await page.waitForSelector('#dupDialog[open]', { timeout: 4000 });
-  await page.click('#dupAddBtn');
-  await new Promise((r) => setTimeout(r, 400));
-  assert.equal(await metaCount(), before + 1, 'Add copy should create the duplicate');
+
+  await page.click('#dupOptions .dup-option.new');
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(await metaCount(), before + 1, 'the new option creates the copy');
+  assert.equal(await page.$eval('#dialogTitle', (el) => el.textContent), 'Edit book', 'opens the new copy for editing');
+  assert.equal(await page.$eval('#bookForm [name="title"]', (el) => el.value), 'Second Copy');
   await page.close();
 });
 

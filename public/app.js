@@ -299,29 +299,42 @@ async function checkDuplicate() {
   }
 }
 
-// Three-way prompt for a duplicate ISBN. Resolves to 'add' | 'edit' | 'cancel'.
-function askDuplicate(dups) {
+// Prompt for a duplicate ISBN: one option per existing copy (shown by format +
+// location, resolves to editing that record), plus a "new" option, plus cancel.
+// Resolves to { type: 'edit', book } | { type: 'new' } | { type: 'cancel' }.
+function askDuplicate(dups, newData) {
   return new Promise((resolve) => {
     const dlg = $('#dupDialog');
+    const cancelBtn = $('#dupCancelBtn');
     $('#dupDialogMsg').textContent =
-      `This ISBN is already in your library: ${dups.map((b) => b.title).join(', ')}.`;
-    $('#dupEditBtn').textContent = dups.length > 1 ? `Edit “${dups[0].title}”` : 'Edit original';
-    const finish = (choice) => {
-      $('#dupAddBtn').removeEventListener('click', onAdd);
-      $('#dupCancelBtn').removeEventListener('click', onCancel);
-      $('#dupEditBtn').removeEventListener('click', onEdit);
-      dlg.removeEventListener('cancel', onEsc);
-      dlg.close();
-      resolve(choice);
-    };
-    const onAdd = () => finish('add');
-    const onCancel = () => finish('cancel');
-    const onEdit = () => finish('edit');
-    const onEsc = (e) => { e.preventDefault(); finish('cancel'); };
-    $('#dupAddBtn').addEventListener('click', onAdd);
-    $('#dupCancelBtn').addEventListener('click', onCancel);
-    $('#dupEditBtn').addEventListener('click', onEdit);
+      `This ISBN is already in your library (${dups.length} record${dups.length === 1 ? '' : 's'}). `
+      + 'Edit an existing copy, add it as a new one, or cancel.';
+
+    const cleanup = () => { cancelBtn.removeEventListener('click', onCancel); dlg.removeEventListener('cancel', onEsc); };
+    const finish = (result) => { cleanup(); dlg.close(); resolve(result); };
+    const onCancel = () => finish({ type: 'cancel' });
+    const onEsc = (e) => { e.preventDefault(); finish({ type: 'cancel' }); };
+    cancelBtn.addEventListener('click', onCancel);
     dlg.addEventListener('cancel', onEsc);
+
+    const opts = $('#dupOptions');
+    opts.innerHTML = '';
+    for (const b of dups) {
+      const loc = [b.room, b.bookcase, b.shelf_label].filter(Boolean).join(' › ') || 'Unshelved';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'dup-option';
+      btn.innerHTML = `<strong>${esc(b.title)}</strong><span>${esc(`${FORMAT_LABELS[b.format] || b.format || 'Book'} · ${loc}`)}</span>`;
+      btn.addEventListener('click', () => finish({ type: 'edit', book: b }));
+      opts.appendChild(btn);
+    }
+    const nb = document.createElement('button');
+    nb.type = 'button';
+    nb.className = 'dup-option new';
+    nb.innerHTML = `<strong>${esc(newData.title || 'This book')}</strong><span>new</span>`;
+    nb.addEventListener('click', () => finish({ type: 'new' }));
+    opts.appendChild(nb);
+
     dlg.showModal();
   });
 }
@@ -332,22 +345,26 @@ async function saveBook(e) {
   data.is_library_book = $('#isLibraryBook').checked;
   DIM_FIELDS.forEach((f) => { if (f in data) data[f] = unitToMm(data[f]); });
 
-  // Ask before creating a duplicate (only when adding, not editing).
+  // On a duplicate ISBN (adding only), let the user edit an existing copy,
+  // add a new one, or cancel.
+  let openAfterCreate = false;
   if (!editingBookId) {
     const dups = await findByIsbn(data.isbn).catch(() => []);
     if (dups.length) {
-      const choice = await askDuplicate(dups);
-      if (choice === 'cancel') return;
-      if (choice === 'edit') { closeBookDialog(); openEditBook(dups[0]); return; }
-      // 'add' → fall through and create another copy
+      const choice = await askDuplicate(dups, data);
+      if (choice.type === 'cancel') return;
+      if (choice.type === 'edit') { closeBookDialog(); openEditBook(choice.book); return; }
+      openAfterCreate = true; // 'new' — create it, then open it for editing
     }
   }
 
   try {
-    if (editingBookId) await api('/books/' + editingBookId, { method: 'PUT', headers: json(), body: JSON.stringify(data) });
-    else await api('/books', { method: 'POST', headers: json(), body: JSON.stringify(data) });
+    let saved;
+    if (editingBookId) saved = await api('/books/' + editingBookId, { method: 'PUT', headers: json(), body: JSON.stringify(data) });
+    else saved = await api('/books', { method: 'POST', headers: json(), body: JSON.stringify(data) });
     closeBookDialog();
     await refresh();
+    if (openAfterCreate && saved) openEditBook(saved);
   } catch (err) { alert('Save failed: ' + err.message); }
 }
 

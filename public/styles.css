@@ -261,6 +261,24 @@ dialog::backdrop { background: rgba(20, 15, 30, 0.55); }
 .cover-pick { font-size: 0.8rem; padding: 6px 10px; white-space: nowrap; }
 
 .pad-dialog { padding: 18px; width: min(440px, 94vw); }
+.dup-options { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.dup-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.dup-option strong { font-size: 0.95rem; }
+.dup-option span { font-size: 0.8rem; color: var(--muted); }
+.dup-option:hover { background: var(--bg); }
+.dup-option.new { border-style: dashed; }
+.dup-option.new span { color: var(--accent); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .pad-dialog .dialog-head { margin-bottom: 10px; }
 .pad-dialog .dialog-actions { margin-top: 16px; }
 

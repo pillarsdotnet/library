@@ -180,6 +180,25 @@ test('duplicate ISBN prompt: the "new" option creates the copy and opens it for 
   await page.close();
 });
 
+test('Clear filters button resets all filters and is hidden when none are active', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+
+  assert.equal(await page.$eval('#clearFiltersBtn', (el) => el.hidden), true, 'hidden with no filters');
+
+  await page.select('#filterFormat', 'ebook');
+  await page.type('#search', 'the');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(await page.$eval('#clearFiltersBtn', (el) => el.hidden), false, 'shown when a filter is active');
+
+  await page.click('#clearFiltersBtn');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await page.$eval('#search', (el) => el.value), '', 'search cleared');
+  assert.equal(await page.$eval('#filterFormat', (el) => el.value), '', 'format cleared');
+  assert.equal(await page.$eval('#clearFiltersBtn', (el) => el.hidden), true, 'hidden again after clearing');
+  await page.close();
+});
+
 test('EPUB import endpoint: parses metadata, resizes cover, creates an e-book', { skip }, async () => {
   const coverJpeg = await sharp({ create: { width: 600, height: 900, channels: 3, background: '#334455' } }).jpeg().toBuffer();
   const opf = '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="b">'

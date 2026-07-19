@@ -48,21 +48,32 @@ document.querySelectorAll('.tab').forEach((tab) => {
 // ---------------------------------------------------------------------------
 // Books listing
 // ---------------------------------------------------------------------------
+// Search box + filter selects, mapped to their query params.
+const FILTER_CONTROLS = [
+  ['#search', 'q'], ['#filterStatus', 'status'], ['#filterFormat', 'format'],
+  ['#filterGenre', 'genre'], ['#filterRoom', 'room'], ['#filterBookcase', 'bookcase'],
+  ['#filterShelf', 'shelf_id'],
+];
+
 async function loadBooks() {
   const params = new URLSearchParams();
-  if ($('#search').value) params.set('q', $('#search').value);
-  if ($('#filterStatus').value) params.set('status', $('#filterStatus').value);
-  if ($('#filterFormat').value) params.set('format', $('#filterFormat').value);
-  if ($('#filterGenre').value) params.set('genre', $('#filterGenre').value);
-  if ($('#filterRoom').value) params.set('room', $('#filterRoom').value);
-  if ($('#filterBookcase').value) params.set('bookcase', $('#filterBookcase').value);
-  if ($('#filterShelf').value) params.set('shelf_id', $('#filterShelf').value);
+  let anyActive = false;
+  for (const [sel, param] of FILTER_CONTROLS) {
+    const v = $(sel).value;
+    if (v) { params.set(param, v); anyActive = true; }
+  }
+  $('#clearFiltersBtn').hidden = !anyActive;
 
   const books = await api('/books?' + params.toString());
   const list = $('#list');
   list.innerHTML = '';
   $('#empty').hidden = books.length > 0;
   for (const b of books) list.appendChild(renderBookCard(b));
+}
+
+function clearFilters() {
+  for (const [sel] of FILTER_CONTROLS) $(sel).value = '';
+  loadBooks();
 }
 
 function renderBookCard(b) {
@@ -896,6 +907,7 @@ let searchTimer;
 $('#search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadBooks, 250); });
 ['#filterStatus', '#filterFormat', '#filterGenre', '#filterRoom', '#filterBookcase', '#filterShelf']
   .forEach((s) => $(s).addEventListener('change', loadBooks));
+$('#clearFiltersBtn').addEventListener('click', clearFilters);
 
 $('#addBtn').onclick = openAddBook; // reassigned per-tab by the tab handler
 $('#addShelfBtn').addEventListener('click', openAddShelf);

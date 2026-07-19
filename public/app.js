@@ -873,17 +873,18 @@ async function loadGenres() {
 function renderGenres() {
   const list = $('#genreList');
   list.innerHTML = '';
-  for (const g of topGenres().sort((a, b) => a.name.localeCompare(b.name))) {
-    list.appendChild(renderGenreRow(g, 0));
-    for (const c of subGenres(g.id).sort((a, b) => a.name.localeCompare(b.name))) {
-      list.appendChild(renderGenreRow(c, 1));
-    }
-  }
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  const walk = (g, depth) => {
+    list.appendChild(renderGenreRow(g, depth));
+    for (const c of subGenres(g.id).sort(byName)) walk(c, depth + 1);
+  };
+  for (const g of topGenres().sort(byName)) walk(g, 0);
 }
 
 function renderGenreRow(g, depth) {
   const row = document.createElement('div');
   row.className = `genre-row${depth ? ' sub' : ''}`;
+  if (depth) row.style.marginLeft = `${depth * 24}px`;
   row.innerHTML = `
     <div class="genre-main">
       <span class="genre-name">${esc(g.name)}</span>
@@ -894,13 +895,17 @@ function renderGenreRow(g, depth) {
   return row;
 }
 
+// Parent options: every genre (full path label) except the one being edited and
+// its descendants (which would form a cycle). Subgenres may nest to any depth.
 function fillGenreParentSelect(excludeId) {
   const sel = $('#genreParent');
-  const current = sel.value;
+  const banned = excludeId ? new Set([excludeId, ...descendantIds(excludeId)]) : new Set();
+  const opts = genresCache
+    .filter((g) => !banned.has(g.id))
+    .map((g) => ({ id: g.id, label: genreLabel(g) }))
+    .sort((a, b) => a.label.localeCompare(b.label));
   sel.innerHTML = '<option value="">— top-level genre —</option>'
-    + topGenres().filter((g) => g.id !== excludeId).sort((a, b) => a.name.localeCompare(b.name))
-      .map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
-  sel.value = current;
+    + opts.map((o) => `<option value="${o.id}">${esc(o.label)}</option>`).join('');
 }
 
 function openAddGenre() {
@@ -922,8 +927,7 @@ function openEditGenre(g) {
   genreForm.elements.name.value = g.name;
   genreForm.elements.definition.value = g.definition || '';
   genreForm.elements.parent_id.value = g.parent_id || '';
-  // Reparenting isn't supported here (would change hierarchy meaning); lock it.
-  $('#genreParent').disabled = true;
+  $('#genreParent').disabled = false; // reparenting is allowed
   genreDialog.showModal();
 }
 
@@ -967,7 +971,7 @@ function promptNewGenre(name, candidates) {
     const parentSel = $('#newGenreParent');
     $('#newGenreParentRow').hidden = false;
     parentSel.innerHTML = '<option value="">— top-level genre —</option>'
-      + list.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+      + list.map((c) => `<option value="${c.id}">${esc(c.label || c.name)}</option>`).join('');
     $('#newGenreDefinition').value = '';
     const saveBtn = $('#newGenreSave');
     const cancelBtn = $('#newGenreCancel');
@@ -998,11 +1002,25 @@ function promptNewGenre(name, candidates) {
 // whole taxonomy, subgenres shown as "Parent › Child" to disambiguate.
 // ---------------------------------------------------------------------------
 const genreById = (id) => genresCache.find((g) => g.id === id);
+// Full hierarchical path, e.g. "Nonfiction › Technical › Computer".
 function genreLabel(g) {
   if (!g) return '';
-  if (!g.parent_id) return g.name;
-  const p = genreById(g.parent_id);
-  return p ? `${p.name} › ${g.name}` : g.name;
+  const parts = [];
+  let cur = g;
+  let guard = 0;
+  while (cur && guard++ < 20) { parts.unshift(cur.name); cur = cur.parent_id ? genreById(cur.parent_id) : null; }
+  return parts.join(' › ');
+}
+// Ids of every descendant of a genre (so it can't be reparented under itself).
+function descendantIds(id) {
+  const out = new Set();
+  const stack = [id];
+  while (stack.length) {
+    for (const c of genresCache.filter((g) => g.parent_id === stack.pop())) {
+      if (!out.has(c.id)) { out.add(c.id); stack.push(c.id); }
+    }
+  }
+  return out;
 }
 
 function createGenreField(input) {
@@ -1060,7 +1078,8 @@ function createGenreField(input) {
     const matches = genresCache.filter((g) => g.name.toLowerCase() === lc || genreLabel(g).toLowerCase() === lc);
     if (matches.length === 1) return matches[0].id;
     if (matches.length > 1) return 'ambiguous';
-    const created = await promptNewGenre(text, topGenres().map((g) => ({ id: g.id, name: g.name })));
+    const candidates = genresCache.map((g) => ({ id: g.id, label: genreLabel(g) })).sort((a, b) => a.label.localeCompare(b.label));
+    const created = await promptNewGenre(text, candidates);
     return created ? created.id : null;
   };
   const commit = async (raw) => {

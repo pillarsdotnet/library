@@ -330,14 +330,38 @@ router.post('/api/genres', (req, res) => {
 });
 
 router.put('/api/genres/:id', (req, res) => {
-  const genre = db.prepare('SELECT * FROM genres WHERE id = ?').get(req.params.id);
+  const id = Number(req.params.id);
+  const genre = db.prepare('SELECT * FROM genres WHERE id = ?').get(id);
   if (!genre) return res.status(404).json({ error: 'Not found' });
   const name = req.body.name !== undefined ? (req.body.name || '').trim() : genre.name;
   if (!name) return res.status(400).json({ error: 'name cannot be empty' });
   const definition = req.body.definition !== undefined ? req.body.definition : genre.definition;
-  db.prepare("UPDATE genres SET name = ?, definition = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(name, definition, req.params.id);
-  res.json(db.prepare('SELECT * FROM genres WHERE id = ?').get(req.params.id));
+
+  let parentId = genre.parent_id;
+  if (req.body.parent_id !== undefined) {
+    parentId = req.body.parent_id ? Number(req.body.parent_id) : null;
+    if (parentId != null) {
+      if (parentId === id) return res.status(400).json({ error: 'a genre cannot be its own parent' });
+      if (!db.prepare('SELECT id FROM genres WHERE id = ?').get(parentId)) {
+        return res.status(400).json({ error: 'parent genre not found' });
+      }
+      // Walk up from the proposed parent; reaching this genre would form a cycle.
+      let cur = parentId;
+      while (cur != null) {
+        if (cur === id) return res.status(400).json({ error: 'cannot move a genre under one of its own descendants' });
+        cur = db.prepare('SELECT parent_id FROM genres WHERE id = ?').get(cur)?.parent_id ?? null;
+      }
+    }
+  }
+
+  try {
+    db.prepare("UPDATE genres SET name = ?, definition = ?, parent_id = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(name, definition, parentId, id);
+  } catch (err) {
+    if (/UNIQUE/i.test(err.message)) return res.status(409).json({ error: 'a genre with that name already exists under that parent' });
+    throw err;
+  }
+  res.json(db.prepare('SELECT * FROM genres WHERE id = ?').get(id));
 });
 
 router.delete('/api/genres/:id', (req, res) => {

@@ -339,6 +339,45 @@ test('typing a new genre in the book form prompts for a definition and saves it'
   await page.close();
 });
 
+test('Genres tab supports multi-level subgenres and reparenting', { skip }, async () => {
+  const stamp = Date.now();
+  // Build Nonfiction > Technical via the API.
+  const non = await (await fetch(`${BASE}/api/genres`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Nonfiction ' + stamp, definition: 'x' }) })).json();
+  const tech = await (await fetch(`${BASE}/api/genres`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Technical ' + stamp, definition: 'x', parent_id: non.id }) })).json();
+
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('.tab[data-tab="genres"]');
+  await page.waitForSelector('#tab-genres:not([hidden])');
+
+  // Add-genre parent dropdown offers the 2nd-level "Technical" as a parent (full path label).
+  await page.click('#addGenreBtn');
+  await page.waitForSelector('#genreDialog[open]');
+  const parentLabels = await page.$$eval('#genreParent option', (els) => els.map((e) => e.textContent));
+  assert.ok(parentLabels.some((l) => l.includes('›') && l.includes('Technical ' + stamp)), 'parent dropdown lists a subgenre as a possible parent');
+
+  // Create Computer under Technical (3rd level) via the dialog.
+  await page.type('#genreForm [name="name"]', 'Computer ' + stamp);
+  await page.select('#genreParent', String(tech.id));
+  await page.type('#genreForm [name="definition"]', 'computers');
+  await page.click('#genreForm button[type="submit"]');
+  await new Promise((r) => setTimeout(r, 400));
+  let genres = await (await fetch(`${BASE}/api/genres`)).json();
+  const comp = genres.find((g) => g.name === 'Computer ' + stamp);
+  assert.equal(comp.parent_id, tech.id, 'Computer nested under Technical (3rd level)');
+
+  // Reparent Computer directly under Nonfiction via the edit dialog.
+  await page.click(`[data-edit-genre="${comp.id}"]`);
+  await page.waitForSelector('#genreDialog[open]');
+  assert.equal(await page.$eval('#genreParent', (el) => el.disabled), false, 'parent select is editable');
+  await page.select('#genreParent', String(non.id));
+  await page.click('#genreForm button[type="submit"]');
+  await new Promise((r) => setTimeout(r, 400));
+  genres = await (await fetch(`${BASE}/api/genres`)).json();
+  assert.equal(genres.find((g) => g.id === comp.id).parent_id, non.id, 'Computer reparented under Nonfiction');
+  await page.close();
+});
+
 test('Genres tab lists the taxonomy and can edit a definition', { skip }, async () => {
   const page = await browser.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });

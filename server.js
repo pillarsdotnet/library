@@ -171,9 +171,14 @@ router.get('/api/books', (req, res) => {
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const page = limit > 0 ? ` LIMIT ${limit} OFFSET ${offset}` : '';
 
-  // Filtering to one series reads far better in reading order than alphabetically.
+  // Filtering to one series reads far better in reading order than alphabetically:
+  // by lowest position, then highest (so "book 1" precedes "books 1-5", which
+  // precedes "books 1-15"), then by where the copy lives, shelved copies first.
   const orderBy = (series_id && series_id !== 'none')
-    ? '(SELECT MIN(sb."order") FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id), sort_title(b.title)'
+    ? `(SELECT MIN(sb."order") FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id),
+       (SELECT MAX(sb."order") FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id),
+       s.room IS NULL, s.room COLLATE NOCASE, s.bookcase COLLATE NOCASE, s.label COLLATE NOCASE,
+       sort_title(b.title)`
     : 'sort_title(b.title)';
   const sql = `SELECT b.*, s.room, s.bookcase, s.label AS shelf_label ${from}
     ORDER BY ${orderBy}${page}`;

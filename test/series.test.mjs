@@ -159,6 +159,36 @@ test('rejects position input with no usable numbers', async () => {
   }
 });
 
+test('series view sorts by lowest position, then highest, then location', async () => {
+  const s = (await api('/series', send('POST', { title: `Oz ${Date.now()}` }))).body;
+  const attic = (await api('/shelves', send('POST', { room: 'Attic', bookcase: 'Box', label: 'A' }))).body;
+  const living = (await api('/shelves', send('POST', { room: 'Livingroom', bookcase: 'Oak', label: '1L' }))).body;
+  const add = async (title, order, shelfId) => {
+    const b = (await api('/books', send('POST', { title, ...(shelfId ? { shelf_id: shelfId } : {}) }))).body;
+    await api(`/series/${s.id}/books`, send('POST', { book_id: b.id, order }));
+  };
+  // Added deliberately out of order.
+  await add('Oz books 1-15', '1-15');
+  await add('Oz book 1 Livingroom', 1, living.id);
+  await add('Oz books 1-5', '1-5');
+  await add('Oz book 1 Attic', 1, attic.id);
+  await add('Oz book 1 unshelved', 1);
+  await add('Oz book 2', 2);
+
+  const books = await (await fetch(`${BASE}/api/books?series_id=${s.id}`)).json();
+  assert.deepEqual(books.map((b) => b.title), [
+    // same lowest position (1): shelved copies by location, unshelved last...
+    'Oz book 1 Attic',
+    'Oz book 1 Livingroom',
+    'Oz book 1 unshelved',
+    // ...then wider spans: 1-5 before 1-15
+    'Oz books 1-5',
+    'Oz books 1-15',
+    // then the next position
+    'Oz book 2',
+  ]);
+});
+
 test('a book carries its series on the books API', async () => {
   const { series, ids } = await makeSeriesWith(['Solo']);
   const { body } = await api(`/books/${ids[0]}`);

@@ -9,7 +9,7 @@ const api = (path, opts) => fetch('api' + path, opts).then(async (r) => {
 
 const STATUS_LABELS = { tbr: 'To be read', reading: 'Reading', read: 'Read', loaned: 'Loaned out' };
 const FORMAT_LABELS = { paperback: 'Paperback', hardback: 'Hardback', ebook: 'E-book', audiobook: 'Audiobook', other: 'Other' };
-const SOURCE_LABELS = { openlibrary: 'Open Library', googlebooks: 'Google Books', barnesnoble: 'Barnes & Noble', bookofthemonth: 'Book of the Month', manual: 'Manual' };
+const SOURCE_LABELS = { openlibrary: 'Open Library', googlebooks: 'Google Books', barnesnoble: 'Barnes & Noble', bookofthemonth: 'Book of the Month', epub: 'EPUB file', kindle: 'Kindle', manual: 'Manual' };
 
 // --- Units. Everything is stored in mm; the toggle only affects display/input. ---
 const MM_PER_IN = 25.4;

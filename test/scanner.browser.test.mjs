@@ -121,6 +121,34 @@ test('Quagga (iOS/no-BarcodeDetector) fallback path starts the camera', { skip }
 
 const metaCount = async () => (await (await fetch(`${BASE}/api/meta`)).json()).count;
 
+test('every source value the app writes is selectable and survives an edit', { skip }, async () => {
+  // Sources the app itself stores: lookups, the EPUB importer, the Kindle import.
+  const sources = ['openlibrary', 'googlebooks', 'barnesnoble', 'bookofthemonth', 'epub', 'kindle', 'manual'];
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+
+  const options = await page.$$eval('#bookForm [name="source"] option', (els) => els.map((o) => o.value));
+  for (const s of sources) assert.ok(options.includes(s), `source "${s}" must be offered by the dropdown`);
+
+  for (const s of sources) {
+    const bk = await (await fetch(`${BASE}/api/books`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: `Src ${s} ${Date.now()}`, source: s }),
+    })).json();
+    await page.evaluate(async (id) => {
+      const r = await fetch('api/books/' + id);
+      window.openEditBook(await r.json());
+    }, bk.id);
+    await page.waitForSelector('#editDialog[open]');
+    assert.equal(await page.$eval('#bookForm [name="source"]', (el) => el.value), s, `form shows the stored source "${s}"`);
+    await page.click('#bookForm button[type="submit"]');
+    await new Promise((r) => setTimeout(r, 350));
+    const after = await (await fetch(`${BASE}/api/books/${bk.id}`)).json();
+    assert.equal(after.source, s, `source "${s}" survives an edit`);
+  }
+  await page.close();
+});
+
 test('scanning a duplicate ISBN opens the choice dialog immediately (not only on save)', { skip }, async () => {
   const isbn = '9781783751068';
   const seed = await (await fetch(`${BASE}/api/books`, {

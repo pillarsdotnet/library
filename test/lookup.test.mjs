@@ -171,6 +171,53 @@ test('Barnes & Noble reports the binding of the edition that was asked for', () 
   assert.equal(parseBarnesNoble(bnGraph, '9780593820254').format, 'paperback');
 });
 
+test('skips the B&N scrape when a primary source already reports the binding', async () => {
+  const isbn = '9780593820247';
+  const calls = [];
+  const d = await lookupIsbn(isbn, {
+    apiKey: null,
+    fetch: fakeFetch({
+      ol: { body: { [`ISBN:${isbn}`]: { title: 'DCC' } } },
+      olEdition: { body: { physical_format: 'Hardcover' } },
+      bn: { text: bnGraph },
+    }, calls),
+  });
+  assert.equal(d.format, 'hardback');
+  assert.ok(!calls.some((u) => u.includes('barnesandnoble.com')), 'no scrape when the binding is known');
+});
+
+test('consults B&N for the binding when neither primary source records one', async () => {
+  const isbn = '9780593820247';
+  const calls = [];
+  const d = await lookupIsbn(isbn, {
+    apiKey: null,
+    fetch: fakeFetch({
+      ol: { body: { [`ISBN:${isbn}`]: { title: 'DCC' } } },   // no physical_format
+      bn: { text: bnGraph },
+    }, calls),
+  });
+  assert.ok(calls.some((u) => u.includes('barnesandnoble.com')), 'B&N consulted for the binding');
+  assert.equal(d.format, 'hardback', 'binding filled from B&N');
+  assert.equal(d.source, 'openlibrary', 'source still credits who supplied the metadata');
+  assert.equal(d.title, 'DCC', 'B&N does not overwrite the primary metadata');
+});
+
+test('the binding fallback can be disabled, and a B&N failure stays harmless', async () => {
+  const isbn = '9780593820247';
+  const routes = { ol: { body: { [`ISBN:${isbn}`]: { title: 'DCC' } } }, bn: { text: bnGraph } };
+  const calls = [];
+  const off = await lookupIsbn(isbn, { apiKey: null, bindingFallback: false, fetch: fakeFetch(routes, calls) });
+  assert.equal(off.format, '');
+  assert.ok(!calls.some((u) => u.includes('barnesandnoble.com')), 'opted out, so no scrape');
+
+  const broken = await lookupIsbn(isbn, {
+    apiKey: null,
+    fetch: fakeFetch({ ol: routes.ol, bn: { status: 503 } }),
+  });
+  assert.equal(broken.format, '', 'unavailable B&N leaves the binding empty');
+  assert.equal(broken.title, 'DCC', 'and the lookup still succeeds');
+});
+
 test('parseBarnesNoble returns null for a non-product page', () => {
   assert.equal(parseBarnesNoble('<html><body>nope</body></html>'), null);
 });
@@ -194,6 +241,7 @@ test('does NOT hit Barnes & Noble when a primary source already has the book', a
   const isbn = '9780134685991';
   await lookupIsbn(isbn, {
     apiKey: null,
+    bindingFallback: false,   // otherwise B&N is consulted for the binding alone
     fetch: fakeFetch({ ol: { body: { [`ISBN:${isbn}`]: { title: 'Effective Java' } } } }, calls),
   });
   assert.ok(!calls.some((u) => u.includes('barnesandnoble.com')), 'B&N should not be queried when OL/GB succeed');

@@ -235,6 +235,14 @@ export async function lookupIsbn(isbn, opts = {}) {
 
   if (ol || gb) {
     const first = (...vals) => vals.find((v) => v != null && v !== '') ?? '';
+    let format = first(ol?.format, gb?.format);
+    // Neither primary source records the binding for roughly half of editions.
+    // Barnes & Noble publishes it per edition, so ask them just for that. The
+    // scrape is heavy, hence only when it is the missing piece, and any failure
+    // simply leaves the field empty. Opt out with { bindingFallback: false }.
+    if (!format && opts.bindingFallback !== false) {
+      format = (await fetchBarnesNoble(isbn, baseFetch))?.format || '';
+    }
     return {
       isbn,
       title: first(ol?.title, gb?.title),
@@ -243,7 +251,7 @@ export async function lookupIsbn(isbn, opts = {}) {
       published_date: first(ol?.published_date, gb?.published_date),
       page_count: first(ol?.page_count, gb?.page_count) || null,
       cover_url: first(ol?.cover_url, gb?.cover_url),
-      format: first(ol?.format, gb?.format),
+      format,
       height_mm: ol?.height_mm ?? gb?.height_mm ?? null,
       width_mm: ol?.width_mm ?? gb?.width_mm ?? null,
       thickness_mm: ol?.thickness_mm ?? gb?.thickness_mm ?? null,

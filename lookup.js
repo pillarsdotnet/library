@@ -10,7 +10,6 @@ export class RateLimitError extends Error {
   }
 }
 
-const round1 = (n) => Math.round(n * 10) / 10;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Transient server errors worth retrying (a freshly-enabled Google API key
@@ -44,9 +43,10 @@ export function toMm(value) {
   const n = parseFloat(m[1]);
   if (!isFinite(n)) return null;
   const unit = (m[2] || 'cm').toLowerCase();
-  if (unit === 'mm') return round1(n);
-  if (unit === 'cm') return round1(n * 10);
-  return round1(n * 25.4); // inches
+  // Dimensions are stored as whole millimetres — finer precision isn't useful.
+  if (unit === 'mm') return Math.round(n);
+  if (unit === 'cm') return Math.round(n * 10);
+  return Math.round(n * 25.4); // inches
 }
 
 const BROWSER_UA =

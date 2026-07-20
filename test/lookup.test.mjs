@@ -183,7 +183,7 @@ test('gives up after retries when 503 persists (returns null, not a false rate-l
 test('toMm converts cm/mm/inches', () => {
   assert.equal(toMm('24.00 cm'), 240);
   assert.equal(toMm('15 mm'), 15);
-  assert.equal(toMm('9.1 inches'), 231.1);
+  assert.equal(toMm('9.1 inches'), 231); // whole mm
   assert.equal(toMm('20.3'), 203); // bare number defaults to cm
   assert.equal(toMm(''), null);
 });

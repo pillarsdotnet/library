@@ -55,6 +55,8 @@ const BOOK_COLS = [
 ];
 const SHELF_COLS = ['room', 'bookcase', 'label', 'height_mm', 'width_mm', 'depth_mm', 'notes'];
 const NUMERIC = new Set(['page_count', 'height_mm', 'width_mm', 'thickness_mm', 'depth_mm', 'shelf_id']);
+// Dimensions are whole millimetres; round whatever a client sends.
+const MM_COLS = new Set(['height_mm', 'width_mm', 'thickness_mm', 'depth_mm']);
 
 function pick(body, cols) {
   const out = {};
@@ -62,7 +64,10 @@ function pick(body, cols) {
     if (body[key] === undefined) continue;
     let v = body[key];
     if (key === 'is_library_book') v = v ? 1 : 0;
-    else if (NUMERIC.has(key)) v = (v === '' || v === null) ? null : Number(v);
+    else if (NUMERIC.has(key)) {
+      v = (v === '' || v === null) ? null : Number(v);
+      if (v !== null && MM_COLS.has(key)) v = Math.round(v);
+    }
     out[key] = v;
   }
   return out;

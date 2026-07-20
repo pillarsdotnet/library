@@ -14,16 +14,16 @@ db.pragma('foreign_keys = ON');
 // Custom SQL function for alphabetizing titles with a leading article skipped.
 db.function('sort_title', { deterministic: true }, (t) => sortTitle(t));
 
-// All physical dimensions are stored in millimetres (mm).
+// All physical dimensions are stored as whole millimetres (mm).
 db.exec(`
   CREATE TABLE IF NOT EXISTS shelves (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     room            TEXT,
     bookcase        TEXT,
     label           TEXT NOT NULL,     -- e.g. "Shelf 3" / "Top left"
-    height_mm       REAL,              -- vertical clearance
-    width_mm        REAL,              -- horizontal run available for spines
-    depth_mm        REAL,              -- front-to-back depth
+    height_mm       INTEGER,           -- vertical clearance
+    width_mm        INTEGER,           -- horizontal run available for spines
+    depth_mm        INTEGER,           -- front-to-back depth
     notes           TEXT,
     created_at      TEXT DEFAULT (datetime('now')),
     updated_at      TEXT DEFAULT (datetime('now'))
@@ -42,9 +42,9 @@ db.exec(`
     -- physical description
     format          TEXT DEFAULT 'paperback',   -- hardback | paperback | ebook | audiobook | other
     jacket          TEXT DEFAULT 'na',          -- present | missing | na
-    height_mm       REAL,              -- upright height
-    width_mm        REAL,              -- cover width (depth into the shelf)
-    thickness_mm    REAL,              -- spine thickness (run along the shelf)
+    height_mm       INTEGER,           -- upright height
+    width_mm        INTEGER,           -- cover width (depth into the shelf)
+    thickness_mm    INTEGER,           -- spine thickness (run along the shelf)
 
     -- classification: genres are a many-to-many via the book_genres table.
 
@@ -184,6 +184,26 @@ if (bookColumns.includes('genre') && bookColumns.includes('subgenre')) {
   // drop them (genres live only in the join table + genres taxonomy now).
   db.exec('ALTER TABLE books DROP COLUMN genre');
   db.exec('ALTER TABLE books DROP COLUMN subgenre');
+}
+
+// Dimensions are whole millimetres. Round any legacy fractional values (they
+// came from inch entry, e.g. 241.3). Idempotent: a no-op once everything is
+// integral, so it costs nothing on later startups.
+{
+  const roundCols = [['books', ['height_mm', 'width_mm', 'thickness_mm']], ['shelves', ['height_mm', 'width_mm', 'depth_mm']]];
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);
+  const roundDims = db.transaction(() => {
+    for (const [table, cols] of roundCols) {
+      if (!tables.includes(table)) continue;
+      const present = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+      for (const col of cols) {
+        if (!present.includes(col)) continue;
+        db.prepare(`UPDATE ${table} SET ${col} = CAST(ROUND(${col}) AS INTEGER)
+                    WHERE ${col} IS NOT NULL AND ${col} <> CAST(ROUND(${col}) AS INTEGER)`).run();
+      }
+    }
+  });
+  roundDims();
 }
 
 export default db;

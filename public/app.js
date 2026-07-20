@@ -16,10 +16,11 @@ const MM_PER_IN = 25.4;
 const DIM_FIELDS = ['height_mm', 'width_mm', 'thickness_mm', 'depth_mm'];
 let UNIT = localStorage.getItem('libUnit') === 'in' ? 'in' : 'mm';
 
+// Storage is whole millimetres; inches are a display convenience only.
 const mmToUnit = (mm, unit = UNIT) =>
-  (mm == null || mm === '') ? '' : (unit === 'in' ? Math.round((mm / MM_PER_IN) * 100) / 100 : Math.round(mm * 10) / 10);
+  (mm == null || mm === '') ? '' : (unit === 'in' ? Math.round((mm / MM_PER_IN) * 100) / 100 : Math.round(mm));
 const unitToMm = (v, unit = UNIT) =>
-  (v === '' || v == null) ? '' : (unit === 'in' ? Number(v) * MM_PER_IN : Number(v));
+  (v === '' || v == null) ? '' : Math.round(unit === 'in' ? Number(v) * MM_PER_IN : Number(v));
 const dispDim = (mm) => (mm == null ? '—' : mmToUnit(mm)); // for read-only display
 
 const bookDialog = $('#editDialog');

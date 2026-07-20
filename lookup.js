@@ -49,6 +49,19 @@ export function toMm(value) {
   return Math.round(n * 25.4); // inches
 }
 
+// Map a binding as described by Open Library ("Hardcover", "Mass Market
+// Paperback") or schema.org ("https://schema.org/Hardcover") onto the formats
+// the app stores. Unknown bindings return '' so nothing is guessed.
+export function normalizeFormat(value) {
+  const s = String(value || '').toLowerCase();
+  if (!s) return '';
+  if (/audio|cd|cassette/.test(s)) return 'audiobook';
+  if (/ebook|e-book|kindle|epub|digital/.test(s)) return 'ebook';
+  if (/hardcover|hardback|hardbound|casebound|library binding/.test(s)) return 'hardback';
+  if (/paperback|softcover|soft cover|paper back|trade pbk|pbk|mass market/.test(s)) return 'paperback';
+  return '';
+}
+
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
   + '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -127,6 +140,7 @@ export function parseBarnesNoble(html, isbn) {
     authors,
     publisher: schemaName(group.publisher) || schemaName(group.brand) || schemaName(edition?.publisher),
     published_date: pick('datePublished') || '',
+    format: normalizeFormat(pick('bookFormat')),
     page_count: Number(pick('numberOfPages')) || null,
     cover_url: (Array.isArray(image) ? image[0] : image) || '',
     height_mm: null, width_mm: null, thickness_mm: null,
@@ -150,7 +164,12 @@ async function fetchBarnesNoble(isbn, doFetch) {
 }
 
 async function fetchOpenLibrary(isbn, doFetch) {
-  const r = await doFetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+  // The bulk endpoint omits the binding, so ask the edition record for it too.
+  // Runs alongside, so it costs no extra wall time, and is optional.
+  const [r, edition] = await Promise.all([
+    doFetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`),
+    doFetch(`https://openlibrary.org/isbn/${isbn}.json`).then((x) => (x.ok ? x.json() : null)).catch(() => null),
+  ]);
   if (r.status === 429) throw new RateLimitError('Open Library rate-limited');
   if (!r.ok) return null;
   const data = (await r.json())[`ISBN:${isbn}`];
@@ -171,6 +190,7 @@ async function fetchOpenLibrary(isbn, doFetch) {
     published_date: data.publish_date,
     page_count: data.number_of_pages || null,
     cover_url: data.cover?.large || data.cover?.medium || data.cover?.small || '',
+    format: normalizeFormat(edition?.physical_format),
     height_mm: h, width_mm: w, thickness_mm: t,
   };
 }
@@ -192,6 +212,7 @@ async function fetchGoogleBooks(isbn, doFetch, apiKey) {
     published_date: vol.publishedDate || '',
     page_count: vol.pageCount || null,
     cover_url: (vol.imageLinks?.thumbnail || '').replace('http://', 'https://'),
+    format: '',   // Google Books doesn't publish the binding
     height_mm: toMm(d.height), width_mm: toMm(d.width), thickness_mm: toMm(d.thickness),
   };
 }
@@ -222,6 +243,7 @@ export async function lookupIsbn(isbn, opts = {}) {
       published_date: first(ol?.published_date, gb?.published_date),
       page_count: first(ol?.page_count, gb?.page_count) || null,
       cover_url: first(ol?.cover_url, gb?.cover_url),
+      format: first(ol?.format, gb?.format),
       height_mm: ol?.height_mm ?? gb?.height_mm ?? null,
       width_mm: ol?.width_mm ?? gb?.width_mm ?? null,
       thickness_mm: ol?.thickness_mm ?? gb?.thickness_mm ?? null,

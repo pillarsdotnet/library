@@ -649,6 +649,8 @@ async function lookup(fromScan = false) {
     setDimIfEmpty('width_mm', d.width_mm);
     setDimIfEmpty('thickness_mm', d.thickness_mm);
     if (d.cover_url) { bookForm.elements.cover_url.value = d.cover_url; showCover(d.cover_url); }
+    // Binding, when a source knows it (Open Library / Barnes & Noble).
+    if (d.format && bookForm.elements.format) bookForm.elements.format.value = d.format;
     if (d.source && bookForm.elements.source) bookForm.elements.source.value = d.source;
     const gotDims = d.height_mm || d.thickness_mm;
     msg.textContent = `Found via ${SOURCE_LABELS[d.source] || d.source}.` + (gotDims ? ' Dimensions included.' : ' No dimensions available — measure manually for shelf fit.');

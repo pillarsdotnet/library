@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { lookupIsbn, RateLimitError, toMm, parseBarnesNoble } from '../lookup.js';
+import { lookupIsbn, RateLimitError, toMm, parseBarnesNoble, normalizeFormat } from '../lookup.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const bnFoxglove = readFileSync(join(FIXTURES, 'barnesnoble-foxglove.html'), 'utf8');
@@ -16,9 +16,11 @@ const bnGraph = readFileSync(join(FIXTURES, 'barnesnoble-dcc-graph.html'), 'utf8
 function fakeFetch(routes, calls) {
   return async (url) => {
     if (calls) calls.push(url);
-    const which = url.includes('openlibrary.org') ? 'ol'
+    const which = url.includes('openlibrary.org/isbn/') ? 'olEdition'
+      : url.includes('openlibrary.org') ? 'ol'
       : url.includes('barnesandnoble.com') ? 'bn' : 'gb';
-    const res = routes[which] ?? { status: 200, body: {}, text: '' };
+    // The edition record is optional; absent unless a test supplies one.
+    const res = routes[which] ?? (which === 'olEdition' ? { status: 404 } : { status: 200, body: {}, text: '' });
     const status = res.status ?? 200;
     return {
       status,
@@ -127,6 +129,46 @@ test('parseBarnesNoble picks the cover of the edition that was asked for', () =>
   assert.match(paperback.cover_url, /9780593820254/, 'a different edition gets its own cover');
   // Without an ISBN it still returns the group's own details rather than failing.
   assert.match(parseBarnesNoble(bnGraph).title, /^Dungeon Crawler Carl/);
+});
+
+test('normalizeFormat maps the bindings sources actually publish', () => {
+  for (const [raw, want] of [
+    ['Hardcover', 'hardback'], ['https://schema.org/Hardcover', 'hardback'],
+    ['Library Binding', 'hardback'],
+    ['Paperback', 'paperback'], ['https://schema.org/Paperback', 'paperback'],
+    ['Mass Market Paperback', 'paperback'], ['Trade pbk.', 'paperback'],
+    ['Kindle Edition', 'ebook'], ['Audio CD', 'audiobook'],
+  ]) assert.equal(normalizeFormat(raw), want, `${raw} -> ${want}`);
+  // Never guess: an unknown or missing binding stays empty.
+  for (const raw of ['', null, undefined, 'Board book', 'Unknown Binding']) {
+    assert.equal(normalizeFormat(raw), '', `${raw} should not be guessed`);
+  }
+});
+
+test('lookup reports the binding when Open Library records one', async () => {
+  const isbn = '9780593820247';
+  const data = await lookupIsbn(isbn, {
+    apiKey: null,
+    fetch: fakeFetch({
+      ol: { body: { [`ISBN:${isbn}`]: { title: 'Dungeon Crawler Carl' } } },
+      olEdition: { body: { physical_format: 'Hardcover' } },
+    }),
+  });
+  assert.equal(data.format, 'hardback', 'hardcover edition reported as hardback');
+});
+
+test('lookup leaves the format empty rather than guessing when no source knows it', async () => {
+  const isbn = '9780593820254';
+  const data = await lookupIsbn(isbn, {
+    apiKey: null,
+    fetch: fakeFetch({ ol: { body: { [`ISBN:${isbn}`]: { title: 'Dungeon Crawler Carl' } } } }),
+  });
+  assert.equal(data.format, '', 'no binding recorded, so nothing is assumed');
+});
+
+test('Barnes & Noble reports the binding of the edition that was asked for', () => {
+  assert.equal(parseBarnesNoble(bnGraph, '9780593820247').format, 'hardback');
+  assert.equal(parseBarnesNoble(bnGraph, '9780593820254').format, 'paperback');
 });
 
 test('parseBarnesNoble returns null for a non-product page', () => {

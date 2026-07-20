@@ -561,6 +561,36 @@ test('deleting a genre warns with the book count and removes the book_genres lin
   await page.close();
 });
 
+test('series filter narrows the list, orders by series position, and finds standalones', { skip }, async () => {
+  const stamp = String(Date.now()).slice(-6);
+  const post = async (p, body) => (await fetch(`${BASE}/api/${p}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  const s = await post('series', { title: `Filter Series ${stamp}` });
+  // Deliberately not in alphabetical order, to prove sorting is by series position.
+  for (const [title, order] of [[`Zeta ${stamp}`, 1], [`Alpha ${stamp}`, 2], [`Mu ${stamp}`, 3]]) {
+    const b = await post('books', { title });
+    await post(`series/${s.id}/books`, { book_id: b.id, order });
+  }
+  const solo = await post('books', { title: `Solo ${stamp}` });
+
+  const inSeries = await (await fetch(`${BASE}/api/books?series_id=${s.id}`)).json();
+  assert.deepEqual(inSeries.map((b) => b.title), [`Zeta ${stamp}`, `Alpha ${stamp}`, `Mu ${stamp}`], 'ordered by series position');
+  const standalone = await (await fetch(`${BASE}/api/books?series_id=none&q=Solo ${stamp}`)).json();
+  assert.deepEqual(standalone.map((b) => b.id), [solo.id], '"Not in a series" finds standalone books');
+
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  const opts = await page.$$eval('#filterSeries option', (els) => els.map((o) => o.textContent));
+  assert.ok(opts.some((o) => o.includes(`Filter Series ${stamp}`)), 'series listed in the filter');
+  assert.ok(opts.some((o) => /not in a series/i.test(o)), '"Not in a series" option present');
+  await page.select('#filterSeries', String(s.id));
+  await new Promise((r) => setTimeout(r, 600));
+  const titles = await page.$$eval('#list .card h3', (els) => els.map((e) => e.textContent));
+  assert.deepEqual(titles, [`Zeta ${stamp}`, `Alpha ${stamp}`, `Mu ${stamp}`], 'UI shows the series in order');
+  await page.close();
+});
+
 test('genre filter has an Uncategorized option that finds books with no genres', { skip }, async () => {
   const stamp = Date.now();
   const g = await (await fetch(`${BASE}/api/genres`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'FilterGenre ' + stamp, definition: 'x' }) })).json();

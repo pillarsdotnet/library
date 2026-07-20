@@ -63,7 +63,8 @@ document.querySelectorAll('.tab').forEach((tab) => {
 // Search box + filter selects, mapped to their query params.
 const FILTER_CONTROLS = [
   ['#search', 'q'], ['#filterStatus', 'status'], ['#filterFormat', 'format'],
-  ['#filterGenre', 'genre_id'], ['#filterRoom', 'room'], ['#filterBookcase', 'bookcase'],
+  ['#filterGenre', 'genre_id'], ['#filterSeries', 'series_id'],
+  ['#filterRoom', 'room'], ['#filterBookcase', 'bookcase'],
   ['#filterShelf', 'shelf_id'],
 ];
 
@@ -1300,6 +1301,18 @@ let pendingSeries = null; // { id, title, order } chosen in the dialog, applied 
 
 async function loadSeries() {
   seriesCache = await api('/series');
+  populateSeriesFilter();
+}
+
+// Series filter: one option per series (with its book count), plus a way to find
+// standalone books.
+function populateSeriesFilter() {
+  const sel = $('#filterSeries');
+  const current = sel.value;
+  const opts = [...seriesCache].sort((a, b) => a.title.localeCompare(b.title));
+  sel.innerHTML = '<option value="">All series</option><option value="none">Not in a series</option>'
+    + opts.map((s) => `<option value="${s.id}">${esc(s.title)}${s.book_count ? ` (${s.book_count})` : ''}</option>`).join('');
+  sel.value = current;
 }
 
 const findSeries = (title) =>
@@ -1454,7 +1467,7 @@ window.placeholderCover = placeholderCover;
 
 let searchTimer;
 $('#search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadBooks(), 250); });
-['#filterStatus', '#filterFormat', '#filterGenre', '#filterRoom', '#filterBookcase', '#filterShelf']
+['#filterStatus', '#filterFormat', '#filterGenre', '#filterSeries', '#filterRoom', '#filterBookcase', '#filterShelf']
   .forEach((s) => $(s).addEventListener('change', () => loadBooks()));
 $('#clearFiltersBtn').addEventListener('click', clearFilters);
 $('#loadMoreBtn').addEventListener('click', () => loadBooks(true));

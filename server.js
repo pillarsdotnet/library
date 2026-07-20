@@ -127,7 +127,7 @@ function attachGenres(books) {
 }
 
 router.get('/api/books', (req, res) => {
-  const { q, status, room, bookcase, genre_id, format, shelf_id } = req.query;
+  const { q, status, room, bookcase, genre_id, series_id, format, shelf_id } = req.query;
   const where = [];
   const params = {};
 
@@ -144,6 +144,12 @@ router.get('/api/books', (req, res) => {
     where.push('EXISTS (SELECT 1 FROM book_genres bg WHERE bg.book_id = b.id AND bg.genre_id = @genre_id)');
     params.genre_id = Number(genre_id);
   }
+  if (series_id === 'none') {
+    where.push('NOT EXISTS (SELECT 1 FROM series_books sb WHERE sb.book = b.id)');
+  } else if (series_id) {
+    where.push('EXISTS (SELECT 1 FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id)');
+    params.series_id = Number(series_id);
+  }
   if (room) { where.push('s.room = @room'); params.room = room; }
   if (bookcase) { where.push('s.bookcase = @bookcase'); params.bookcase = bookcase; }
   if (shelf_id === 'none') where.push('b.shelf_id IS NULL');
@@ -158,8 +164,12 @@ router.get('/api/books', (req, res) => {
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const page = limit > 0 ? ` LIMIT ${limit} OFFSET ${offset}` : '';
 
+  // Filtering to one series reads far better in reading order than alphabetically.
+  const orderBy = (series_id && series_id !== 'none')
+    ? '(SELECT sb."order" FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id), sort_title(b.title)'
+    : 'sort_title(b.title)';
   const sql = `SELECT b.*, s.room, s.bookcase, s.label AS shelf_label ${from}
-    ORDER BY sort_title(b.title)${page}`;
+    ORDER BY ${orderBy}${page}`;
   res.set('X-Total-Count', String(total));
   res.json(attachGenres(db.prepare(sql).all(params)).map(coverRef));
 });

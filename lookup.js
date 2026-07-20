@@ -64,24 +64,71 @@ function decodeEntities(s) {
 // Parse a Barnes & Noble product page. Prefers the schema.org Product JSON-LD
 // (stable structured data); author isn't in it, so it's read from the
 // contributor link. Exported for testing. Returns null if it's not a product page.
-export function parseBarnesNoble(html) {
-  let product = null;
-  for (const m of html.matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
-    try {
-      const d = JSON.parse(m[1].trim());
-      if (d && d['@type'] === 'Product' && d.name) { product = d; break; }
-    } catch { /* skip malformed JSON-LD block */ }
-  }
-  if (!product) return null;
+// schema.org values arrive as a string, an object with a name, or a list of either.
+// B&N sometimes puts a bare contributor URL where a name belongs, so ignore URLs.
+const isUrl = (s) => /^https?:\/\//i.test(String(s));
+function schemaName(v) {
+  if (!v) return '';
+  if (typeof v === 'string') return isUrl(v) ? '' : decodeEntities(v);
+  if (Array.isArray(v)) return v.map(schemaName).filter(Boolean).join(', ');
+  return v.name ? schemaName(v.name) : '';
+}
 
-  const author = html.match(/href=["']\/authors\/[^"']+["'][^>]*>\s*([^<]+?)\s*<\/a>/i);
+// Last resort for an author given only as .../contributor/matt-dinniman
+function nameFromUrl(u) {
+  const path = String(u).split(/[?#]/)[0].replace(/\/+$/, '');   // drop query/hash only
+  const slug = path.split('/').filter(Boolean).pop() || '';
+  return slug.split('-').filter(Boolean)
+    .map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+}
+
+// Collect every object in a JSON-LD document, following @graph and hasVariant.
+function flattenJsonLd(node, out = []) {
+  if (Array.isArray(node)) { node.forEach((n) => flattenJsonLd(n, out)); return out; }
+  if (!node || typeof node !== 'object') return out;
+  out.push(node);
+  for (const v of Object.values(node)) {
+    if (v && typeof v === 'object') flattenJsonLd(v, out);
+  }
+  return out;
+}
+
+export function parseBarnesNoble(html, isbn) {
+  const nodes = [];
+  for (const m of html.matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+    try { flattenJsonLd(JSON.parse(m[1].trim()), nodes); } catch { /* skip malformed block */ }
+  }
+  // B&N now nests a Product per format inside a ProductGroup, under @graph.
+  const named = nodes.filter((n) => /^(Product|ProductGroup|Book)$/.test(n['@type'] || '') && n.name);
+  if (!named.length) return null;
+
+  const group = named.find((n) => n['@type'] === 'ProductGroup') || named[0];
+  // Prefer the edition actually asked for: its offer URL / image carries the EAN.
+  const edition = isbn
+    ? named.find((n) => n !== group && JSON.stringify(n.offers ?? '').includes(isbn))
+      || named.find((n) => n !== group && String(n.image ?? '').includes(isbn))
+    : null;
+  const pick = (key) => edition?.[key] ?? group[key];
+
+  // Author: the schema value, else the visible contributor link, else its slug.
+  let authors = schemaName(group.author) || schemaName(edition?.author);
+  if (!authors) {
+    const linked = html.match(/href=["'](?:\/authors\/|\/b\/contributor\/)[^"']+["'][^>]*>\s*([^<]+?)\s*<\/a>/i);
+    if (linked) authors = decodeEntities(linked[1]);
+  }
+  if (!authors) {
+    const raw = [group.author, edition?.author].flat().find((a) => typeof a === 'string' && isUrl(a));
+    if (raw) authors = nameFromUrl(raw);
+  }
+  const image = pick('image');
+
   return {
-    title: decodeEntities(product.name),
-    authors: author ? decodeEntities(author[1]) : '',
-    publisher: product.brand?.name ? decodeEntities(product.brand.name) : '',
-    published_date: '',
-    page_count: null,
-    cover_url: product.image || '',
+    title: decodeEntities(group.name),
+    authors,
+    publisher: schemaName(group.publisher) || schemaName(group.brand) || schemaName(edition?.publisher),
+    published_date: pick('datePublished') || '',
+    page_count: Number(pick('numberOfPages')) || null,
+    cover_url: (Array.isArray(image) ? image[0] : image) || '',
     height_mm: null, width_mm: null, thickness_mm: null,
   };
 }
@@ -96,7 +143,7 @@ async function fetchBarnesNoble(isbn, doFetch) {
       signal: AbortSignal.timeout(8000),
     });
     if (!r.ok) return null;
-    return parseBarnesNoble(await r.text());
+    return parseBarnesNoble(await r.text(), isbn);
   } catch {
     return null; // network error, timeout, or bot block — don't break the lookup
   }

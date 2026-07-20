@@ -10,6 +10,7 @@ import { lookupIsbn, RateLimitError, toMm, parseBarnesNoble } from '../lookup.js
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const bnFoxglove = readFileSync(join(FIXTURES, 'barnesnoble-foxglove.html'), 'utf8');
+const bnGraph = readFileSync(join(FIXTURES, 'barnesnoble-dcc-graph.html'), 'utf8');
 
 // Build a fake fetch from per-host responders (ol / gb / bn).
 function fakeFetch(routes, calls) {
@@ -105,6 +106,27 @@ test('parseBarnesNoble extracts title/author/publisher/cover from a product page
   assert.equal(bn.authors, 'Adalyn Grace');
   assert.equal(bn.publisher, 'Little, Brown Books for Young Readers');
   assert.match(bn.cover_url, /9780316579896_p0\.jpg/);
+});
+
+test('parseBarnesNoble reads the newer @graph / ProductGroup layout', () => {
+  // B&N moved the Products into @graph under a ProductGroup, one variant per
+  // format, with the author given only as a contributor URL. The old top-level
+  // Product lookup found nothing here, so B&N silently stopped being a fallback.
+  const bn = parseBarnesNoble(bnGraph, '9780593820247');
+  assert.match(bn.title, /^Dungeon Crawler Carl/);
+  assert.equal(bn.authors, 'Matt Dinniman', 'author recovered despite being a URL');
+  assert.equal(bn.publisher, 'Penguin Publishing Group');
+  assert.equal(bn.published_date, '2024-08-27');
+});
+
+test('parseBarnesNoble picks the cover of the edition that was asked for', () => {
+  // The page offers hardcover and two paperbacks; each variant carries its own EAN.
+  const hardcover = parseBarnesNoble(bnGraph, '9780593820247');
+  assert.match(hardcover.cover_url, /9780593820247/, 'cover matches the requested ISBN');
+  const paperback = parseBarnesNoble(bnGraph, '9780593820254');
+  assert.match(paperback.cover_url, /9780593820254/, 'a different edition gets its own cover');
+  // Without an ISBN it still returns the group's own details rather than failing.
+  assert.match(parseBarnesNoble(bnGraph).title, /^Dungeon Crawler Carl/);
 });
 
 test('parseBarnesNoble returns null for a non-product page', () => {

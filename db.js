@@ -143,6 +143,12 @@ if (!bookColumns.includes('source')) {
 if (!bookColumns.includes('genres_migrated')) {
   db.exec('ALTER TABLE books ADD COLUMN genres_migrated INTEGER DEFAULT 0');
 }
+// The photo as taken, kept beside the cropped cover so the crop can be redone
+// later — on a computer, where dragging corners is not a fingertip exercise.
+// Cropping is otherwise destructive: the pixels outside it are gone for good.
+if (!bookColumns.includes('cover_source')) {
+  db.exec('ALTER TABLE books ADD COLUMN cover_source TEXT');
+}
 
 // One-time backfill: turn each book's legacy free-text genre/subgenre into
 // book_genres rows, resolving names to genre ids (creating any missing genres).

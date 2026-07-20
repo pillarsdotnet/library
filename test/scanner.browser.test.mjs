@@ -1047,3 +1047,101 @@ test('cover photo: file → crop dialog → "Use photo" sets a data-URL cover', 
   assert.ok(previewShown, 'preview should display the cropped cover');
   await page.close();
 });
+
+test('corners can be dragged by hand and the result is flattened to them', { skip }, async () => {
+  const file = join(ROOT, 'test', `tmp-corners-${process.pid}.jpg`);
+  writeFileSync(file, await skewedCoverJpeg());
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+    await page.click('#addBtn');
+    await page.waitForSelector('#editDialog[open]');
+    await (await page.$('#coverUploadFile')).uploadFile(file);
+    await page.waitForSelector('#cropDialog[open]', { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 700));
+
+    await page.click('#cornerMode');
+    await page.waitForSelector('#cornerArea:not([hidden])');
+    await new Promise((r) => setTimeout(r, 300));
+
+    // The editor starts from whatever the detector proposed.
+    const start = await page.evaluate(() => window.CornerEditor.corners().map((p) => [Math.round(p.x), Math.round(p.y)]));
+    assert.equal(start.length, 4, 'four corners to drag');
+
+    // Drag the top-left marker somewhere new and check it followed the pointer.
+    const box = await page.$eval('#cornerCanvas', (c) => {
+      const r = c.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height, w: c.width, h: c.height };
+    });
+    const scaleX = box.width / box.w, scaleY = box.height / box.h;
+    const from = await page.evaluate(() => {
+      const c = document.querySelector('#cornerCanvas');
+      const p = window.CornerEditor.corners()[0];
+      return { x: p.x, y: p.y, cw: c.width, natural: 800 };
+    });
+    const startX = box.left + (from.x * (from.cw / from.natural)) * scaleX;
+    const startY = box.top + (from.y * (from.cw / from.natural)) * scaleY;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + 40, startY + 25, { steps: 8 });
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const moved = await page.evaluate(() => window.CornerEditor.corners().map((p) => [Math.round(p.x), Math.round(p.y)]));
+    assert.notDeepEqual(moved[0], start[0], 'the dragged corner moved');
+    assert.deepEqual(moved.slice(1), start.slice(1), 'the other corners stayed put');
+
+    // Flattening uses the corners as they now stand.
+    await page.click('#cornerApply');
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal(await page.$eval('#cornerArea', (el) => el.hidden), true, 'back to the cropper');
+    assert.match(await page.$eval('#autoCropMsg', (el) => el.textContent), /corners you set/i);
+    assert.match(await page.$eval('#cropImage', (el) => el.src), /^data:image/, 'showing the flattened result');
+    await page.close();
+  } finally {
+    rmSync(file, { force: true });
+  }
+});
+
+test('a saved cover keeps its photo and can be re-cropped from it later', { skip }, async () => {
+  const file = join(ROOT, 'test', `tmp-recrop-${process.pid}.jpg`);
+  writeFileSync(file, await skewedCoverJpeg());
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+    await page.click('#addBtn');
+    await page.waitForSelector('#editDialog[open]');
+    await page.type('#bookForm [name="title"]', `Recrop ${Date.now()}`);
+    await (await page.$('#coverUploadFile')).uploadFile(file);
+    await page.waitForSelector('#cropDialog[open]', { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 700));
+    await page.click('#cropUse');
+    await new Promise((r) => setTimeout(r, 400));
+    await page.click('#bookForm button[type="submit"]');
+    await new Promise((r) => setTimeout(r, 700));
+
+    const list = await (await fetch(`${BASE}/api/books?q=Recrop`)).json();
+    const saved = list[0];
+    assert.ok(saved, 'book saved');
+    assert.match(saved.cover_source, /cover-source\?v=/, 'the photo it was cut from is kept');
+    const photo = await fetch(`${BASE}/${saved.cover_source}`);
+    assert.equal(photo.status, 200);
+    assert.ok((await photo.arrayBuffer()).byteLength > 0, 'the original photo is served');
+
+    // Re-open it: the button is offered, and it re-crops from the photo.
+    await page.evaluate(async (id) => { const r = await fetch('api/books/' + id); window.openEditBook(await r.json()); }, saved.id);
+    await page.waitForSelector('#editDialog[open]');
+    assert.equal(await page.$eval('#coverRecropBtn', (el) => el.hidden), false, 're-crop offered');
+    await page.click('#coverRecropBtn');
+    await page.waitForSelector('#cropDialog[open]', { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 800));
+    const shown = await page.$eval('#cropImage', (el) => el.naturalWidth);
+    assert.ok(shown > 0, 'the original photo opened in the cropper');
+    await page.click('#cornerMode');       // and corners can be adjusted from there
+    await page.waitForSelector('#cornerArea:not([hidden])');
+    assert.equal((await page.evaluate(() => window.CornerEditor.corners().length)), 4);
+    await page.close();
+  } finally {
+    rmSync(file, { force: true });
+  }
+});

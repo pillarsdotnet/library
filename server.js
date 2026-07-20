@@ -47,17 +47,22 @@ const coverRef = (b) => {
   if (b && typeof b.cover_url === 'string' && b.cover_url.startsWith('data:')) {
     b.cover_url = `api/books/${b.id}/cover?v=${coverToken(b.cover_url)}`;
   }
+  // The kept-back original is big and wanted only when re-cropping, so it
+  // travels as a reference and never as bytes in a listing.
+  if (b && typeof b.cover_source === 'string' && b.cover_source) {
+    b.cover_source = `api/books/${b.id}/cover-source?v=${coverToken(b.cover_source)}`;
+  }
   return b;
 };
-// A client echoing that reference back on save must not overwrite the real image.
-const isCoverRef = (v) => typeof v === 'string' && /(^|\/)api\/books\/\d+\/cover(\?.*)?$/.test(v);
+// A client echoing either reference back on save must not overwrite the image.
+const isCoverRef = (v) => typeof v === 'string' && /(^|\/)api\/books\/\d+\/cover(-source)?(\?.*)?$/.test(v);
 const round1 = (n) => Math.round(n * 10) / 10;
 
 // ---------------------------------------------------------------------------
 // Writable columns. Anything else in a request body is ignored.
 // ---------------------------------------------------------------------------
 const BOOK_COLS = [
-  'isbn', 'title', 'authors', 'publisher', 'published_date', 'page_count', 'cover_url',
+  'isbn', 'title', 'authors', 'publisher', 'published_date', 'page_count', 'cover_url', 'cover_source',
   'format', 'jacket', 'height_mm', 'width_mm', 'thickness_mm',
   'shelf_id',
   'status', 'loaned_to',
@@ -213,6 +218,17 @@ router.get('/api/books/:id/cover', (req, res) => {
   res.send(Buffer.from(m[2], 'base64'));
 });
 
+// The photo a cover was cropped from, for re-cropping it later.
+router.get('/api/books/:id/cover-source', (req, res) => {
+  const row = db.prepare('SELECT cover_source FROM books WHERE id = ?').get(req.params.id);
+  if (!row || !row.cover_source) return res.status(404).json({ error: 'Not found' });
+  const m = /^data:([^;,]+);base64,(.*)$/s.exec(row.cover_source);
+  if (!m) return res.status(404).json({ error: 'Not an inline image' });
+  res.set('Content-Type', m[1]);
+  res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
+  res.send(Buffer.from(m[2], 'base64'));
+});
+
 router.get('/api/books/:id', (req, res) => {
   const book = db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id);
   if (!book) return res.status(404).json({ error: 'Not found' });
@@ -221,6 +237,7 @@ router.get('/api/books/:id', (req, res) => {
 
 router.post('/api/books', (req, res) => {
   if (isCoverRef(req.body.cover_url)) delete req.body.cover_url;
+  if (isCoverRef(req.body.cover_source)) delete req.body.cover_source;
   const data = pick(req.body, BOOK_COLS);
   if (!data.title) return res.status(400).json({ error: 'title is required' });
   const id = insert('books', data);
@@ -233,6 +250,7 @@ router.put('/api/books/:id', (req, res) => {
     return res.status(404).json({ error: 'Not found' });
   // The client may echo back "api/books/:id/cover"; that means "unchanged".
   if (isCoverRef(req.body.cover_url)) delete req.body.cover_url;
+  if (isCoverRef(req.body.cover_source)) delete req.body.cover_source;
   update('books', req.params.id, pick(req.body, BOOK_COLS));
   if (req.body.genre_ids !== undefined) setBookGenres(req.params.id, req.body.genre_ids);
   res.json(coverRef(attachGenres([db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id)])[0]));

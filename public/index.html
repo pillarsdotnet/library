@@ -150,6 +150,7 @@
           <button type="button" id="coverUploadBtn" class="cover-pick">🖼 Upload</button>
           <input type="file" id="coverCameraFile" accept="image/*" capture="environment" hidden />
           <input type="file" id="coverUploadFile" accept="image/*" hidden />
+          <button type="button" id="coverRecropBtn" class="cover-pick" hidden>✂ Re-crop</button>
         </div>
         <div class="grow">
           <label>Title <input name="title" required /></label>
@@ -162,6 +163,7 @@
         <label>Published <input name="published_date" /></label>
         <label>Pages <input name="page_count" type="number" min="0" /></label>
         <label>Cover URL <input name="cover_url" /></label>
+        <input type="hidden" name="cover_source" />
       </div>
 
       <fieldset>
@@ -336,11 +338,20 @@
       <h2>Adjust cover</h2>
       <button type="button" class="icon" id="closeCropDialog" aria-label="Close">✕</button>
     </div>
-    <div class="crop-area"><img id="cropImage" alt="Cover to crop" /></div>
-    <p class="hint">Drag to reposition · pinch/scroll to zoom · corners to resize the crop.</p>
+    <div class="crop-area">
+      <img id="cropImage" alt="Cover to crop" />
+      <div id="cornerArea" class="corner-area" hidden>
+        <canvas id="cornerCanvas"></canvas>
+      </div>
+    </div>
+    <p class="hint" id="cropHint">Drag to reposition · pinch/scroll to zoom · corners to resize the crop.</p>
+    <p class="hint" id="cornerHint" hidden>Drag each marker onto a corner of the cover, then Flatten.</p>
     <p id="autoCropMsg" class="hint" hidden></p>
     <div class="dialog-actions">
       <button type="button" id="autoCropToggle" hidden>↺ Use original</button>
+      <button type="button" id="cornerMode">⌗ Corners</button>
+      <button type="button" id="cornerApply" hidden class="primary">Flatten</button>
+      <button type="button" id="cornerCancel" hidden>Back</button>
       <button type="button" id="cropRotate" title="Rotate 90°">⟳ Rotate</button>
       <span class="grow"></span>
       <button type="button" id="cropCancel">Cancel</button>
@@ -352,6 +363,7 @@
   <script src="vendor/quagga/quagga.min.js"></script>
   <script src="vendor/cropper/cropper.min.js"></script>
   <script src="autocrop.js"></script>
+  <script src="corners.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -295,6 +295,10 @@ function openEditBook(book) {
   $('#seriesPosition').value = book.series ? formatOrders(book.series.orders) : '';
   DIM_FIELDS.forEach((f) => { if (bookForm.elements[f]) bookForm.elements[f].value = mmToUnit(book[f]); });
   showCover(book.cover_url);
+  // Re-cropping only means something when the photo it was cut from is still
+  // here; covers fetched from a lookup, or saved before this existed, have no
+  // original to go back to.
+  $('#coverRecropBtn').hidden = !book.cover_source;
   $('#lookupMsg').hidden = true;
   $('#suggestResult').hidden = true;
   $('#dupWarning').hidden = true;
@@ -321,6 +325,8 @@ let cropObjectUrl = null;
 // the untouched photo whenever nothing convincing is found.
 let cropOriginalSrc = '';   // the photo as taken
 let cropAutoSrc = '';       // the auto-flattened version, when one was produced
+let cropDetectedQuad = null; // corners the detector proposed, for the corner editor
+let cropSourceData = '';    // the photo as taken, kept with the book for re-cropping
 
 // Covers have come back framed in black: the crop box covered ground the photo
 // did not, and those pixels are transparent, which a JPEG writes out as black.
@@ -365,6 +371,8 @@ function onCoverFile(e) {
   probe.onload = () => {
     let auto = null;
     try { auto = window.AutoCrop && window.AutoCrop.autoCrop(probe); } catch { auto = null; }
+    cropDetectedQuad = auto ? auto.quad : null;
+    cropSourceData = shrinkToDataUrl(probe);
     if (auto) cropAutoSrc = auto.canvas.toDataURL('image/jpeg', 0.92);
     cropDialog.showModal();
     // Offered, not applied. Corner-finding is reliable on a cover lying on a
@@ -383,11 +391,95 @@ function onCoverFile(e) {
   probe.src = cropObjectUrl;
 }
 
+// Re-crop a cover already saved, starting from the photo it was cut from. The
+// fiddly work of nudging corners on a phone can wait for a real screen.
+function reCropSavedCover() {
+  const src = bookForm.elements.cover_source.value;
+  if (!src) return;
+  cropAutoSrc = '';
+  cropDetectedQuad = null;
+  cropSourceData = '';
+  const probe = new Image();
+  probe.crossOrigin = 'anonymous';
+  probe.onload = () => {
+    cropOriginalSrc = probe.src;
+    cropSourceData = shrinkToDataUrl(probe);   // re-saved as-is, so it stays available
+    try {
+      const auto = window.AutoCrop && window.AutoCrop.autoCrop(probe);
+      if (auto) { cropDetectedQuad = auto.quad; cropAutoSrc = auto.canvas.toDataURL('image/jpeg', 0.92); }
+    } catch { cropAutoSrc = ''; }
+    cropDialog.showModal();
+    startCropper(cropOriginalSrc);
+    showAutoCropState(false);
+  };
+  probe.onerror = () => alert('Could not load the original photo for this cover.');
+  probe.src = src;
+}
+
 function toggleAutoCrop() {
   if (!cropAutoSrc) return;
   const usingAuto = $('#cropImage').src === cropAutoSrc;
   startCropper(usingAuto ? cropOriginalSrc : cropAutoSrc);
   showAutoCropState(!usingAuto);
+}
+
+// The photo as taken, bounded in size, so a book can carry its original around
+// without every row of the library turning into megabytes.
+function shrinkToDataUrl(img, maxSide = 1600, quality = 0.85) {
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  const f = Math.min(1, maxSide / Math.max(w, h));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * f));
+  c.height = Math.max(1, Math.round(h * f));
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', quality);
+}
+
+function showCornerMode(on) {
+  $('#cornerArea').hidden = !on;
+  $('#cornerApply').hidden = !on;
+  $('#cornerCancel').hidden = !on;
+  $('#cornerHint').hidden = !on;
+  $('#cornerMode').hidden = on;
+  $('#cropHint').hidden = on;
+  $('#cropUse').hidden = on;
+  $('#cropRotate').hidden = on;
+  $('#cropCancel').hidden = on;
+  $('#autoCropToggle').hidden = on || !cropAutoSrc;
+  $('#autoCropMsg').hidden = on || !cropAutoSrc;
+  $('#cropImage').style.visibility = on ? 'hidden' : '';
+}
+
+// Edit the corners by hand. Always starts from the photo as taken — corners of
+// an already-flattened image would be its own four edges, which is no help.
+function openCornerMode() {
+  const img = new Image();
+  img.onload = () => {
+    if (cropper) { cropper.destroy(); cropper = null; }
+    showCornerMode(true);
+    const area = $('#cropArea') || $('.crop-area');
+    const maxWidth = Math.min(img.naturalWidth, (area ? area.clientWidth : 0) || 900);
+    window.CornerEditor.open($('#cornerCanvas'), img, cropDetectedQuad, maxWidth);
+  };
+  img.src = cropOriginalSrc;
+}
+
+function closeCornerMode() {
+  window.CornerEditor.close();
+  showCornerMode(false);
+  startCropper($('#cropImage').src || cropOriginalSrc);
+}
+
+function applyCorners() {
+  const canvas = window.CornerEditor.flatten();
+  cropDetectedQuad = window.CornerEditor.corners();
+  window.CornerEditor.close();
+  showCornerMode(false);
+  if (!canvas) { startCropper(cropOriginalSrc); return; }
+  cropAutoSrc = canvas.toDataURL('image/jpeg', 0.92);
+  startCropper(cropAutoSrc);
+  showAutoCropState(true);
+  $('#autoCropMsg').textContent = 'Flattened to the corners you set.';
 }
 
 function useCroppedCover() {
@@ -398,6 +490,9 @@ function useCroppedCover() {
     if (canvas) {
       const url = canvas.toDataURL('image/jpeg', 0.85);
       bookForm.elements.cover_url.value = url;
+      // Keep the photo this was cut from: cropping is destructive, and the
+      // whole point of re-cropping later is to start from the original.
+      if (cropSourceData) bookForm.elements.cover_source.value = cropSourceData;
       showCover(url);
     }
   }
@@ -1555,6 +1650,10 @@ $('#coverCameraFile').addEventListener('change', onCoverFile);
 $('#coverUploadFile').addEventListener('change', onCoverFile);
 $('#autoCropToggle').addEventListener('click', toggleAutoCrop);
 $('#cropRotate').addEventListener('click', () => { if (cropper) cropper.rotate(90); });
+$('#cornerMode').addEventListener('click', openCornerMode);
+$('#cornerApply').addEventListener('click', applyCorners);
+$('#cornerCancel').addEventListener('click', closeCornerMode);
+$('#coverRecropBtn').addEventListener('click', reCropSavedCover);
 $('#cropUse').addEventListener('click', useCroppedCover);
 $('#cropCancel').addEventListener('click', closeCropDialog);
 $('#closeCropDialog').addEventListener('click', closeCropDialog);

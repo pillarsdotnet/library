@@ -316,17 +316,62 @@ const cropDialog = $('#cropDialog');
 let cropper = null;
 let cropObjectUrl = null;
 
+// Photos of a cover are usually taken at a slight angle. Try to find the cover's
+// corners and flatten it before handing the image to the cropper; fall back to
+// the untouched photo whenever nothing convincing is found.
+let cropOriginalSrc = '';   // the photo as taken
+let cropAutoSrc = '';       // the auto-flattened version, when one was produced
+
+function startCropper(src) {
+  const img = $('#cropImage');
+  img.src = src;
+  if (cropper) cropper.destroy();
+  cropper = new Cropper(img, { viewMode: 1, autoCropArea: 1, background: false, dragMode: 'move' });
+}
+
+function showAutoCropState(usingAuto) {
+  const toggle = $('#autoCropToggle');
+  const msg = $('#autoCropMsg');
+  toggle.hidden = !cropAutoSrc;
+  msg.hidden = !cropAutoSrc;
+  if (!cropAutoSrc) return;
+  toggle.textContent = usingAuto ? '↺ Use original' : '✂ Use auto-crop';
+  msg.textContent = usingAuto
+    ? 'Straightened automatically — corners detected.'
+    : 'Showing the original photo.';
+}
+
 function onCoverFile(e) {
   const file = e.target.files && e.target.files[0];
   e.target.value = ''; // let the same file be re-picked later
   if (!file) return;
   if (cropObjectUrl) URL.revokeObjectURL(cropObjectUrl);
   cropObjectUrl = URL.createObjectURL(file);
-  const img = $('#cropImage');
-  img.src = cropObjectUrl;
-  cropDialog.showModal();
-  if (cropper) cropper.destroy();
-  cropper = new Cropper(img, { viewMode: 1, autoCropArea: 1, background: false, dragMode: 'move' });
+  cropOriginalSrc = cropObjectUrl;
+  cropAutoSrc = '';
+
+  const probe = new Image();
+  probe.onload = () => {
+    let auto = null;
+    try { auto = window.AutoCrop && window.AutoCrop.autoCrop(probe); } catch { auto = null; }
+    if (auto) cropAutoSrc = auto.canvas.toDataURL('image/jpeg', 0.92);
+    cropDialog.showModal();
+    startCropper(cropAutoSrc || cropOriginalSrc);
+    showAutoCropState(Boolean(cropAutoSrc));
+  };
+  probe.onerror = () => {
+    cropDialog.showModal();
+    startCropper(cropOriginalSrc);
+    showAutoCropState(false);
+  };
+  probe.src = cropObjectUrl;
+}
+
+function toggleAutoCrop() {
+  if (!cropAutoSrc) return;
+  const usingAuto = $('#cropImage').src === cropAutoSrc;
+  startCropper(usingAuto ? cropOriginalSrc : cropAutoSrc);
+  showAutoCropState(!usingAuto);
 }
 
 function useCroppedCover() {
@@ -1490,6 +1535,7 @@ $('#coverCameraBtn').addEventListener('click', () => $('#coverCameraFile').click
 $('#coverUploadBtn').addEventListener('click', () => $('#coverUploadFile').click());
 $('#coverCameraFile').addEventListener('change', onCoverFile);
 $('#coverUploadFile').addEventListener('change', onCoverFile);
+$('#autoCropToggle').addEventListener('click', toggleAutoCrop);
 $('#cropRotate').addEventListener('click', () => { if (cropper) cropper.rotate(90); });
 $('#cropUse').addEventListener('click', useCroppedCover);
 $('#cropCancel').addEventListener('click', closeCropDialog);

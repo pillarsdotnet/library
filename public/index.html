@@ -338,7 +338,9 @@
     </div>
     <div class="crop-area"><img id="cropImage" alt="Cover to crop" /></div>
     <p class="hint">Drag to reposition · pinch/scroll to zoom · corners to resize the crop.</p>
+    <p id="autoCropMsg" class="hint" hidden></p>
     <div class="dialog-actions">
+      <button type="button" id="autoCropToggle" hidden>↺ Use original</button>
       <button type="button" id="cropRotate" title="Rotate 90°">⟳ Rotate</button>
       <span class="grow"></span>
       <button type="button" id="cropCancel">Cancel</button>
@@ -349,6 +351,7 @@
   <script src="vendor/html5-qrcode/html5-qrcode.min.js"></script>
   <script src="vendor/quagga/quagga.min.js"></script>
   <script src="vendor/cropper/cropper.min.js"></script>
+  <script src="autocrop.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

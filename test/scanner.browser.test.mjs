@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import puppeteer from 'puppeteer-core';
@@ -497,6 +497,87 @@ test('series field: new entry creates the series and the position field sets the
   books = await (await fetch(`${BASE}/api/series/${s.id}/books`)).json();
   assert.deepEqual(books.map((b) => `${b.order}:${b.title}`), ['1:S One', '2:S Two', '2:S Two ebook', '3:S Three']);
   await page.close();
+});
+
+// A "book cover photographed at an angle": light skewed quad on a dark surface.
+const SKEW_CORNERS = [[150, 80], [640, 140], [600, 520], [110, 470]];
+async function skewedCoverJpeg() {
+  const pts = SKEW_CORNERS.map((p) => p.join(',')).join(' ');
+  const svg = `<svg width="800" height="600">
+    <rect width="800" height="600" fill="#3a3a3a"/>
+    <polygon points="${pts}" fill="#efe9dd"/>
+    <polygon points="${pts}" fill="none" stroke="#c9bfa8" stroke-width="6"/>
+  </svg>`;
+  return sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toBuffer();
+}
+
+test('auto-crop finds a skewed cover and flattens it, but declines when there is no rectangle', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+
+  const run = async (buf) => page.evaluate(async (data) => {
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/jpeg;base64,' + data; });
+    const out = window.AutoCrop.autoCrop(img);
+    if (!out) return { cropped: false };
+    const ctx = out.canvas.getContext('2d');
+    const d = ctx.getImageData(0, 0, out.canvas.width, out.canvas.height).data;
+    let light = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 180 && d[i + 1] > 170 && d[i + 2] > 150) light += 1;
+    return {
+      cropped: true,
+      quad: out.quad.map((q) => [Math.round(q.x), Math.round(q.y)]),
+      coverFraction: light / (out.canvas.width * out.canvas.height),
+    };
+  }, buf.toString('base64'));
+
+  const skew = await run(await skewedCoverJpeg());
+  assert.equal(skew.cropped, true, 'the skewed cover is detected');
+  skew.quad.forEach(([x, y], i) => {
+    const [tx, ty] = SKEW_CORNERS[i];
+    assert.ok(Math.hypot(x - tx, y - ty) < 20, `corner ${i} near truth: got ${x},${y} want ${tx},${ty}`);
+  });
+  assert.ok(skew.coverFraction > 0.9, `flattened result is nearly all cover (${skew.coverFraction})`);
+
+  // Must NOT fire on images with no croppable rectangle — a false positive would
+  // mangle the photo, which is worse than doing nothing.
+  const fullFrame = await sharp({ create: { width: 400, height: 600, channels: 3, background: '#e8e2d6' } }).jpeg().toBuffer();
+  const flat = await sharp({ create: { width: 600, height: 400, channels: 3, background: '#777777' } }).jpeg().toBuffer();
+  assert.equal((await run(fullFrame)).cropped, false, 'an already-cropped cover is left alone');
+  assert.equal((await run(flat)).cropped, false, 'a textureless photo is left alone');
+  await page.close();
+});
+
+test('the cover dialog applies auto-crop and can toggle back to the original', { skip }, async () => {
+  const file = join(ROOT, 'test', `tmp-skewed-${process.pid}.jpg`);
+  writeFileSync(file, await skewedCoverJpeg());
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+    await page.click('#addBtn');
+    await page.waitForSelector('#editDialog[open]');
+    await (await page.$('#coverUploadFile')).uploadFile(file);
+    await page.waitForSelector('#cropDialog[open]', { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 600));
+
+    assert.equal(await page.$eval('#autoCropToggle', (el) => el.hidden), false, 'toggle offered');
+    assert.match(await page.$eval('#autoCropMsg', (el) => el.textContent), /straightened/i);
+    assert.match(await page.$eval('#cropImage', (el) => el.src), /^data:image/, 'cropper shows the flattened image');
+
+    await page.click('#autoCropToggle');
+    await new Promise((r) => setTimeout(r, 400));
+    assert.match(await page.$eval('#cropImage', (el) => el.src), /^blob:/, 'toggled back to the original photo');
+    assert.match(await page.$eval('#autoCropMsg', (el) => el.textContent), /original/i);
+
+    await page.click('#autoCropToggle');       // back to auto
+    await new Promise((r) => setTimeout(r, 400));
+    await page.click('#cropUse');
+    await new Promise((r) => setTimeout(r, 400));
+    assert.match(await page.$eval('#bookForm [name="cover_url"]', (el) => el.value), /^data:image\/jpeg/, 'cover accepted');
+    await page.close();
+  } finally {
+    rmSync(file, { force: true });
+  }
 });
 
 test('picking genre suggestions never removes already-chosen genres, but ✕ still does', { skip }, async () => {

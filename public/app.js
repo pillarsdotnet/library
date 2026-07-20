@@ -346,10 +346,10 @@ function showAutoCropState(usingAuto) {
   toggle.hidden = !cropAutoSrc;
   msg.hidden = !cropAutoSrc;
   if (!cropAutoSrc) return;
-  toggle.textContent = usingAuto ? '↺ Use original' : '✂ Use auto-crop';
+  toggle.textContent = usingAuto ? '↺ Use original' : '✂ Auto-crop';
   msg.textContent = usingAuto
-    ? 'Straightened automatically — corners detected.'
-    : 'Showing the original photo.';
+    ? 'Straightened — ↺ to go back to the photo.'
+    : 'Found a cover in this photo. Auto-crop to straighten it.';
 }
 
 function onCoverFile(e) {
@@ -367,8 +367,13 @@ function onCoverFile(e) {
     try { auto = window.AutoCrop && window.AutoCrop.autoCrop(probe); } catch { auto = null; }
     if (auto) cropAutoSrc = auto.canvas.toDataURL('image/jpeg', 0.92);
     cropDialog.showModal();
-    startCropper(cropAutoSrc || cropOriginalSrc);
-    showAutoCropState(Boolean(cropAutoSrc));
+    // Offered, not applied. Corner-finding is reliable on a cover lying on a
+    // plain surface and unreliable when the cover's own edge is fainter than
+    // the lines in its artwork — and when it is wrong it is wrong by a lot,
+    // taking the title off. A crop nobody asked for is not worth that risk, so
+    // the photo as taken is what opens, one tap from the straightened version.
+    startCropper(cropOriginalSrc);
+    showAutoCropState(false);
   };
   probe.onerror = () => {
     cropDialog.showModal();

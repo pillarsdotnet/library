@@ -625,7 +625,7 @@ test('auto-crop finds a skewed cover and flattens it, but declines when there is
   await page.close();
 });
 
-test('the cover dialog applies auto-crop and can toggle back to the original', { skip }, async () => {
+test('the cover dialog offers auto-crop without applying it, and applies it on request', { skip }, async () => {
   const file = join(ROOT, 'test', `tmp-skewed-${process.pid}.jpg`);
   writeFileSync(file, await skewedCoverJpeg());
   try {
@@ -637,16 +637,22 @@ test('the cover dialog applies auto-crop and can toggle back to the original', {
     await page.waitForSelector('#cropDialog[open]', { timeout: 8000 });
     await new Promise((r) => setTimeout(r, 600));
 
-    assert.equal(await page.$eval('#autoCropToggle', (el) => el.hidden), false, 'toggle offered');
-    assert.match(await page.$eval('#autoCropMsg', (el) => el.textContent), /straightened/i);
-    assert.match(await page.$eval('#cropImage', (el) => el.src), /^data:image/, 'cropper shows the flattened image');
+    // The photo as taken is what opens: an unrequested crop that guesses wrong
+    // takes the title off the cover, so nothing is applied until it is asked for.
+    assert.equal(await page.$eval('#autoCropToggle', (el) => el.hidden), false, 'auto-crop offered');
+    assert.match(await page.$eval('#autoCropMsg', (el) => el.textContent), /auto-crop to straighten/i);
+    assert.match(await page.$eval('#cropImage', (el) => el.src), /^blob:/, 'cropper opens on the original photo');
 
     await page.click('#autoCropToggle');
     await new Promise((r) => setTimeout(r, 400));
-    assert.match(await page.$eval('#cropImage', (el) => el.src), /^blob:/, 'toggled back to the original photo');
-    assert.match(await page.$eval('#autoCropMsg', (el) => el.textContent), /original/i);
+    assert.match(await page.$eval('#cropImage', (el) => el.src), /^data:image/, 'now showing the flattened image');
+    assert.match(await page.$eval('#autoCropMsg', (el) => el.textContent), /straightened/i);
 
-    await page.click('#autoCropToggle');       // back to auto
+    await page.click('#autoCropToggle');       // back to the photo
+    await new Promise((r) => setTimeout(r, 400));
+    assert.match(await page.$eval('#cropImage', (el) => el.src), /^blob:/, 'toggled back to the original');
+
+    await page.click('#autoCropToggle');       // and forward again
     await new Promise((r) => setTimeout(r, 400));
     await page.click('#cropUse');
     await new Promise((r) => setTimeout(r, 400));

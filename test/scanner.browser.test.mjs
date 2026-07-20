@@ -503,9 +503,18 @@ test('series field: new entry creates the series and the position field sets the
 const SKEW_CORNERS = [[150, 80], [640, 140], [600, 520], [110, 470]];
 async function skewedCoverJpeg() {
   const pts = SKEW_CORNERS.map((p) => p.join(',')).join(' ');
+  // Printed, not blank: a real cover carries lettering and a picture, and the
+  // detector leans on that to tell a cover from the surface under it.
   const svg = `<svg width="800" height="600">
+    <defs><clipPath id="cover"><polygon points="${pts}"/></clipPath></defs>
     <rect width="800" height="600" fill="#3a3a3a"/>
     <polygon points="${pts}" fill="#efe9dd"/>
+    <g clip-path="url(#cover)">
+      <rect x="170" y="110" width="440" height="60" fill="#2f4858"/>
+      <rect x="170" y="200" width="400" height="130" fill="#c96f4a"/>
+      <rect x="170" y="350" width="380" height="90" fill="#4a6b4f"/>
+      <rect x="170" y="450" width="300" height="40" fill="#2f4858"/>
+    </g>
     <polygon points="${pts}" fill="none" stroke="#c9bfa8" stroke-width="6"/>
   </svg>`;
   return sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toBuffer();
@@ -531,6 +540,23 @@ async function bookOnBagJpeg() {
   return sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toBuffer();
 }
 
+// The same cover, but the art below the title is a big rectangle in its own
+// right — a tighter crop that scores beautifully on "busy inside, calm outside"
+// and throws the title away. Losing the title is much worse than leaving a
+// margin, so the whole cover must win.
+async function coverWithInnerPanelJpeg() {
+  const b = BOOK_BOX;
+  const svg = `<svg width="700" height="900">
+    <rect width="700" height="900" fill="#b59a70"/>
+    <rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" fill="#efe9dd"/>
+    <rect x="${b.x + 40}" y="${b.y + 30}" width="${b.w - 80}" height="60" fill="#33455c"/>
+    <rect x="${b.x + 20}" y="${b.y + 150}" width="${b.w - 40}" height="${b.h - 190}" fill="#4a6b4f"/>
+    <rect x="${b.x + 60}" y="${b.y + 200}" width="120" height="150" fill="#c96f4a"/>
+    <rect x="${b.x + 70}" y="${b.y + 400}" width="160" height="90" fill="#e3d9c0"/>
+  </svg>`;
+  return sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toBuffer();
+}
+
 test('auto-crop finds a skewed cover and flattens it, but declines when there is no rectangle', { skip }, async () => {
   const page = await browser.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
@@ -542,12 +568,16 @@ test('auto-crop finds a skewed cover and flattens it, but declines when there is
     if (!out) return { cropped: false };
     const ctx = out.canvas.getContext('2d');
     const d = ctx.getImageData(0, 0, out.canvas.width, out.canvas.height).data;
-    let light = 0;
-    for (let i = 0; i < d.length; i += 4) if (d[i] > 180 && d[i + 1] > 170 && d[i + 2] > 150) light += 1;
+    // How much of the result is the dark surface the cover was lying on: that,
+    // not "how light is it", is what says the crop landed on the cover.
+    let surface = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (Math.abs(d[i] - 58) < 22 && Math.abs(d[i + 1] - 58) < 22 && Math.abs(d[i + 2] - 58) < 22) surface += 1;
+    }
     return {
       cropped: true,
       quad: out.quad.map((q) => [Math.round(q.x), Math.round(q.y)]),
-      coverFraction: light / (out.canvas.width * out.canvas.height),
+      surfaceFraction: surface / (out.canvas.width * out.canvas.height),
     };
   }, buf.toString('base64'));
 
@@ -557,7 +587,7 @@ test('auto-crop finds a skewed cover and flattens it, but declines when there is
     const [tx, ty] = SKEW_CORNERS[i];
     assert.ok(Math.hypot(x - tx, y - ty) < 20, `corner ${i} near truth: got ${x},${y} want ${tx},${ty}`);
   });
-  assert.ok(skew.coverFraction > 0.9, `flattened result is nearly all cover (${skew.coverFraction})`);
+  assert.ok(skew.surfaceFraction < 0.05, `flattened result is the cover, not the surface (${skew.surfaceFraction})`);
 
   // Must NOT fire on images with no croppable rectangle — a false positive would
   // mangle the photo, which is worse than doing nothing.
@@ -578,6 +608,20 @@ test('auto-crop finds a skewed cover and flattens it, but declines when there is
     assert.ok(Math.hypot(x - want[i][0], y - want[i][1]) < 25,
       `corner ${i} is the book's, not the bag's: got ${x},${y} want ${want[i]}`);
   });
+
+  // ...and take the whole cover, not the picture panel inside it. The tolerance
+  // is looser here because a side can settle on a printed band a little inside
+  // the true edge: a small margin lost is acceptable, a lost title is not, so
+  // what is really being checked is that the full width and the title survive.
+  const panel = await run(await coverWithInnerPanelJpeg());
+  assert.equal(panel.cropped, true, 'the cover is detected');
+  panel.quad.forEach(([x, y], i) => {
+    assert.ok(Math.hypot(x - want[i][0], y - want[i][1]) < 35,
+      `corner ${i} is the cover's, not the inner panel's: got ${x},${y} want ${want[i]}`);
+  });
+  const [tl, tr] = panel.quad;
+  assert.ok(tr[0] - tl[0] > BOOK_BOX.w * 0.9, `full cover width kept (${tr[0] - tl[0]} of ${BOOK_BOX.w})`);
+  assert.ok(tl[1] < BOOK_BOX.y + 30, `crop starts above the title (${tl[1]}, title at ${BOOK_BOX.y + 30})`);
   await page.close();
 });
 

@@ -18,6 +18,7 @@
   const MIN_SIDE_SUPPORT = 0.30; // every side must sit on a real edge, not a guess
   const MIN_INTERIOR = 0.04;   // a cover has lettering and a picture; a mat has neither
   const MIN_CONTRAST = 2.0;    // busy-inside vs calm-outside ratio needed to act at all
+  const COVERAGE_RATIO = 0.7;  // how evenly printed, next to the best candidate
   const THRESHOLD_PERCENTILES = [20, 30, 40, 50, 60, 70, 80];
 
   // --- image → gray, edges ------------------------------------------------
@@ -386,6 +387,35 @@
     return n ? sum / n : 0;
   }
 
+  // What fraction of the inside is busy, rather than how busy it is on average.
+  // A cover is printed all over; the bag under it is a wide calm expanse with
+  // one busy patch (the book). Averages confuse the two — this does not.
+  function interiorCoverage(grad, w, h, scale, q) {
+    const xs = q.map((p) => p.x), ys = q.map((p) => p.y);
+    const x0 = Math.max(0, Math.floor(Math.min(...xs))), x1 = Math.min(w - 1, Math.ceil(Math.max(...xs)));
+    const y0 = Math.max(0, Math.floor(Math.min(...ys))), y1 = Math.min(h - 1, Math.ceil(Math.max(...ys)));
+    const step = Math.max(1, Math.round(Math.min(x1 - x0, y1 - y0) / 40));
+    let busy = 0, n = 0;
+    for (let y = y0; y <= y1; y += step) {
+      for (let x = x0; x <= x1; x += step) {
+        if (!insideQuad(q, x, y)) continue;
+        // Look at a small neighbourhood: printing is busy at some scale, even
+        // where a given pixel happens to sit in a plain patch of the picture.
+        let peak = 0;
+        for (let dy = -step; dy <= step; dy += step) {
+          for (let dx = -step; dx <= step; dx += step) {
+            const xx = x + dx, yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+            if (grad[yy * w + xx] > peak) peak = grad[yy * w + xx];
+          }
+        }
+        if (peak / scale > 0.08) busy += 1;
+        n += 1;
+      }
+    }
+    return n ? busy / n : 0;
+  }
+
   // Mean edge activity in the band just outside the quad. An object lying on a
   // surface has a calm border of table, bag or mat around it; a rectangle drawn
   // through the middle of the cover art has more artwork around it. This is what
@@ -466,18 +496,34 @@
     // surface. The bag under the book is calm on both sides; a rectangle cut
     // through the cover art is busy on both. Only the cover itself is busy
     // inside and calm outside.
-    let best = null;
+    const plausible = [];
     for (const c of candidates) {
       const inside = interiorTexture(grad, w, h, scale, c.quad);
       if (inside < MIN_INTERIOR) continue;
       const outside = surroundTexture(grad, w, h, scale, c.quad);
       const contrast = inside / Math.max(outside, 0.02);
       if (contrast < MIN_CONTRAST) continue;
-      if (!best || contrast > best.contrast) {
-        best = { quad: c.quad, contrast, support: c.support, area: c.area };
-      }
+      plausible.push({
+        quad: c.quad, area: c.area, support: c.support, contrast,
+        coverage: interiorCoverage(grad, w, h, scale, c.quad),
+      });
     }
-    return best;
+    if (!plausible.length) return null;
+
+    // Prefer the *largest* thing that is printed throughout. Cropping too tight
+    // silently eats the title, while cropping too loose leaves a margin the
+    // cropper is already open for — so when in doubt, take in more. Ratios like
+    // busy-inside-over-calm-outside are maximised by tight crops inside the
+    // artwork, which is exactly the mistake to avoid.
+    //
+    // The bar for "printed throughout" is relative to the best candidate, not
+    // an absolute figure: covers carry plain margins and plain bands, so what
+    // counts as busy differs from cover to cover. What holds across them is
+    // that the cover is more evenly printed than the bag or table it lies on.
+    const bestCoverage = plausible.reduce((m, c) => Math.max(m, c.coverage), 0);
+    const printed = plausible.filter((c) => c.coverage >= bestCoverage * COVERAGE_RATIO);
+    printed.sort((a, b) => b.area - a.area);
+    return printed[0];
   }
 
   // Public form: just the corners, or null.

@@ -119,6 +119,46 @@ test('a whole series can be held in two formats — every number twice', async (
   }
 });
 
+test('one volume can occupy several positions (an omnibus of books 1-5)', async () => {
+  const s = (await api('/series', send('POST', { title: `Omni ${Date.now()}` }))).body;
+  const omni = (await api('/books', send('POST', { title: 'The Omnibus' }))).body;
+  const six = (await api('/books', send('POST', { title: 'Book Six' }))).body;
+  await api(`/series/${s.id}/books`, send('POST', { book_id: omni.id, order: '1-5' }));
+  await api(`/series/${s.id}/books`, send('POST', { book_id: six.id, order: 6 }));
+
+  assert.deepEqual((await api(`/books/${omni.id}`)).body.series.orders, [1, 2, 3, 4, 5], 'all five positions kept');
+  const listing = (await api(`/series/${s.id}/books`)).body;
+  assert.deepEqual(order(listing), ['1:The Omnibus', '2:The Omnibus', '3:The Omnibus', '4:The Omnibus', '5:The Omnibus', '6:Book Six'],
+    'the omnibus fills every slot it covers');
+
+  // The book list must not repeat it, and sorts by its earliest position.
+  const r = await fetch(`${BASE}/api/books?series_id=${s.id}`);
+  const books = await r.json();
+  assert.deepEqual(books.map((b) => b.title), ['The Omnibus', 'Book Six'], 'listed once, earliest position first');
+  assert.equal(Number(r.headers.get('X-Total-Count')), 2, 'counted once');
+});
+
+test('positions accept a list, a range, or a plain number, and replace the previous set', async () => {
+  const s = (await api('/series', send('POST', { title: `Shapes ${Date.now()}` }))).body;
+  const b = (await api('/books', send('POST', { title: 'Shifty' }))).body;
+  const put = async (value) => {
+    await api(`/series/${s.id}/books`, send('POST', { book_id: b.id, order: value }));
+    return (await api(`/books/${b.id}`)).body.series.orders;
+  };
+  assert.deepEqual(await put('8,10'), [8, 10], 'comma list');
+  assert.deepEqual(await put('1-3, 7'), [1, 2, 3, 7], 'range plus a single');
+  assert.deepEqual(await put([4, 2]), [2, 4], 'array, sorted');
+  assert.deepEqual(await put(5), [5], 'plain number replaces the whole set');
+});
+
+test('rejects position input with no usable numbers', async () => {
+  const { series, ids } = await makeSeriesWith(['One']);
+  for (const bad of ['', 'abc', '0', '-2']) {
+    const r = await api(`/series/${series.id}/books`, send('POST', { book_id: ids[0], order: bad }));
+    assert.equal(r.status, 400, `"${bad}" should be rejected`);
+  }
+});
+
 test('a book carries its series on the books API', async () => {
   const { series, ids } = await makeSeriesWith(['Solo']);
   const { body } = await api(`/books/${ids[0]}`);

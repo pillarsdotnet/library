@@ -114,10 +114,17 @@ function attachGenres(books) {
     if (!byBook.has(r.book_id)) byBook.set(r.book_id, []);
     byBook.get(r.book_id).push({ id: r.id, name: r.name, parent_id: r.parent_id });
   }
+  // A book may hold several positions (an omnibus), so collect them per book.
   const seriesRows = db.prepare(`
     SELECT sb.book, sb.series AS series_id, sb."order" AS "order", s.title
-    FROM series_books sb JOIN series s ON s.id = sb.series`).all();
-  const seriesByBook = new Map(seriesRows.map((r) => [r.book, { series_id: r.series_id, title: r.title, order: r.order }]));
+    FROM series_books sb JOIN series s ON s.id = sb.series
+    ORDER BY sb."order"`).all();
+  const seriesByBook = new Map();
+  for (const r of seriesRows) {
+    if (!seriesByBook.has(r.book)) seriesByBook.set(r.book, { series_id: r.series_id, title: r.title, orders: [] });
+    seriesByBook.get(r.book).orders.push(r.order);
+  }
+  for (const v of seriesByBook.values()) v.order = v.orders[0];   // earliest position
   for (const b of books) {
     b.genres = byBook.get(b.id) || [];
     b.genre_ids = b.genres.map((g) => g.id);
@@ -166,7 +173,7 @@ router.get('/api/books', (req, res) => {
 
   // Filtering to one series reads far better in reading order than alphabetically.
   const orderBy = (series_id && series_id !== 'none')
-    ? '(SELECT sb."order" FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id), sort_title(b.title)'
+    ? '(SELECT MIN(sb."order") FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id), sort_title(b.title)'
     : 'sort_title(b.title)';
   const sql = `SELECT b.*, s.room, s.bookcase, s.label AS shelf_label ${from}
     ORDER BY ${orderBy}${page}`;
@@ -357,6 +364,25 @@ router.get('/api/meta', (_req, res) => {
 // ---------------------------------------------------------------------------
 // Series — a named series and the ordered books within it.
 // ---------------------------------------------------------------------------
+
+// Accepts 4, [1,2], "1,3,5", "1-5" or "1-3, 7" and returns sorted unique
+// positions. A single volume can collect several books in a series.
+function parseOrders(value) {
+  const out = new Set();
+  const add = (n) => { if (Number.isInteger(n) && n >= 1) out.add(n); };
+  const token = (tok) => {
+    const s = String(tok).trim();
+    const range = /^(\d+)\s*[-–—]\s*(\d+)$/.exec(s);
+    if (!range) return add(Number(s));
+    let [, lo, hi] = range.map(Number);
+    if (lo > hi) [lo, hi] = [hi, lo];
+    if (hi - lo > 500) return;            // guard against a runaway range
+    for (let n = lo; n <= hi; n += 1) add(n);
+  };
+  if (Array.isArray(value)) value.forEach(token);
+  else String(value ?? '').split(',').forEach(token);
+  return [...out].sort((a, b) => a - b);
+}
 router.get('/api/series', (_req, res) => {
   res.json(db.prepare(`
     SELECT s.*, (SELECT COUNT(*) FROM series_books sb WHERE sb.series = s.id) AS book_count
@@ -392,13 +418,16 @@ router.post('/api/series/:id/books', (req, res) => {
   if (!bookId || !db.prepare('SELECT id FROM books WHERE id = ?').get(bookId)) {
     return res.status(400).json({ error: 'valid book_id is required' });
   }
-  const order = Number(req.body.order);
-  if (!Number.isInteger(order) || order < 1) return res.status(400).json({ error: 'order must be a positive integer' });
+  const orders = parseOrders(req.body.orders ?? req.body.order);
+  if (!orders.length) {
+    return res.status(400).json({ error: 'order must be a positive integer, list or range (e.g. 3, "1,3" or "1-5")' });
+  }
 
   const place = db.transaction(() => {
-    // Re-placing the same book moves it rather than adding a second row for it.
+    // Re-placing the same book replaces all of its positions in this series.
     db.prepare('DELETE FROM series_books WHERE series = ? AND book = ?').run(seriesId, bookId);
-    db.prepare('INSERT INTO series_books (series, "order", book) VALUES (?, ?, ?)').run(seriesId, order, bookId);
+    const ins = db.prepare('INSERT INTO series_books (series, "order", book) VALUES (?, ?, ?)');
+    for (const o of orders) ins.run(seriesId, o, bookId);
   });
   place();
   res.status(201).json(db.prepare(`

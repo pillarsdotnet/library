@@ -135,7 +135,7 @@ function renderBookCard(b) {
         ${b.format ? `<span class="badge muted">${FORMAT_LABELS[b.format] || b.format}</span>` : ''}
         ${b.jacket === 'missing' ? '<span class="badge muted">No jacket</span>' : ''}
       </div>
-      ${b.series ? `<p class="loc">📚 ${esc(b.series.title)} #${b.series.order}</p>` : ''}
+      ${b.series ? `<p class="loc">📚 ${esc(b.series.title)} #${esc(formatOrders(b.series.orders))}</p>` : ''}
       ${b.genres && b.genres.length ? `<p class="loc">🏷 ${esc(b.genres.map((g) => g.name).join(', '))}</p>` : ''}
       ${location ? `<p class="loc">📍 ${esc(location)}</p>` : '<p class="loc muted-text">Unshelved</p>'}
       ${dims ? `<p class="loc">📐 ${dims}</p>` : ''}
@@ -292,7 +292,7 @@ function openEditBook(book) {
   pendingSeries = null;
   bookSeriesOriginal = book.series ? { ...book.series } : null;
   $('#seriesInput').value = book.series ? book.series.title : '';
-  $('#seriesPosition').value = book.series ? String(book.series.order) : '';
+  $('#seriesPosition').value = book.series ? formatOrders(book.series.orders) : '';
   DIM_FIELDS.forEach((f) => { if (bookForm.elements[f]) bookForm.elements[f].value = mmToUnit(book[f]); });
   showCover(book.cover_url);
   $('#lookupMsg').hidden = true;
@@ -1310,7 +1310,20 @@ function createGenreField(input) {
 // Series — optional; a book sits at a numbered position within one series.
 // ---------------------------------------------------------------------------
 let seriesCache = [];
-let pendingSeries = null; // { id, title, order } chosen in the dialog, applied on save
+let pendingSeries = null; // { id, title } resolved from the series box, applied on save
+
+// [1,2,3,4,5] -> "1-5"; [1,3,5] -> "1, 3, 5"; [1,2,4,5] -> "1-2, 4-5"
+function formatOrders(orders) {
+  const ns = [...new Set((orders || []).map(Number))].filter(Number.isInteger).sort((a, b) => a - b);
+  const parts = [];
+  for (let i = 0; i < ns.length;) {
+    let j = i;
+    while (j + 1 < ns.length && ns[j + 1] === ns[j] + 1) j += 1;
+    parts.push(j > i ? `${ns[i]}-${ns[j]}` : String(ns[i]));
+    i = j + 1;
+  }
+  return parts.join(', ');
+}
 
 async function loadSeries() {
   seriesCache = await api('/series');
@@ -1342,7 +1355,7 @@ async function commitSeriesEntry() {
   // editable so there's nothing to ask.
   if (bookSeriesOriginal && bookSeriesOriginal.title.toLowerCase() === title.toLowerCase()) {
     pendingSeries = { id: bookSeriesOriginal.series_id, title: bookSeriesOriginal.title };
-    if (!pos.value) pos.value = String(bookSeriesOriginal.order);
+    if (!pos.value) pos.value = formatOrders(bookSeriesOriginal.orders);
     return true;
   }
   if (pendingSeries && pendingSeries.title.toLowerCase() === title.toLowerCase()) return true;
@@ -1365,7 +1378,7 @@ async function commitSeriesEntry() {
 // the form (re-placing an existing member just moves it).
 async function applyPendingSeries(bookId) {
   if (!pendingSeries || !bookId) return;
-  const order = Math.max(1, parseInt($('#seriesPosition').value, 10) || 1);
+  const order = $('#seriesPosition').value.trim() || '1';
   try {
     await api(`/series/${pendingSeries.id}/books`, {
       method: 'POST', headers: json(), body: JSON.stringify({ book_id: bookId, order }),

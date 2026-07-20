@@ -94,11 +94,13 @@ db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_series_title ON series(title COLLATE NOCASE);
 
   -- A book's position within a series. "order" is a SQL keyword, hence quoted.
+  -- One row per position: an omnibus collecting books 1-5 has five rows, so the
+  -- position stays an integer and ordering/filtering keep working.
   CREATE TABLE IF NOT EXISTS series_books (
     series   INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
     "order"  INTEGER NOT NULL,
     book     INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-    PRIMARY KEY (series, book)
+    PRIMARY KEY (series, book, "order")
   );
   CREATE INDEX IF NOT EXISTS idx_series_books_book  ON series_books(book);
   CREATE INDEX IF NOT EXISTS idx_series_books_order ON series_books(series, "order");
@@ -184,6 +186,31 @@ if (bookColumns.includes('genre') && bookColumns.includes('subgenre')) {
   // drop them (genres live only in the join table + genres taxonomy now).
   db.exec('ALTER TABLE books DROP COLUMN genre');
   db.exec('ALTER TABLE books DROP COLUMN subgenre');
+}
+
+// series_books originally keyed on (series, book), which capped a book at one
+// position. An omnibus spans several, so rebuild with (series, book, "order").
+// Nothing references series_books, so this is a plain copy-and-swap.
+{
+  const sql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'series_books'").get()?.sql || '';
+  if (/PRIMARY KEY\s*\(\s*series\s*,\s*book\s*\)/i.test(sql)) {
+    const rebuild = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE series_books_new (
+          series   INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+          "order"  INTEGER NOT NULL,
+          book     INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+          PRIMARY KEY (series, book, "order")
+        );
+        INSERT INTO series_books_new (series, "order", book) SELECT series, "order", book FROM series_books;
+        DROP TABLE series_books;
+        ALTER TABLE series_books_new RENAME TO series_books;
+        CREATE INDEX IF NOT EXISTS idx_series_books_book  ON series_books(book);
+        CREATE INDEX IF NOT EXISTS idx_series_books_order ON series_books(series, "order");
+      `);
+    });
+    rebuild();
+  }
 }
 
 // Dimensions are whole millimetres. Round any legacy fractional values (they

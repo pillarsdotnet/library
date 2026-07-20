@@ -957,7 +957,8 @@ function attachCombo(input, getItems) {
   input.addEventListener('focus', render);
   input.addEventListener('blur', () => setTimeout(close, 150));
   // pointerdown fires before blur and preventDefault keeps the field focused.
-  list.addEventListener('pointerdown', (e) => {
+  list.addEventListener('pointerdown', (e) => { if (e.target.closest('li')) e.preventDefault(); });
+  list.addEventListener('click', (e) => {
     const li = e.target.closest('li');
     if (li) { e.preventDefault(); choose(li); }
   });
@@ -1171,6 +1172,7 @@ function createGenreField(input) {
   label.appendChild(list);
   let active = -1;
   let busy = false;
+  let lastAddAt = 0;   // guards the ✕ against a ghost click just after adding a chip
 
   const renderChips = () => {
     field.querySelectorAll('.chip').forEach((c) => c.remove());
@@ -1178,7 +1180,13 @@ function createGenreField(input) {
       const chip = document.createElement('span');
       chip.className = 'chip';
       chip.innerHTML = `${esc(genreLabel(genreById(id)))} <button type="button" aria-label="Remove">✕</button>`;
-      chip.querySelector('button').onclick = () => { ids.splice(i, 1); renderChips(); };
+      chip.querySelector('button').onclick = (e) => {
+        e.preventDefault();
+        // A tap that just added a chip can emit a follow-up click here; ignore it.
+        if (Date.now() - lastAddAt < 400) return;
+        ids.splice(i, 1);
+        renderChips();
+      };
       field.insertBefore(chip, input);
     });
   };
@@ -1200,6 +1208,7 @@ function createGenreField(input) {
   };
   const addId = (id) => {
     if (id && !ids.includes(id)) ids.push(id);
+    lastAddAt = Date.now();
     input.value = ''; renderChips(); closeList();
   };
   // Strip leading/trailing spaces & punctuation, keeping internal characters
@@ -1252,7 +1261,12 @@ function createGenreField(input) {
     if (!clean(input.value)) { input.value = ''; return; } // only spaces/punctuation → trim
     commit(input.value);
   }, 200));
-  list.addEventListener('pointerdown', (e) => {
+  // Commit on click, not pointerdown. Acting on pointerdown adds the chip and
+  // closes the list while the finger is still down, so the field reflows and the
+  // follow-up click lands on whatever moved under it — usually an existing
+  // chip's ✕, silently removing a genre. preventDefault keeps focus in the input.
+  list.addEventListener('pointerdown', (e) => { if (e.target.closest('li')) e.preventDefault(); });
+  list.addEventListener('click', (e) => {
     const li = e.target.closest('li');
     if (li) { e.preventDefault(); addId(Number(li.dataset.id)); }
   });

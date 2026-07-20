@@ -499,6 +499,44 @@ test('series field: new entry creates the series and the position field sets the
   await page.close();
 });
 
+test('picking genre suggestions never removes already-chosen genres, but ✕ still does', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+  const chips = () => page.$$eval('#genreField .chip', (els) => els.map((c) => c.textContent.replace('✕', '').trim()));
+
+  // Tap each suggestion the way a finger does: pointerdown, then a click at the
+  // same coordinates. Acting on pointerdown used to reflow the field so that the
+  // follow-up click hit an existing chip's ✕ and silently dropped a genre.
+  const terms = ['Adult', 'Magical', 'Earth', 'Historical'];
+  for (const [i, term] of terms.entries()) {
+    await page.click('#genreInput', { clickCount: 3 });
+    await page.type('#genreInput', term, { delay: 10 });
+    await new Promise((r) => setTimeout(r, 250));
+    const li = await page.$('.combo-list li');
+    assert.ok(li, `expected a suggestion for "${term}"`);
+    const box = await li.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await new Promise((r) => setTimeout(r, 60));
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal((await chips()).length, i + 1, `picking "${term}" should only ever add a chip`);
+  }
+  const before = await chips();
+  assert.equal(before.length, 4, 'all four genres retained');
+
+  // The ✕ must still remove a chip on a deliberate click (past the ghost-click guard).
+  await new Promise((r) => setTimeout(r, 500));
+  await page.click('#genreField .chip button');
+  await new Promise((r) => setTimeout(r, 200));
+  const after = await chips();
+  assert.equal(after.length, 3, '✕ still removes a chip');
+  assert.ok(!after.includes(before[0]), 'the clicked chip is the one removed');
+  await page.close();
+});
+
 test('series position is editable when editing a book', { skip }, async () => {
   const stamp = String(Date.now()).slice(-6);
   const post = async (p, body) => (await fetch(`${BASE}/api/${p}`, {

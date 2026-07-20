@@ -465,7 +465,7 @@ test('book list paginates and serves inline covers from their own endpoint', { s
   await page.close();
 });
 
-test('series field: new entry creates the series, prompts for order, and allows duplicate numbers', { skip }, async () => {
+test('series field: new entry creates the series and the position field sets the number', { skip }, async () => {
   const seriesTitle = 'Test Series ' + Date.now();
   const page = await browser.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
@@ -476,10 +476,8 @@ test('series field: new entry creates the series, prompts for order, and allows 
     await page.type('#bookForm [name="title"]', title);
     await page.type('#seriesInput', seriesTitle);
     await page.click('#bookForm [name="authors"]');          // blur commits the series box
-    await page.waitForSelector('#seriesOrderDialog[open]', { timeout: 4000 });
-    await page.$eval('#seriesOrderInput', (el, v) => { el.value = v; }, String(order));
-    await page.click('#seriesOrderSave');
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 400));            // series created, position defaulted
+    await page.$eval('#seriesPosition', (el, v) => { el.value = v; }, String(order));
     await page.click('#bookForm button[type="submit"]');
     await new Promise((r) => setTimeout(r, 500));
   };
@@ -498,6 +496,37 @@ test('series field: new entry creates the series, prompts for order, and allows 
   await addBook('S Two ebook', 2);
   books = await (await fetch(`${BASE}/api/series/${s.id}/books`)).json();
   assert.deepEqual(books.map((b) => `${b.order}:${b.title}`), ['1:S One', '2:S Two', '2:S Two ebook', '3:S Three']);
+  await page.close();
+});
+
+test('series position is editable when editing a book', { skip }, async () => {
+  const stamp = String(Date.now()).slice(-6);
+  const post = async (p, body) => (await fetch(`${BASE}/api/${p}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  const s = await post('series', { title: `Editable ${stamp}` });
+  const bk = await post('books', { title: `EditPos ${stamp}` });
+  await post(`series/${s.id}/books`, { book_id: bk.id, order: 2 });
+
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.evaluate(async (id) => {
+    const r = await fetch('api/books/' + id);
+    window.openEditBook(await r.json());
+  }, bk.id);
+  await page.waitForSelector('#editDialog[open]');
+
+  // The current series and position are shown, both editable.
+  assert.equal(await page.$eval('#seriesInput', (el) => el.value), `Editable ${stamp}`);
+  assert.equal(await page.$eval('#seriesPosition', (el) => el.value), '2', 'current position shown');
+
+  // Change just the position and save.
+  await page.$eval('#seriesPosition', (el) => { el.value = '5'; });
+  await page.click('#bookForm button[type="submit"]');
+  await new Promise((r) => setTimeout(r, 600));
+  const after = await (await fetch(`${BASE}/api/books/${bk.id}`)).json();
+  assert.equal(after.series.order, 5, 'edited position saved');
+  assert.equal(after.series.title, `Editable ${stamp}`, 'still in the same series');
   await page.close();
 });
 

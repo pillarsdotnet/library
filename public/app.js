@@ -267,7 +267,7 @@ function openAddBook() {
   $('#dupWarning').hidden = true;
   genreTags.set([]);
   $('#seriesInput').value = '';
-  $('#seriesInfo').hidden = true;
+  $('#seriesPosition').value = '';
   pendingSeries = null;
   bookSeriesOriginal = null;
   setScanUI('📷 Scan', null);
@@ -292,8 +292,7 @@ function openEditBook(book) {
   pendingSeries = null;
   bookSeriesOriginal = book.series ? { ...book.series } : null;
   $('#seriesInput').value = book.series ? book.series.title : '';
-  $('#seriesInfo').hidden = !book.series;
-  if (book.series) $('#seriesInfo').textContent = `Book ${book.series.order} of “${book.series.title}”`;
+  $('#seriesPosition').value = book.series ? String(book.series.order) : '';
   DIM_FIELDS.forEach((f) => { if (bookForm.elements[f]) bookForm.elements[f].value = mmToUnit(book[f]); });
   showCover(book.cover_url);
   $('#lookupMsg').hidden = true;
@@ -1318,70 +1317,44 @@ function populateSeriesFilter() {
 const findSeries = (title) =>
   seriesCache.find((s) => s.title.toLowerCase() === (title || '').trim().toLowerCase());
 
-// Ask which position this book takes in the series. Resolves to an integer, or null.
-function promptSeriesOrder(seriesTitle, suggested) {
-  return new Promise((resolve) => {
-    const dlg = $('#seriesOrderDialog');
-    const input = $('#seriesOrderInput');
-    $('#seriesOrderPrompt').textContent = `Which book is this in “${seriesTitle}”?`;
-    input.value = String(suggested || 1);
-    const saveBtn = $('#seriesOrderSave');
-    const cancelBtn = $('#seriesOrderCancel');
-    const cleanup = () => {
-      saveBtn.removeEventListener('click', onSave);
-      cancelBtn.removeEventListener('click', onCancel);
-      dlg.removeEventListener('cancel', onEsc);
-    };
-    const onSave = () => {
-      const n = parseInt(input.value, 10);
-      if (!Number.isInteger(n) || n < 1) { alert('Order must be a positive whole number.'); return; }
-      cleanup(); dlg.close(); resolve(n);
-    };
-    const onCancel = () => { cleanup(); dlg.close(); resolve(null); };
-    const onEsc = (e) => { e.preventDefault(); onCancel(); };
-    saveBtn.addEventListener('click', onSave);
-    cancelBtn.addEventListener('click', onCancel);
-    dlg.addEventListener('cancel', onEsc);
-    dlg.showModal();
-    input.focus();
-    input.select();
-  });
-}
-
 // Commit whatever is typed in the series box: ensure the series exists, then ask
 // for this book's order. Called when the field is committed (blur/Enter).
 async function commitSeriesEntry() {
   const title = $('#seriesInput').value.trim();
-  const info = $('#seriesInfo');
-  if (!title) { pendingSeries = null; info.hidden = true; return true; }
+  const pos = $('#seriesPosition');
+  if (!title) { pendingSeries = null; pos.value = ''; return true; }
 
-  // Unchanged from what the book already has → nothing to do.
-  const current = editingBookId && bookSeriesOriginal && bookSeriesOriginal.title.toLowerCase() === title.toLowerCase();
-  if (current && !pendingSeries) { info.hidden = false; info.textContent = `Book ${bookSeriesOriginal.order} of “${bookSeriesOriginal.title}”`; return true; }
+  // Same series the book already belongs to: keep it, the Position field is
+  // editable so there's nothing to ask.
+  if (bookSeriesOriginal && bookSeriesOriginal.title.toLowerCase() === title.toLowerCase()) {
+    pendingSeries = { id: bookSeriesOriginal.series_id, title: bookSeriesOriginal.title };
+    if (!pos.value) pos.value = String(bookSeriesOriginal.order);
+    return true;
+  }
   if (pendingSeries && pendingSeries.title.toLowerCase() === title.toLowerCase()) return true;
 
   let s = findSeries(title);
   try {
     if (!s) { s = await api('/series', { method: 'POST', headers: json(), body: JSON.stringify({ title }) }); seriesCache.push(s); }
   } catch (err) { alert('Could not add series: ' + err.message); return false; }
+  pendingSeries = { id: s.id, title: s.title };
 
-  const existing = await api(`/series/${s.id}/books`).catch(() => []);
-  const suggested = (current && bookSeriesOriginal) ? bookSeriesOriginal.order : existing.length + 1;
-  const order = await promptSeriesOrder(s.title, suggested);
-  if (order === null) { $('#seriesInput').value = bookSeriesOriginal ? bookSeriesOriginal.title : ''; return false; }
-
-  pendingSeries = { id: s.id, title: s.title, order };
-  info.hidden = false;
-  info.textContent = `Book ${order} of “${s.title}”`;
+  // Newly attached to a series: suggest the next number, editable in the field.
+  if (!pos.value) {
+    const existing = await api(`/series/${s.id}/books`).catch(() => []);
+    pos.value = String(existing.length + 1);
+  }
   return true;
 }
 
-// After the book is saved we know its id, so place it in the series.
+// After the book is saved we know its id, so place it at the position shown in
+// the form (re-placing an existing member just moves it).
 async function applyPendingSeries(bookId) {
   if (!pendingSeries || !bookId) return;
+  const order = Math.max(1, parseInt($('#seriesPosition').value, 10) || 1);
   try {
     await api(`/series/${pendingSeries.id}/books`, {
-      method: 'POST', headers: json(), body: JSON.stringify({ book_id: bookId, order: pendingSeries.order }),
+      method: 'POST', headers: json(), body: JSON.stringify({ book_id: bookId, order }),
     });
   } catch (err) { alert('Could not set the series position: ' + err.message); }
   pendingSeries = null;

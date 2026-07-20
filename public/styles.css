@@ -302,6 +302,10 @@ dialog::backdrop { background: rgba(20, 15, 30, 0.55); }
 }
 .tag-field .chip button:hover { color: #d33; }
 
+/* Series + position row in the book form */
+.series-row { display: flex; gap: 10px; align-items: flex-end; }
+.series-pos { flex: 0 0 7.5rem; }
+
 /* Book list pager */
 .pager {
   display: flex;

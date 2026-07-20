@@ -107,21 +107,6 @@
     </form>
   </dialog>
 
-  <!-- ============ SERIES ORDER DIALOG ============ -->
-  <dialog id="seriesOrderDialog" class="pad-dialog">
-    <div class="dialog-head"><h2>Order in series</h2></div>
-    <p id="seriesOrderPrompt" class="hint"></p>
-    <label>Order
-      <input type="number" id="seriesOrderInput" min="1" step="1" value="1" />
-    </label>
-    <p class="hint">Several books may share a number — e.g. the same volume as both an e-book and a physical copy.</p>
-    <div class="dialog-actions">
-      <span class="grow"></span>
-      <button type="button" id="seriesOrderCancel">Cancel</button>
-      <button type="button" id="seriesOrderSave" class="primary">Save</button>
-    </div>
-  </dialog>
-
   <!-- ============ NEW-GENRE DEFINITION DIALOG ============ -->
   <dialog id="newGenreDialog" class="pad-dialog">
     <div class="dialog-head"><h2 id="newGenreTitle">New genre</h2></div>
@@ -214,10 +199,14 @@
             <input id="genreInput" autocomplete="off" placeholder="type a genre, then , ; Tab or Enter" />
           </div>
         </label>
-        <label>Series
-          <input id="seriesInput" autocomplete="off" placeholder="Optional — search or type a new series" />
-        </label>
-        <p id="seriesInfo" class="hint" hidden></p>
+        <div class="series-row">
+          <label class="grow">Series
+            <input id="seriesInput" autocomplete="off" placeholder="Optional — search or type a new series" />
+          </label>
+          <label class="series-pos">Position
+            <input type="number" id="seriesPosition" min="1" step="1" placeholder="—" />
+          </label>
+        </div>
         <label>Metadata source
           <select name="source">
             <option value="">—</option>

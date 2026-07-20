@@ -85,6 +85,24 @@ db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_genres_name_parent
     ON genres(name COLLATE NOCASE, ifnull(parent_id, 0));
 
+  CREATE TABLE IF NOT EXISTS series (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now')),
+    updated_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_series_title ON series(title COLLATE NOCASE);
+
+  -- A book's position within a series. "order" is a SQL keyword, hence quoted.
+  CREATE TABLE IF NOT EXISTS series_books (
+    series   INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+    "order"  INTEGER NOT NULL,
+    book     INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    PRIMARY KEY (series, book)
+  );
+  CREATE INDEX IF NOT EXISTS idx_series_books_book  ON series_books(book);
+  CREATE INDEX IF NOT EXISTS idx_series_books_order ON series_books(series, "order");
+
   -- Many-to-many: a book has a set of genres (SQLite has no array column type).
   CREATE TABLE IF NOT EXISTS book_genres (
     book_id   INTEGER NOT NULL REFERENCES books(id)  ON DELETE CASCADE,

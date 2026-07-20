@@ -99,9 +99,14 @@ function attachGenres(books) {
     if (!byBook.has(r.book_id)) byBook.set(r.book_id, []);
     byBook.get(r.book_id).push({ id: r.id, name: r.name, parent_id: r.parent_id });
   }
+  const seriesRows = db.prepare(`
+    SELECT sb.book, sb.series AS series_id, sb."order" AS "order", s.title
+    FROM series_books sb JOIN series s ON s.id = sb.series`).all();
+  const seriesByBook = new Map(seriesRows.map((r) => [r.book, { series_id: r.series_id, title: r.title, order: r.order }]));
   for (const b of books) {
     b.genres = byBook.get(b.id) || [];
     b.genre_ids = b.genres.map((g) => g.id);
+    b.series = seriesByBook.get(b.id) || null;
   }
   return books;
 }
@@ -299,6 +304,72 @@ router.get('/api/meta', (_req, res) => {
     count: db.prepare('SELECT COUNT(*) AS n FROM books').get().n,
     unshelved: db.prepare('SELECT COUNT(*) AS n FROM books WHERE shelf_id IS NULL').get().n,
   });
+});
+
+// ---------------------------------------------------------------------------
+// Series — a named series and the ordered books within it.
+// ---------------------------------------------------------------------------
+router.get('/api/series', (_req, res) => {
+  res.json(db.prepare(`
+    SELECT s.*, (SELECT COUNT(*) FROM series_books sb WHERE sb.series = s.id) AS book_count
+    FROM series s ORDER BY s.title COLLATE NOCASE`).all());
+});
+
+// Find-or-create by title (case-insensitive), so typing an existing name reuses it.
+router.post('/api/series', (req, res) => {
+  const title = (req.body.title || '').trim();
+  if (!title) return res.status(400).json({ error: 'title is required' });
+  const existing = db.prepare('SELECT * FROM series WHERE title = ? COLLATE NOCASE').get(title);
+  if (existing) return res.status(200).json(existing);
+  const id = db.prepare('INSERT INTO series (title) VALUES (?)').run(title).lastInsertRowid;
+  res.status(201).json(db.prepare('SELECT * FROM series WHERE id = ?').get(id));
+});
+
+router.get('/api/series/:id/books', (req, res) => {
+  res.json(db.prepare(`
+    SELECT sb."order" AS "order", b.*
+    FROM series_books sb JOIN books b ON b.id = sb.book
+    WHERE sb.series = ? ORDER BY sb."order"`).all(req.params.id));
+});
+
+// Place a book in a series at a given order. Inserting at an occupied order
+// pushes that book (and everything after it) down by one.
+router.post('/api/series/:id/books', (req, res) => {
+  const seriesId = Number(req.params.id);
+  if (!db.prepare('SELECT id FROM series WHERE id = ?').get(seriesId)) {
+    return res.status(404).json({ error: 'series not found' });
+  }
+  const bookId = Number(req.body.book_id);
+  if (!bookId || !db.prepare('SELECT id FROM books WHERE id = ?').get(bookId)) {
+    return res.status(400).json({ error: 'valid book_id is required' });
+  }
+  let order = Number(req.body.order);
+  if (!Number.isInteger(order) || order < 1) return res.status(400).json({ error: 'order must be a positive integer' });
+
+  const place = db.transaction(() => {
+    // Re-placing an existing member: drop its old row first so it doesn't shift itself.
+    db.prepare('DELETE FROM series_books WHERE series = ? AND book = ?').run(seriesId, bookId);
+    const max = db.prepare('SELECT COALESCE(MAX("order"), 0) AS m FROM series_books WHERE series = ?').get(seriesId).m;
+    if (order > max + 1) order = max + 1;            // no gaps
+    db.prepare('UPDATE series_books SET "order" = "order" + 1 WHERE series = ? AND "order" >= ?').run(seriesId, order);
+    db.prepare('INSERT INTO series_books (series, "order", book) VALUES (?, ?, ?)').run(seriesId, order, bookId);
+  });
+  place();
+  res.status(201).json(db.prepare(`
+    SELECT sb."order" AS "order", b.id, b.title
+    FROM series_books sb JOIN books b ON b.id = sb.book
+    WHERE sb.series = ? ORDER BY sb."order"`).all(seriesId));
+});
+
+router.delete('/api/series/:id/books/:bookId', (req, res) => {
+  const seriesId = Number(req.params.id);
+  const row = db.prepare('SELECT "order" AS ord FROM series_books WHERE series = ? AND book = ?').get(seriesId, req.params.bookId);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.transaction(() => {
+    db.prepare('DELETE FROM series_books WHERE series = ? AND book = ?').run(seriesId, req.params.bookId);
+    db.prepare('UPDATE series_books SET "order" = "order" - 1 WHERE series = ? AND "order" > ?').run(seriesId, row.ord);
+  })();
+  res.status(204).end();
 });
 
 // ---------------------------------------------------------------------------

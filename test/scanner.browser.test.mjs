@@ -338,6 +338,42 @@ test('typing a new genre in the book form prompts for a definition and saves it'
   await page.close();
 });
 
+test('series field: new entry creates the series, prompts for order, and bumps on collision', { skip }, async () => {
+  const seriesTitle = 'Test Series ' + Date.now();
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+
+  const addBook = async (title, order) => {
+    await page.click('#addBtn');
+    await page.waitForSelector('#editDialog[open]');
+    await page.type('#bookForm [name="title"]', title);
+    await page.type('#seriesInput', seriesTitle);
+    await page.click('#bookForm [name="authors"]');          // blur commits the series box
+    await page.waitForSelector('#seriesOrderDialog[open]', { timeout: 4000 });
+    await page.$eval('#seriesOrderInput', (el, v) => { el.value = v; }, String(order));
+    await page.click('#seriesOrderSave');
+    await new Promise((r) => setTimeout(r, 200));
+    await page.click('#bookForm button[type="submit"]');
+    await new Promise((r) => setTimeout(r, 500));
+  };
+
+  await addBook('S One', 1);
+  await addBook('S Two', 2);
+  await addBook('S Three', 3);
+
+  const all = await (await fetch(`${BASE}/api/series`)).json();
+  const s = all.find((x) => x.title === seriesTitle);
+  assert.ok(s, 'series created from the book form');
+  let books = await (await fetch(`${BASE}/api/series/${s.id}/books`)).json();
+  assert.deepEqual(books.map((b) => `${b.order}:${b.title}`), ['1:S One', '2:S Two', '3:S Three']);
+
+  // Adding at an occupied order pushes the rest down.
+  await addBook('S Inserted', 2);
+  books = await (await fetch(`${BASE}/api/series/${s.id}/books`)).json();
+  assert.deepEqual(books.map((b) => `${b.order}:${b.title}`), ['1:S One', '2:S Inserted', '3:S Two', '4:S Three']);
+  await page.close();
+});
+
 test('Shelves tab nests shelves by room → bookcase → shelf, each sorted', { skip }, async () => {
   const stamp = String(Date.now()).slice(-6);
   const mk = (room, bookcase, label) => fetch(`${BASE}/api/shelves`, {

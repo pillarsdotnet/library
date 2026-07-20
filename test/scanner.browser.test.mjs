@@ -121,6 +121,52 @@ test('Quagga (iOS/no-BarcodeDetector) fallback path starts the camera', { skip }
 
 const metaCount = async () => (await (await fetch(`${BASE}/api/meta`)).json()).count;
 
+test('scanning a duplicate ISBN opens the choice dialog immediately (not only on save)', { skip }, async () => {
+  const isbn = '9781783751068';
+  const seed = await (await fetch(`${BASE}/api/books`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'Foskett Original', isbn }),
+  })).json();
+
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+  // Drive the scan path: acceptScan() sets the ISBN then calls lookup(true).
+  await page.evaluate((v) => { document.querySelector("#isbn").value = v; window.lookup(true); }, isbn);
+
+  // The dialog must appear from the scan alone — no Save required.
+  await page.waitForSelector('#dupDialog[open]', { timeout: 15000 });
+  const optCount = await page.$$eval('#dupOptions .dup-option', (els) => els.length);
+  assert.equal(optCount, 2, 'one option for the existing copy plus the "new" option');
+  assert.match(await page.$eval('#dupOptions .dup-option strong', (el) => el.textContent), /Foskett Original/);
+
+  // Choosing the existing copy opens it for editing.
+  await page.click('#dupOptions .dup-option');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(await page.$eval('#dialogTitle', (el) => el.textContent), 'Edit book');
+  assert.equal(await page.$eval('#bookForm [name="title"]', (el) => el.value), 'Foskett Original');
+  await page.close();
+
+  // And the "new" option creates a record and opens that for editing.
+  const before = (await (await fetch(`${BASE}/api/meta`)).json()).count;
+  const p2 = await browser.newPage();
+  await p2.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await p2.click('#addBtn');
+  await p2.waitForSelector('#editDialog[open]');
+  // Title first — once the modal duplicate dialog opens, the form behind it is inert.
+  await p2.type('#bookForm [name="title"]', 'Foskett Second Copy');
+  await p2.evaluate((v) => { document.querySelector('#isbn').value = v; window.lookup(true); }, isbn);
+  await p2.waitForSelector('#dupDialog[open]', { timeout: 15000 });
+  await p2.click('#dupOptions .dup-option.new');
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal((await (await fetch(`${BASE}/api/meta`)).json()).count, before + 1, 'new copy created');
+  assert.equal(await p2.$eval('#dialogTitle', (el) => el.textContent), 'Edit book', 'opened for editing');
+  assert.notEqual(await p2.$eval('#bookForm [name="title"]', (el) => el.value), 'Foskett Original');
+  await p2.close();
+  assert.ok(seed.id, 'seed book exists');
+});
+
 test('duplicate ISBN prompt: Cancel keeps the record, Edit opens the original', { skip }, async () => {
   const isbn = '9780316158541';
   await fetch(`${BASE}/api/books`, {

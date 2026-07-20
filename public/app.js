@@ -435,6 +435,46 @@ function askDuplicate(dups, newData) {
   });
 }
 
+// Everything the book form currently holds, in API shape.
+function collectBookData() {
+  const data = Object.fromEntries(new FormData(bookForm).entries());
+  data.is_library_book = $('#isLibraryBook').checked;
+  data.genre_ids = genreTags.get();
+  DIM_FIELDS.forEach((f) => { if (f in data) data[f] = unitToMm(data[f]); });
+  return data;
+}
+
+// A scan that matches books already in the library: offer to edit one of them,
+// add this as a new copy (created immediately and opened for editing), or
+// cancel the scan. Returns true if the scan was handled/absorbed.
+async function handleScanDuplicate() {
+  if (editingBookId) return false;                    // editing, not scanning in
+  const dups = await findByIsbn($('#isbn').value).catch(() => []);
+  if (!dups.length) return false;
+
+  const choice = await askDuplicate(dups, collectBookData());
+  if (choice.type === 'cancel') {
+    // Cancel the scan: clear the form so the next book can be scanned straight away.
+    bookForm.reset();
+    genreTags.set([]);
+    $('#dupWarning').hidden = true;
+    $('#lookupMsg').hidden = true;
+    showCover('');
+    $('#isbn').focus();
+    return true;
+  }
+  if (choice.type === 'edit') { closeBookDialog(); openEditBook(choice.book); return true; }
+
+  // 'new' — create the record now and open it for editing.
+  try {
+    const saved = await api('/books', { method: 'POST', headers: json(), body: JSON.stringify(collectBookData()) });
+    closeBookDialog();
+    await refresh();
+    openEditBook(saved);
+  } catch (err) { alert('Could not add the book: ' + err.message); }
+  return true;
+}
+
 async function saveBook(e) {
   e.preventDefault();
   // Commit any leftover text in the genres field (prompting to define a new
@@ -443,10 +483,7 @@ async function saveBook(e) {
   // Resolve the series box (creates the series and asks for the order if needed).
   if (!await commitSeriesEntry()) return;
 
-  const data = Object.fromEntries(new FormData(bookForm).entries());
-  data.is_library_book = $('#isLibraryBook').checked;
-  data.genre_ids = genreTags.get();
-  DIM_FIELDS.forEach((f) => { if (f in data) data[f] = unitToMm(data[f]); });
+  const data = collectBookData();
 
   // On a duplicate ISBN (adding only), let the user edit an existing copy,
   // add a new one, or cancel.
@@ -594,10 +631,10 @@ function populateShelfFilter() {
 // ---------------------------------------------------------------------------
 // ISBN lookup + scanning
 // ---------------------------------------------------------------------------
-async function lookup() {
+async function lookup(fromScan = false) {
   const isbn = $('#isbn').value.trim();
   if (!isbn) return;
-  checkDuplicate();   // heads-up if this ISBN is already in the library
+  checkDuplicate();   // heads-up banner if this ISBN is already in the library
   const msg = $('#lookupMsg');
   msg.hidden = false; msg.className = 'msg'; msg.textContent = 'Looking up…';
   try {
@@ -617,6 +654,8 @@ async function lookup() {
     msg.classList.add(gotDims ? 'ok' : 'warn');
     checkFit();
   } catch (err) { msg.textContent = err.message; msg.classList.add('err'); }
+  // A scanned duplicate gets the full choice dialog right away.
+  if (fromScan === true) await handleScanDuplicate();
 }
 
 function setIfEmpty(name, value) {
@@ -745,7 +784,7 @@ function isValidEan(code) {
 function acceptScan(text) {
   if (scanState !== 'running') return;   // ignore late/duplicate detections
   $('#isbn').value = String(text).replace(/[^0-9Xx]/g, '');
-  stopScanner().then(lookup);
+  stopScanner().then(() => lookup(true));   // true = came from a scan
 }
 
 // Turn a getUserMedia failure into advice that actually matches the situation

@@ -2,12 +2,25 @@
 // Document-scanner style auto-crop: find the rectangular object (a book cover)
 // in a photo and flatten it, correcting for the camera being off-square.
 // Deliberately dependency-free — an OpenCV build would dwarf the whole app.
+//
+// A single global threshold is not enough. Photographed on a paper bag on a
+// table, the bag is a big bright rectangle too, and a brightness-only pass
+// crops to the bag; worse, a brown bag and a green cover can share a brightness
+// exactly where their boundary is. So: gradients per colour channel, candidate
+// quadrilaterals from both region thresholds and straight edges (Hough), and
+// one judgement to choose between them — a book cover is busy inside and rests
+// on a calm surface, which the bag beneath it is not, and a rectangle cut
+// through the cover art is not either.
 (function attachAutoCrop() {
-  const WORK_WIDTH = 480;   // detection runs on a downscale; plenty for finding edges
-  const MIN_AREA = 0.10;    // ignore specks
+  const WORK_WIDTH = 360;   // detection runs on a downscale; plenty for finding edges
+  const MIN_AREA = 0.12;    // ignore specks and cover-art blocks
   const MAX_AREA = 0.98;    // ...and "the object fills the frame", where cropping is moot
+  const MIN_SIDE_SUPPORT = 0.30; // every side must sit on a real edge, not a guess
+  const MIN_INTERIOR = 0.04;   // a cover has lettering and a picture; a mat has neither
+  const MIN_CONTRAST = 2.0;    // busy-inside vs calm-outside ratio needed to act at all
+  const THRESHOLD_PERCENTILES = [20, 30, 40, 50, 60, 70, 80];
 
-  // --- image → binary mask -------------------------------------------------
+  // --- image → gray, edges ------------------------------------------------
 
   function toGray({ data, width, height }) {
     const gray = new Uint8Array(width * height);
@@ -17,10 +30,15 @@
     return gray;
   }
 
-  // Otsu: pick the threshold that best separates the histogram into two classes.
-  function otsuThreshold(gray) {
+  const histogram = (gray) => {
     const hist = new Float64Array(256);
     for (let i = 0; i < gray.length; i += 1) hist[gray[i]] += 1;
+    return hist;
+  };
+
+  // Otsu: pick the threshold that best separates the histogram into two classes.
+  function otsuThreshold(gray) {
+    const hist = histogram(gray);
     const total = gray.length;
     let sum = 0;
     for (let t = 0; t < 256; t += 1) sum += t * hist[t];
@@ -39,27 +57,78 @@
     return best;
   }
 
-  // The object is whichever class does NOT dominate the border of the frame.
-  function objectMask(gray, w, h) {
-    const t = otsuThreshold(gray);
-    let brightBorder = 0, borderCount = 0;
-    const sample = (x, y) => { brightBorder += gray[y * w + x] > t ? 1 : 0; borderCount += 1; };
-    for (let x = 0; x < w; x += 1) { sample(x, 0); sample(x, h - 1); }
-    for (let y = 0; y < h; y += 1) { sample(0, y); sample(w - 1, y); }
-    const objectIsBright = brightBorder / borderCount < 0.5;
-    const mask = new Uint8Array(w * h);
-    for (let i = 0; i < mask.length; i += 1) {
-      mask[i] = (gray[i] > t) === objectIsBright ? 1 : 0;
+  // Brightness levels below which the given percentages of pixels fall.
+  function percentileThresholds(gray, percentiles) {
+    const hist = histogram(gray);
+    const out = [];
+    let seen = 0, level = 0;
+    for (const pct of percentiles) {
+      const target = (gray.length * pct) / 100;
+      while (level < 255 && seen + hist[level] < target) { seen += hist[level]; level += 1; }
+      out.push(level);
     }
+    return out;
+  }
+
+  // Sobel gradient magnitude — how much of an edge is at each pixel. Run per
+  // colour channel and keep the strongest: a brown bag and the green cover
+  // lying on it can be the same brightness, and a luminance-only pass is blind
+  // to exactly the edge we are looking for.
+  function sobel({ data, width: w, height: h }) {
+    const g = new Float32Array(w * h);
+    for (let y = 1; y < h - 1; y += 1) {
+      for (let x = 1; x < w - 1; x += 1) {
+        const i = y * w + x;
+        const p = i * 4;
+        let best = 0;
+        for (let c = 0; c < 3; c += 1) {
+          const nw = data[p - w * 4 - 4 + c], n = data[p - w * 4 + c], ne = data[p - w * 4 + 4 + c];
+          const we = data[p - 4 + c], ea = data[p + 4 + c];
+          const sw = data[p + w * 4 - 4 + c], so = data[p + w * 4 + c], se = data[p + w * 4 + 4 + c];
+          const gx = -nw - 2 * we - sw + ne + 2 * ea + se;
+          const gy = -nw - 2 * n - ne + sw + 2 * so + se;
+          const m = Math.hypot(gx, gy);
+          if (m > best) best = m;
+        }
+        g[i] = best;
+      }
+    }
+    return g;
+  }
+
+  // Scale gradients against a strong-but-not-freak value, so "support" is
+  // comparable between a crisp photo and a dim one.
+  function gradientScale(grad) {
+    let max = 0;
+    for (let i = 0; i < grad.length; i += 1) if (grad[i] > max) max = grad[i];
+    if (!max) return 1;
+    const bins = new Int32Array(64);
+    for (let i = 0; i < grad.length; i += 1) bins[Math.min(63, (grad[i] / max * 63) | 0)] += 1;
+    let seen = 0;
+    const target = grad.length * 0.98;
+    for (let b = 0; b < 64; b += 1) {
+      seen += bins[b];
+      if (seen >= target) return Math.max(1, ((b + 1) / 64) * max);
+    }
+    return max;
+  }
+
+  // --- threshold → blob → quadrilateral ------------------------------------
+
+  function maskAt(gray, t, objectIsBright) {
+    const mask = new Uint8Array(gray.length);
+    for (let i = 0; i < mask.length; i += 1) mask[i] = (gray[i] > t) === objectIsBright ? 1 : 0;
     return mask;
   }
 
-  // Largest 4-connected blob, returned as its per-row horizontal extents (which
-  // bound the shape tightly enough to recover corners from).
-  function largestBlob(mask, w, h) {
+  // Every 4-connected blob of at least `minArea` pixels, biggest first, each as
+  // its per-row horizontal extents (which bound the shape tightly enough to
+  // recover corners from). Not just the biggest: a book photographed on a paper
+  // bag is the *second* biggest thing in the frame.
+  function findBlobs(mask, w, h, minArea, keep = 4) {
     const seen = new Uint8Array(w * h);
     const stack = new Int32Array(w * h);
-    let best = null;
+    const found = [];
     for (let start = 0; start < mask.length; start += 1) {
       if (!mask[start] || seen[start]) continue;
       let sp = 0, area = 0;
@@ -78,12 +147,11 @@
         if (y > 0 && mask[p - w] && !seen[p - w]) { seen[p - w] = 1; stack[sp++] = p - w; }
         if (y < h - 1 && mask[p + w] && !seen[p + w]) { seen[p + w] = 1; stack[sp++] = p + w; }
       }
-      if (!best || area > best.area) best = { area, rows };
+      if (area >= minArea) found.push({ area, rows });
     }
-    return best;
+    found.sort((a, b) => b.area - a.area);
+    return found.slice(0, keep);
   }
-
-  // --- blob → quadrilateral ------------------------------------------------
 
   // For a convex-ish shape the corners are the extremes of (x+y) and (x-y).
   function cornersFrom(rows) {
@@ -110,28 +178,312 @@
     return Math.abs(a) / 2;
   }
 
-  // Find the cover's corners. Returns 4 points in source-image coordinates
-  // (top-left, top-right, bottom-right, bottom-left) or null if unconvincing.
-  function detectQuad(imageData) {
-    const { width: w, height: h } = imageData;
-    const gray = toGray(imageData);
-    const mask = objectMask(gray, w, h);
-    const blob = largestBlob(mask, w, h);
-    if (!blob) return null;
-
-    const frame = w * h;
-    if (blob.area < frame * MIN_AREA || blob.area > frame * MAX_AREA) return null;
-
-    const quad = cornersFrom(blob.rows);
-    if (quad.some((p) => !p)) return null;
-    // Every corner distinct, and the quad should account for most of the blob —
-    // otherwise the shape isn't really a quadrilateral.
+  // Corners should be roughly square-on: a perspective view of a rectangle
+  // never folds a corner much past this.
+  function anglesPlausible(q) {
     for (let i = 0; i < 4; i += 1) {
-      for (let j = i + 1; j < 4; j += 1) if (dist(quad[i], quad[j]) < 8) return null;
+      const p = q[(i + 3) % 4], c = q[i], n = q[(i + 1) % 4];
+      const a1 = Math.atan2(p.y - c.y, p.x - c.x);
+      const a2 = Math.atan2(n.y - c.y, n.x - c.x);
+      let deg = Math.abs((a1 - a2) * 180 / Math.PI) % 360;
+      if (deg > 180) deg = 360 - deg;
+      if (deg < 50 || deg > 130) return false;
     }
-    const area = quadArea(quad);
-    if (area < frame * MIN_AREA || area < blob.area * 0.7) return null;
-    return quad;
+    return true;
+  }
+
+  // How much of a real edge lies under one side of the quad: walk the side and
+  // take the strongest gradient within a couple of pixels either way.
+  function sideSupport(grad, w, h, scale, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 8) return 0;
+    const nx = -dy / len, ny = dx / len;
+    const samples = 48;
+    let sum = 0;
+    for (let k = 0; k < samples; k += 1) {
+      const t = 0.08 + 0.84 * (k / (samples - 1));   // skip the corners themselves
+      const px = a.x + dx * t, py = a.y + dy * t;
+      let best = 0;
+      for (let d = -2; d <= 2; d += 1) {
+        const x = Math.round(px + nx * d), y = Math.round(py + ny * d);
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const v = grad[y * w + x];
+        if (v > best) best = v;
+      }
+      sum += Math.min(1, best / scale);
+    }
+    return sum / samples;
+  }
+
+  // The weakest of the four sides: one vague side means we found a shading
+  // boundary or a block of cover art, not the edge of a book.
+  function quadSupport(grad, w, h, scale, q) {
+    let worst = 1;
+    for (let i = 0; i < 4; i += 1) {
+      const s = sideSupport(grad, w, h, scale, q[i], q[(i + 1) % 4]);
+      if (s < worst) worst = s;
+    }
+    return worst;
+  }
+
+  // --- candidate quads from straight edges ---------------------------------
+
+  // Hough transform over the strong gradient pixels. Brightness thresholding
+  // cannot separate a multicoloured cover from a similarly-toned background,
+  // but the cover's four straight edges show up here whatever its colours.
+  function houghLines(grad, w, h, scale, maxLines = 16) {
+    const thetaBins = 90;                 // 2° apart
+    const rhoMax = Math.ceil(Math.hypot(w, h));
+    const rhoBins = Math.ceil((2 * rhoMax) / 2);
+    const acc = new Float32Array(thetaBins * rhoBins);
+    const cos = new Float32Array(thetaBins);
+    const sin = new Float32Array(thetaBins);
+    for (let t = 0; t < thetaBins; t += 1) {
+      const a = (t * Math.PI) / thetaBins;
+      cos[t] = Math.cos(a); sin[t] = Math.sin(a);
+    }
+    const minGrad = scale * 0.5;
+    for (let y = 1; y < h - 1; y += 1) {
+      for (let x = 1; x < w - 1; x += 1) {
+        const g = grad[y * w + x];
+        if (g < minGrad) continue;
+        for (let t = 0; t < thetaBins; t += 1) {
+          const r = (((x * cos[t] + y * sin[t]) + rhoMax) / 2) | 0;
+          acc[t * rhoBins + r] += 1;
+        }
+      }
+    }
+
+    // How long this line's chord is inside the frame, so a short-but-solid edge
+    // (the top of a book) can outrank a long faint one (a fold in the bag).
+    const chord = (theta, rho) => {
+      const c = Math.cos(theta), s = Math.sin(theta);
+      const pts = [];
+      if (Math.abs(s) > 1e-6) {
+        for (const x of [0, w - 1]) {
+          const y = (rho - x * c) / s;
+          if (y >= 0 && y <= h - 1) pts.push([x, y]);
+        }
+      }
+      if (Math.abs(c) > 1e-6) {
+        for (const y of [0, h - 1]) {
+          const x = (rho - y * s) / c;
+          if (x >= 0 && x <= w - 1) pts.push([x, y]);
+        }
+      }
+      if (pts.length < 2) return 0;
+      return Math.hypot(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1]);
+    };
+
+    // Peaks, with a little non-maximum suppression so one edge yields one line.
+    const peaks = [];
+    for (let t = 0; t < thetaBins; t += 1) {
+      for (let r = 0; r < rhoBins; r += 1) {
+        const v = acc[t * rhoBins + r];
+        if (v < 20) continue;
+        let isMax = true;
+        for (let dt = -3; dt <= 3 && isMax; dt += 1) {
+          const tt = (t + dt + thetaBins) % thetaBins;
+          for (let dr = -4; dr <= 4; dr += 1) {
+            const rr = r + dr;
+            if (rr < 0 || rr >= rhoBins || (!dt && !dr)) continue;
+            if (acc[tt * rhoBins + rr] > v) { isMax = false; break; }
+          }
+        }
+        if (!isMax) continue;
+        const theta = (t * Math.PI) / thetaBins, rho = r * 2 - rhoMax;
+        const len = chord(theta, rho);
+        if (len < 20) continue;
+        peaks.push({ v: v / len, theta, rho });   // fraction of the chord that is edge
+      }
+    }
+    peaks.sort((a, b) => b.v - a.v);
+    return peaks.slice(0, maxLines);
+  }
+
+  // Where two lines in (rho, theta) form meet, or null if near-parallel.
+  function intersect(l1, l2) {
+    const c1 = Math.cos(l1.theta), s1 = Math.sin(l1.theta);
+    const c2 = Math.cos(l2.theta), s2 = Math.sin(l2.theta);
+    const det = c1 * s2 - c2 * s1;
+    if (Math.abs(det) < 1e-6) return null;
+    return { x: (l1.rho * s2 - l2.rho * s1) / det, y: (c1 * l2.rho - c2 * l1.rho) / det };
+  }
+
+  const angleGap = (a, b) => {
+    let d = Math.abs(a - b) % Math.PI;
+    return d > Math.PI / 2 ? Math.PI - d : d;
+  };
+
+  // Order four corners as top-left, top-right, bottom-right, bottom-left.
+  function orderCorners(pts) {
+    const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
+    const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
+    const byAngle = [...pts].sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
+    let start = 0;
+    for (let i = 1; i < 4; i += 1) {
+      if (byAngle[i].x + byAngle[i].y < byAngle[start].x + byAngle[start].y) start = i;
+    }
+    return [0, 1, 2, 3].map((i) => byAngle[(start + i) % 4]);
+  }
+
+  // Quads formed by two near-parallel lines crossing two others.
+  function lineQuads(grad, w, h, scale) {
+    const lines = houghLines(grad, w, h, scale);
+    const pairs = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      for (let j = i + 1; j < lines.length; j += 1) {
+        if (angleGap(lines[i].theta, lines[j].theta) < 0.22) pairs.push([lines[i], lines[j]]);
+      }
+    }
+    const quads = [];
+    const margin = 0.15;
+    for (let a = 0; a < pairs.length; a += 1) {
+      for (let b = a + 1; b < pairs.length; b += 1) {
+        if (angleGap(pairs[a][0].theta, pairs[b][0].theta) < 1.0) continue;  // want ~perpendicular
+        const pts = [];
+        let ok = true;
+        for (const p of pairs[a]) {
+          for (const q of pairs[b]) {
+            const it = intersect(p, q);
+            if (!it || it.x < -margin * w || it.x > (1 + margin) * w
+              || it.y < -margin * h || it.y > (1 + margin) * h) { ok = false; break; }
+            pts.push(it);
+          }
+          if (!ok) break;
+        }
+        if (ok && pts.length === 4) quads.push(orderCorners(pts));
+      }
+    }
+    return quads;
+  }
+
+  function insideQuad(q, x, y) {
+    let hit = false;
+    for (let i = 0, j = 3; i < 4; j = i, i += 1) {
+      const a = q[i], b = q[j];
+      if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
+    }
+    return hit;
+  }
+
+  // Mean edge activity inside the quad. A book cover has lettering and a
+  // picture; a patch of table, bag or mat has almost nothing.
+  function interiorTexture(grad, w, h, scale, q) {
+    const xs = q.map((p) => p.x), ys = q.map((p) => p.y);
+    const x0 = Math.max(0, Math.floor(Math.min(...xs))), x1 = Math.min(w - 1, Math.ceil(Math.max(...xs)));
+    const y0 = Math.max(0, Math.floor(Math.min(...ys))), y1 = Math.min(h - 1, Math.ceil(Math.max(...ys)));
+    const step = Math.max(1, Math.round(Math.min(x1 - x0, y1 - y0) / 40));
+    let sum = 0, n = 0;
+    for (let y = y0; y <= y1; y += step) {
+      for (let x = x0; x <= x1; x += step) {
+        if (!insideQuad(q, x, y)) continue;
+        sum += Math.min(1, grad[y * w + x] / scale);
+        n += 1;
+      }
+    }
+    return n ? sum / n : 0;
+  }
+
+  // Mean edge activity in the band just outside the quad. An object lying on a
+  // surface has a calm border of table, bag or mat around it; a rectangle drawn
+  // through the middle of the cover art has more artwork around it. This is what
+  // stops the search descending from the book into a block of its own cover.
+  function surroundTexture(grad, w, h, scale, q) {
+    const cx = (q[0].x + q[1].x + q[2].x + q[3].x) / 4;
+    const cy = (q[0].y + q[1].y + q[2].y + q[3].y) / 4;
+    let sum = 0, n = 0;
+    for (let i = 0; i < 4; i += 1) {
+      const a = q[i], b = q[(i + 1) % 4];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 8) continue;
+      let nx = -dy / len, ny = dx / len;
+      // Point the normal away from the middle of the quad.
+      if ((a.x + dx / 2 + nx - cx) ** 2 + (a.y + dy / 2 + ny - cy) ** 2
+        < (a.x + dx / 2 - cx) ** 2 + (a.y + dy / 2 - cy) ** 2) { nx = -nx; ny = -ny; }
+      for (let k = 0; k < 24; k += 1) {
+        const t = 0.1 + 0.8 * (k / 23);
+        for (let d = 4; d <= 12; d += 2) {
+          const x = Math.round(a.x + dx * t + nx * d), y = Math.round(a.y + dy * t + ny * d);
+          if (x < 0 || y < 0 || x >= w || y >= h) continue;   // off-frame: no evidence either way
+          sum += Math.min(1, grad[y * w + x] / scale);
+          n += 1;
+        }
+      }
+    }
+    return n < 40 ? 1 : sum / n;   // too little of the border visible to judge
+  }
+
+  // Find the best object in this image: its corners (top-left, top-right,
+  // bottom-right, bottom-left) plus the measurements that won it, or null.
+  function detectBest(imageData) {
+    const { width: w, height: h } = imageData;
+    const frame = w * h;
+    const gray = toGray(imageData);
+    const grad = sobel(imageData);
+    const scale = gradientScale(grad);
+
+    const levels = [otsuThreshold(gray), ...percentileThresholds(gray, THRESHOLD_PERCENTILES)];
+    const seenLevels = new Set();
+    const candidates = [];
+    const consider = (quad) => {
+      let degenerate = false;
+      for (let i = 0; i < 4 && !degenerate; i += 1) {
+        for (let j = i + 1; j < 4; j += 1) if (dist(quad[i], quad[j]) < 8) { degenerate = true; break; }
+      }
+      if (degenerate) return;
+      const area = quadArea(quad);
+      if (area < frame * MIN_AREA || area > frame * MAX_AREA) return;
+      if (!anglesPlausible(quad)) return;
+      const support = quadSupport(grad, w, h, scale, quad);
+      if (support < MIN_SIDE_SUPPORT) return;
+      candidates.push({ quad, area, support });
+    };
+
+    for (const quad of lineQuads(grad, w, h, scale)) consider(quad);
+
+    for (const t of levels) {
+      if (seenLevels.has(t)) continue;
+      seenLevels.add(t);
+      for (const objectIsBright of [true, false]) {
+        const blobs = findBlobs(maskAt(gray, t, objectIsBright), w, h, frame * MIN_AREA);
+        for (const blob of blobs) {
+          if (blob.area > frame * MAX_AREA) continue;
+
+          const quad = cornersFrom(blob.rows);
+          if (quad.some((p) => !p)) continue;
+          // The quad must account for most of the blob, or the blob isn't one.
+          if (quadArea(quad) < blob.area * 0.7) continue;
+          consider(quad);
+        }
+      }
+    }
+    if (!candidates.length) return null;
+
+    // One judgement decides it: a book cover is busy inside and sits on a calm
+    // surface. The bag under the book is calm on both sides; a rectangle cut
+    // through the cover art is busy on both. Only the cover itself is busy
+    // inside and calm outside.
+    let best = null;
+    for (const c of candidates) {
+      const inside = interiorTexture(grad, w, h, scale, c.quad);
+      if (inside < MIN_INTERIOR) continue;
+      const outside = surroundTexture(grad, w, h, scale, c.quad);
+      const contrast = inside / Math.max(outside, 0.02);
+      if (contrast < MIN_CONTRAST) continue;
+      if (!best || contrast > best.contrast) {
+        best = { quad: c.quad, contrast, support: c.support, area: c.area };
+      }
+    }
+    return best;
+  }
+
+  // Public form: just the corners, or null.
+  function detectQuad(imageData) {
+    const best = detectBest(imageData);
+    return best ? best.quad : null;
   }
 
   // --- perspective correction ---------------------------------------------
@@ -190,14 +542,16 @@
     const ctx = out.getContext('2d');
     const dst = ctx.createImageData(outW, outH);
     const sw = src.width, sh = src.height;
+    const clamp = (v, hi) => (v < 0 ? 0 : (v > hi ? hi : v));
 
     for (let y = 0; y < outH; y += 1) {
       for (let x = 0; x < outW; x += 1) {
         const den = H[6] * x + H[7] * y + H[8];
-        const sx = (H[0] * x + H[1] * y + H[2]) / den;
-        const sy = (H[3] * x + H[4] * y + H[5]) / den;
+        // Clamp rather than blanking: rounding at the border would otherwise
+        // paint a black rim around an otherwise correct crop.
+        const sx = clamp((H[0] * x + H[1] * y + H[2]) / den, sw - 1);
+        const sy = clamp((H[3] * x + H[4] * y + H[5]) / den, sh - 1);
         const di = (y * outW + x) * 4;
-        if (sx < 0 || sy < 0 || sx > sw - 1 || sy > sh - 1) { dst.data[di + 3] = 255; continue; }
         const x0 = sx | 0, y0 = sy | 0;
         const x1 = Math.min(x0 + 1, sw - 1), y1 = Math.min(y0 + 1, sh - 1);
         const fx = sx - x0, fy = sy - y0;

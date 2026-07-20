@@ -322,11 +322,22 @@ let cropObjectUrl = null;
 let cropOriginalSrc = '';   // the photo as taken
 let cropAutoSrc = '';       // the auto-flattened version, when one was produced
 
+// Covers have come back framed in black: the crop box covered ground the photo
+// did not, and those pixels are transparent, which a JPEG writes out as black.
+// Three things guard against it — wait for the image so the cropper never sizes
+// itself from the previous, differently-shaped one (auto-crop and original are
+// different shapes, and the toggle swaps between them); viewMode 2 so the photo
+// cannot be zoomed smaller than the crop box; and fillColor on the way out.
 function startCropper(src) {
   const img = $('#cropImage');
+  if (cropper) { cropper.destroy(); cropper = null; }
+  const build = () => {
+    if (cropper) return;
+    cropper = new Cropper(img, { viewMode: 2, autoCropArea: 1, background: false, dragMode: 'move' });
+  };
+  img.onload = build;
   img.src = src;
-  if (cropper) cropper.destroy();
-  cropper = new Cropper(img, { viewMode: 1, autoCropArea: 1, background: false, dragMode: 'move' });
+  if (img.complete && img.naturalWidth) build();
 }
 
 function showAutoCropState(usingAuto) {
@@ -376,7 +387,9 @@ function toggleAutoCrop() {
 
 function useCroppedCover() {
   if (cropper) {
-    const canvas = cropper.getCroppedCanvas({ maxWidth: 800, maxHeight: 1200, imageSmoothingQuality: 'high' });
+    const canvas = cropper.getCroppedCanvas({
+      maxWidth: 800, maxHeight: 1200, imageSmoothingQuality: 'high', fillColor: '#fff',
+    });
     if (canvas) {
       const url = canvas.toDataURL('image/jpeg', 0.85);
       bookForm.elements.cover_url.value = url;

@@ -511,6 +511,26 @@ async function skewedCoverJpeg() {
   return sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toBuffer();
 }
 
+// The real failure this was reported for: a book photographed lying on a paper
+// bag. The bag is the bigger, sharper rectangle, so a naive detector crops to
+// the bag; brown bag and coloured cover can also match in brightness, so the
+// boundary is invisible to a luminance-only pass. Cover art here is coloured
+// blocks and lettering, at the same brightness as the bag around it.
+const BOOK_BOX = { x: 190, y: 150, w: 320, h: 470 };
+async function bookOnBagJpeg() {
+  const b = BOOK_BOX;
+  const svg = `<svg width="700" height="900">
+    <rect width="700" height="900" fill="#b59a70"/>
+    <rect x="60" y="70" width="580" height="760" fill="#b0996f"/>
+    <rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" fill="#7f9a6e"/>
+    <rect x="${b.x + 30}" y="${b.y + 40}" width="${b.w - 60}" height="70" fill="#2f4858"/>
+    <rect x="${b.x + 30}" y="${b.y + 150}" width="${b.w - 60}" height="180" fill="#c96f4a"/>
+    <rect x="${b.x + 30}" y="${b.y + 360}" width="${b.w - 90}" height="40" fill="#2f4858"/>
+    <rect x="${b.x + 30}" y="${b.y + 410}" width="${b.w - 120}" height="24" fill="#efe9dd"/>
+  </svg>`;
+  return sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toBuffer();
+}
+
 test('auto-crop finds a skewed cover and flattens it, but declines when there is no rectangle', { skip }, async () => {
   const page = await browser.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
@@ -545,6 +565,19 @@ test('auto-crop finds a skewed cover and flattens it, but declines when there is
   const flat = await sharp({ create: { width: 600, height: 400, channels: 3, background: '#777777' } }).jpeg().toBuffer();
   assert.equal((await run(fullFrame)).cropped, false, 'an already-cropped cover is left alone');
   assert.equal((await run(flat)).cropped, false, 'a textureless photo is left alone');
+
+  // Crop to the book, not to the bag it is lying on, and not to a block of its
+  // own cover art.
+  const bag = await run(await bookOnBagJpeg());
+  assert.equal(bag.cropped, true, 'the book on the bag is detected');
+  const want = [
+    [BOOK_BOX.x, BOOK_BOX.y], [BOOK_BOX.x + BOOK_BOX.w, BOOK_BOX.y],
+    [BOOK_BOX.x + BOOK_BOX.w, BOOK_BOX.y + BOOK_BOX.h], [BOOK_BOX.x, BOOK_BOX.y + BOOK_BOX.h],
+  ];
+  bag.quad.forEach(([x, y], i) => {
+    assert.ok(Math.hypot(x - want[i][0], y - want[i][1]) < 25,
+      `corner ${i} is the book's, not the bag's: got ${x},${y} want ${want[i]}`);
+  });
   await page.close();
 });
 
@@ -574,6 +607,68 @@ test('the cover dialog applies auto-crop and can toggle back to the original', {
     await page.click('#cropUse');
     await new Promise((r) => setTimeout(r, 400));
     assert.match(await page.$eval('#bookForm [name="cover_url"]', (el) => el.value), /^data:image\/jpeg/, 'cover accepted');
+    await page.close();
+  } finally {
+    rmSync(file, { force: true });
+  }
+});
+
+// Guards the invariant, not a reproduction: the reported black frame came from
+// a phone, whose crop dialog is laid out differently, and it does not appear in
+// a headless window at any viewport tried. What is checked here is what must
+// hold everywhere — the crop box never covers ground the photo does not, and
+// nothing black is ever baked into a saved cover.
+test('a saved cover never gains a black frame, however the photo is zoomed', { skip }, async () => {
+  const file = join(ROOT, 'test', `tmp-zoom-${process.pid}.jpg`);
+  writeFileSync(file, await skewedCoverJpeg());
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+    await page.click('#addBtn');
+    await page.waitForSelector('#editDialog[open]');
+    await (await page.$('#coverUploadFile')).uploadFile(file);
+    await page.waitForSelector('#cropDialog[open]', { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 600));
+
+    const fits = () => page.evaluate(() => {
+      const c = document.querySelector('#cropImage').cropper;
+      const canvas = c.getCanvasData(), box = c.getCropBoxData();
+      return box.width <= canvas.width + 1 && box.height <= canvas.height + 1;
+    });
+    assert.ok(await fits(), 'crop box starts within the photo');
+    await page.click('#autoCropToggle');   // swaps in a differently-shaped image
+    await new Promise((r) => setTimeout(r, 500));
+    assert.ok(await fits(), 'crop box still within the photo after the toggle');
+
+    // Zoom the photo down. Any part of the crop box the photo no longer covers
+    // is transparent, and a JPEG writes transparent out as black — that is how
+    // covers came back framed in black.
+    await page.evaluate(() => document.querySelector('#cropImage').cropper.zoom(-0.5));
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(await fits(), 'crop box still within the photo after zooming out');
+    await page.click('#cropUse');
+    await new Promise((r) => setTimeout(r, 500));
+
+    const url = await page.$eval('#bookForm [name="cover_url"]', (el) => el.value);
+    assert.match(url, /^data:image\/jpeg/, 'cover accepted');
+    const border = await page.evaluate(async (src) => {
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = src; });
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      const at = (x, y) => { const i = (y * c.width + x) * 4; return d[i] + d[i + 1] + d[i + 2]; };
+      let dark = 0, n = 0;
+      for (let x = 0; x < c.width; x += 1) {
+        for (const y of [0, 1, c.height - 2, c.height - 1]) { if (at(x, y) < 60) dark += 1; n += 1; }
+      }
+      for (let y = 0; y < c.height; y += 1) {
+        for (const x of [0, 1, c.width - 2, c.width - 1]) { if (at(x, y) < 60) dark += 1; n += 1; }
+      }
+      return dark / n;
+    }, url);
+    assert.ok(border < 0.02, `saved cover has no black frame (${Math.round(border * 100)}% of its border is black)`);
     await page.close();
   } finally {
     rmSync(file, { force: true });

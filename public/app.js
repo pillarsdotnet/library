@@ -185,14 +185,14 @@ function renderShelves() {
     const shelfTotal = [...cases.values()].reduce((n, arr) => n + arr.length, 0);
     const roomEl = document.createElement('section');
     roomEl.className = 'room-group';
-    roomEl.innerHTML = `<h2 class="room-heading">${esc(room)} <span class="group-count">${shelfTotal} shelf${shelfTotal === 1 ? '' : 'ves'}</span></h2>`;
+    roomEl.innerHTML = `<h2 class="room-heading">${esc(room)} <span class="group-count">${shelfTotal} ${shelfTotal === 1 ? 'shelf' : 'shelves'}</span></h2>`;
 
     for (const bookcase of [...cases.keys()].sort(cmp)) {
       const shelves = cases.get(bookcase).sort((a, b) => cmp(a.label, b.label));
       const caseEl = document.createElement('div');
       caseEl.className = 'bookcase-group';
       const books = shelves.reduce((n, s) => n + (s.book_count || 0), 0);
-      caseEl.innerHTML = `<h3 class="bookcase-heading">${esc(bookcase)} <span class="group-count">${shelves.length} shelf${shelves.length === 1 ? '' : 'ves'} · ${books} book${books === 1 ? '' : 's'}</span></h3>`;
+      caseEl.innerHTML = `<h3 class="bookcase-heading">${esc(bookcase)} <span class="group-count">${shelves.length} ${shelves.length === 1 ? 'shelf' : 'shelves'} · ${books} book${books === 1 ? '' : 's'}</span></h3>`;
       const grid = document.createElement('div');
       grid.className = 'grid';
       for (const s of shelves) grid.appendChild(renderShelfCard(s));

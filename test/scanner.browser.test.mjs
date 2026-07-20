@@ -667,8 +667,10 @@ test('Shelves tab nests shelves by room → bookcase → shelf, each sorted', { 
   await page.waitForSelector('#tab-shelves:not([hidden])');
   const tree = await page.evaluate(() => [...document.querySelectorAll('.room-group')].map((rg) => ({
     room: rg.querySelector('.room-heading').firstChild.textContent.trim(),
+    count: rg.querySelector('.room-heading .group-count').textContent.trim(),
     bookcases: [...rg.querySelectorAll('.bookcase-group')].map((bc) => ({
       bookcase: bc.querySelector('.bookcase-heading').firstChild.textContent.trim(),
+      count: bc.querySelector('.bookcase-heading .group-count').textContent.trim(),
       shelves: [...bc.querySelectorAll('.shelf-card h3')].map((h) => h.textContent.trim()),
     })),
   })));
@@ -677,6 +679,14 @@ test('Shelves tab nests shelves by room → bookcase → shelf, each sorted', { 
   assert.ok(aRoom, 'room group rendered');
   assert.deepEqual(aRoom.bookcases.map((b) => b.bookcase), ['Birch', 'Oak'], 'bookcases sorted within room');
   assert.deepEqual(aRoom.bookcases.find((b) => b.bookcase === 'Oak').shelves, ['1L', '2L'], 'shelves sorted within bookcase');
+
+  // "shelf" pluralises to "shelves", never "shelfves".
+  assert.match(aRoom.count, /^3 shelves$/, 'room count');
+  assert.match(aRoom.bookcases.find((b) => b.bookcase === 'Oak').count, /^2 shelves\b/, 'plural bookcase count');
+  assert.match(aRoom.bookcases.find((b) => b.bookcase === 'Birch').count, /^1 shelf\b/, 'singular bookcase count');
+  const headings = await page.$$eval('.group-count', (els) => els.map((e) => e.textContent));
+  assert.equal(headings.filter((t) => /shelfves|shelfs/.test(t)).length, 0, 'no mangled plurals anywhere');
+
   // Rooms themselves are in sorted order.
   const rooms = tree.map((r) => r.room);
   assert.deepEqual([...rooms].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), rooms, 'rooms sorted');

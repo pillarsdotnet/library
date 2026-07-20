@@ -34,12 +34,23 @@ const DEFAULT_PAGE = 20;         // books per page unless the client asks otherw
 
 // Replace an inline data: cover with a reference to the cover endpoint, so list
 // responses stay small. Relative on purpose: it resolves against the <base href>.
+// The reference carries a token derived from the image itself. Without it the
+// URL for a book's cover never changes, so a browser holding a cached copy goes
+// on showing the old photo after a new one is saved — which looks exactly like
+// the save having failed.
+const coverToken = (s) => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i += 1) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(36);
+};
 const coverRef = (b) => {
-  if (b && typeof b.cover_url === 'string' && b.cover_url.startsWith('data:')) b.cover_url = `api/books/${b.id}/cover`;
+  if (b && typeof b.cover_url === 'string' && b.cover_url.startsWith('data:')) {
+    b.cover_url = `api/books/${b.id}/cover?v=${coverToken(b.cover_url)}`;
+  }
   return b;
 };
 // A client echoing that reference back on save must not overwrite the real image.
-const isCoverRef = (v) => typeof v === 'string' && /(^|\/)api\/books\/\d+\/cover$/.test(v);
+const isCoverRef = (v) => typeof v === 'string' && /(^|\/)api\/books\/\d+\/cover(\?.*)?$/.test(v);
 const round1 = (n) => Math.round(n * 10) / 10;
 
 // ---------------------------------------------------------------------------
@@ -195,7 +206,10 @@ router.get('/api/books/:id/cover', (req, res) => {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(row.cover_url);
   if (!m) return res.status(404).json({ error: 'Not an inline image' });
   res.set('Content-Type', m[1]);
-  res.set('Cache-Control', 'public, max-age=300');   // ETag still revalidates edits
+  // A versioned URL names one particular image, so it can be cached hard: a new
+  // photo arrives under a new URL. Bare URLs must stay short-lived, or a saved
+  // cover would appear not to have changed.
+  res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
   res.send(Buffer.from(m[2], 'base64'));
 });
 

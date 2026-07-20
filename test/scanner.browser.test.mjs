@@ -419,8 +419,10 @@ test('book list paginates and serves inline covers from their own endpoint', { s
   for (let i = 0; i < 22; i++) await mk({ title: `Pg${stamp} ${String(i).padStart(2, '0')}` });
   const withCover = await (await mk({ title: `Pg${stamp} cover`, cover_url: png })).json();
 
-  // Inline covers are returned as a reference, not embedded.
-  assert.equal(withCover.cover_url, `api/books/${withCover.id}/cover`, 'data: cover replaced by a reference');
+  // Inline covers are returned as a reference, not embedded. The reference is
+  // versioned so a replacement photo cannot be masked by a cached copy — see
+  // test/cover.test.mjs.
+  assert.match(withCover.cover_url, new RegExp(`^api/books/${withCover.id}/cover\\?v=`), 'data: cover replaced by a versioned reference');
   const img = await fetch(`${BASE}/api/books/${withCover.id}/cover`);
   assert.equal(img.status, 200);
   assert.match(img.headers.get('content-type'), /^image\/png/);

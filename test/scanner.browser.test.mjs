@@ -465,7 +465,7 @@ test('book list paginates and serves inline covers from their own endpoint', { s
   await page.close();
 });
 
-test('series field: new entry creates the series, prompts for order, and bumps on collision', { skip }, async () => {
+test('series field: new entry creates the series, prompts for order, and allows duplicate numbers', { skip }, async () => {
   const seriesTitle = 'Test Series ' + Date.now();
   const page = await browser.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
@@ -494,10 +494,10 @@ test('series field: new entry creates the series, prompts for order, and bumps o
   let books = await (await fetch(`${BASE}/api/series/${s.id}/books`)).json();
   assert.deepEqual(books.map((b) => `${b.order}:${b.title}`), ['1:S One', '2:S Two', '3:S Three']);
 
-  // Adding at an occupied order pushes the rest down.
-  await addBook('S Inserted', 2);
+  // A second edition of book 2 shares the number instead of bumping anything.
+  await addBook('S Two ebook', 2);
   books = await (await fetch(`${BASE}/api/series/${s.id}/books`)).json();
-  assert.deepEqual(books.map((b) => `${b.order}:${b.title}`), ['1:S One', '2:S Inserted', '3:S Two', '4:S Three']);
+  assert.deepEqual(books.map((b) => `${b.order}:${b.title}`), ['1:S One', '2:S Two', '2:S Two ebook', '3:S Three']);
   await page.close();
 });
 

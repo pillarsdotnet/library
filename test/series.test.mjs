@@ -1,4 +1,5 @@
-// Series + series_books: find-or-create, ordering, and insert-bumps-existing.
+// Series + series_books: find-or-create, and ordering (duplicate numbers and
+// gaps are allowed — the order is the book's number in the series).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -60,42 +61,62 @@ test('books come back in series order', async () => {
   assert.deepEqual(order(body), ['1:One', '2:Two', '3:Three']);
 });
 
-test('inserting at an occupied order bumps that book and everything after it', async () => {
+test('several books may share an order (same volume in different formats)', async () => {
   const { series } = await makeSeriesWith(['One', 'Two', 'Three']);
-  const nb = (await api('/books', send('POST', { title: 'Inserted' }))).body;
-  await api(`/series/${series.id}/books`, send('POST', { book_id: nb.id, order: 2 }));
+  const nb = (await api('/books', send('POST', { title: 'One ebook' }))).body;
+  await api(`/series/${series.id}/books`, send('POST', { book_id: nb.id, order: 1 }));
   const { body } = await api(`/series/${series.id}/books`);
-  assert.deepEqual(order(body), ['1:One', '2:Inserted', '3:Two', '4:Three']);
+  // Nothing is bumped: both #1s coexist, and 2 and 3 keep their numbers.
+  assert.deepEqual(order(body), ['1:One', '1:One ebook', '2:Two', '3:Three']);
 });
 
-test('an order beyond the end appends without leaving gaps', async () => {
+test('an order beyond the end is kept as given (you may own #1 and #7)', async () => {
   const { series } = await makeSeriesWith(['One', 'Two']);
-  const nb = (await api('/books', send('POST', { title: 'Far' }))).body;
-  await api(`/series/${series.id}/books`, send('POST', { book_id: nb.id, order: 99 }));
+  const nb = (await api('/books', send('POST', { title: 'Seven' }))).body;
+  await api(`/series/${series.id}/books`, send('POST', { book_id: nb.id, order: 7 }));
   const { body } = await api(`/series/${series.id}/books`);
-  assert.deepEqual(order(body), ['1:One', '2:Two', '3:Far']);
+  assert.deepEqual(order(body), ['1:One', '2:Two', '7:Seven'], 'no clamping to close the gap');
 });
 
-test('re-placing an existing member moves it without duplicating', async () => {
+test('re-placing an existing member moves only that book, without duplicating it', async () => {
   const { series, ids } = await makeSeriesWith(['One', 'Two', 'Three']);
   await api(`/series/${series.id}/books`, send('POST', { book_id: ids[2], order: 1 })); // Three -> 1
   const { body } = await api(`/series/${series.id}/books`);
-  assert.deepEqual(order(body), ['1:Three', '2:One', '3:Two']);
+  // One and Two keep their numbers; Three now shares number 1.
+  assert.deepEqual(order(body), ['1:One', '1:Three', '2:Two']);
   assert.equal(body.length, 3, 'no duplicate row for the moved book');
 });
 
-test('removing a book closes the gap in ordering', async () => {
+test('removing a book leaves the other numbers untouched', async () => {
   const { series, ids } = await makeSeriesWith(['One', 'Two', 'Three']);
   const del = await api(`/series/${series.id}/books/${ids[0]}`, { method: 'DELETE' });
   assert.equal(del.status, 204);
   const { body } = await api(`/series/${series.id}/books`);
-  assert.deepEqual(order(body), ['1:Two', '2:Three']);
+  // Renumbering would be wrong once several editions share a number.
+  assert.deepEqual(order(body), ['2:Two', '3:Three']);
 });
 
 test('rejects a non-positive order and an unknown book', async () => {
   const { series, ids } = await makeSeriesWith(['One']);
   assert.equal((await api(`/series/${series.id}/books`, send('POST', { book_id: ids[0], order: 0 }))).status, 400);
   assert.equal((await api(`/series/${series.id}/books`, send('POST', { book_id: 999999, order: 1 }))).status, 400);
+});
+
+test('a whole series can be held in two formats — every number twice', async () => {
+  const s = (await api('/series', send('POST', { title: `Legends & Lattes ${Date.now()}` }))).body;
+  for (const fmt of ['paperback', 'ebook']) {
+    for (const n of [1, 2, 3]) {
+      const b = (await api('/books', send('POST', { title: `L&L ${n} (${fmt})`, format: fmt }))).body;
+      await api(`/series/${s.id}/books`, send('POST', { book_id: b.id, order: n }));
+    }
+  }
+  const { body } = await api(`/series/${s.id}/books`);
+  assert.equal(body.length, 6, 'both editions of all three books are kept');
+  assert.deepEqual(body.map((b) => b.order), [1, 1, 2, 2, 3, 3], 'each number appears twice, nothing bumped');
+  for (const n of [1, 2, 3]) {
+    const fmts = body.filter((b) => b.order === n).map((b) => b.format).sort();
+    assert.deepEqual(fmts, ['ebook', 'paperback'], `book ${n} exists in both formats`);
+  }
 });
 
 test('a book carries its series on the books API', async () => {

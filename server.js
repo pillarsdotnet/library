@@ -377,11 +377,12 @@ router.get('/api/series/:id/books', (req, res) => {
   res.json(db.prepare(`
     SELECT sb."order" AS "order", b.*
     FROM series_books sb JOIN books b ON b.id = sb.book
-    WHERE sb.series = ? ORDER BY sb."order"`).all(req.params.id));
+    WHERE sb.series = ? ORDER BY sb."order", sort_title(b.title)`).all(req.params.id));
 });
 
-// Place a book in a series at a given order. Inserting at an occupied order
-// pushes that book (and everything after it) down by one.
+// Place a book in a series at a given order. The order is simply "which book in
+// the series this is", so it is stored exactly as given: duplicates are allowed
+// (the same volume in several formats) and gaps are allowed (owning #1 and #3).
 router.post('/api/series/:id/books', (req, res) => {
   const seriesId = Number(req.params.id);
   if (!db.prepare('SELECT id FROM series WHERE id = ?').get(seriesId)) {
@@ -391,32 +392,27 @@ router.post('/api/series/:id/books', (req, res) => {
   if (!bookId || !db.prepare('SELECT id FROM books WHERE id = ?').get(bookId)) {
     return res.status(400).json({ error: 'valid book_id is required' });
   }
-  let order = Number(req.body.order);
+  const order = Number(req.body.order);
   if (!Number.isInteger(order) || order < 1) return res.status(400).json({ error: 'order must be a positive integer' });
 
   const place = db.transaction(() => {
-    // Re-placing an existing member: drop its old row first so it doesn't shift itself.
+    // Re-placing the same book moves it rather than adding a second row for it.
     db.prepare('DELETE FROM series_books WHERE series = ? AND book = ?').run(seriesId, bookId);
-    const max = db.prepare('SELECT COALESCE(MAX("order"), 0) AS m FROM series_books WHERE series = ?').get(seriesId).m;
-    if (order > max + 1) order = max + 1;            // no gaps
-    db.prepare('UPDATE series_books SET "order" = "order" + 1 WHERE series = ? AND "order" >= ?').run(seriesId, order);
     db.prepare('INSERT INTO series_books (series, "order", book) VALUES (?, ?, ?)').run(seriesId, order, bookId);
   });
   place();
   res.status(201).json(db.prepare(`
     SELECT sb."order" AS "order", b.id, b.title
     FROM series_books sb JOIN books b ON b.id = sb.book
-    WHERE sb.series = ? ORDER BY sb."order"`).all(seriesId));
+    WHERE sb.series = ? ORDER BY sb."order", sort_title(b.title)`).all(seriesId));
 });
 
+// Removing a book leaves the other orders alone: they are the books' numbers in
+// the series, not positions in a list (renumbering would be wrong when several
+// editions share a number).
 router.delete('/api/series/:id/books/:bookId', (req, res) => {
-  const seriesId = Number(req.params.id);
-  const row = db.prepare('SELECT "order" AS ord FROM series_books WHERE series = ? AND book = ?').get(seriesId, req.params.bookId);
-  if (!row) return res.status(404).json({ error: 'Not found' });
-  db.transaction(() => {
-    db.prepare('DELETE FROM series_books WHERE series = ? AND book = ?').run(seriesId, req.params.bookId);
-    db.prepare('UPDATE series_books SET "order" = "order" - 1 WHERE series = ? AND "order" > ?').run(seriesId, row.ord);
-  })();
+  const info = db.prepare('DELETE FROM series_books WHERE series = ? AND book = ?').run(Number(req.params.id), req.params.bookId);
+  if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
   res.status(204).end();
 });
 

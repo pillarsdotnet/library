@@ -30,6 +30,16 @@ router.use('/vendor/quagga', express.static(join(__dirname, 'node_modules/@ericb
 router.use('/vendor/cropper', express.static(join(__dirname, 'node_modules/cropperjs/dist')));
 
 const DEFAULT_THICKNESS_MM = 30; // fallback when estimating remaining shelf capacity
+const DEFAULT_PAGE = 20;         // books per page unless the client asks otherwise
+
+// Replace an inline data: cover with a reference to the cover endpoint, so list
+// responses stay small. Relative on purpose: it resolves against the <base href>.
+const coverRef = (b) => {
+  if (b && typeof b.cover_url === 'string' && b.cover_url.startsWith('data:')) b.cover_url = `api/books/${b.id}/cover`;
+  return b;
+};
+// A client echoing that reference back on save must not overwrite the real image.
+const isCoverRef = (v) => typeof v === 'string' && /(^|\/)api\/books\/\d+\/cover$/.test(v);
 const round1 = (n) => Math.round(n * 10) / 10;
 
 // ---------------------------------------------------------------------------
@@ -134,34 +144,57 @@ router.get('/api/books', (req, res) => {
   if (shelf_id === 'none') where.push('b.shelf_id IS NULL');
   else if (shelf_id) { where.push('b.shelf_id = @shelf_id'); params.shelf_id = shelf_id; }
 
-  const sql = `
-    SELECT b.*, s.room, s.bookcase, s.label AS shelf_label
-    FROM books b LEFT JOIN shelves s ON s.id = b.shelf_id
-    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-    ORDER BY sort_title(b.title)`;
-  res.json(attachGenres(db.prepare(sql).all(params)));
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const from = `FROM books b LEFT JOIN shelves s ON s.id = b.shelf_id ${whereSql}`;
+  const total = db.prepare(`SELECT COUNT(*) AS n ${from}`).get(params).n;
+
+  // Paginated by default so the list stays small; limit=0 returns everything.
+  const limit = req.query.limit === undefined ? DEFAULT_PAGE : Math.max(0, Number(req.query.limit) || 0);
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const page = limit > 0 ? ` LIMIT ${limit} OFFSET ${offset}` : '';
+
+  const sql = `SELECT b.*, s.room, s.bookcase, s.label AS shelf_label ${from}
+    ORDER BY sort_title(b.title)${page}`;
+  res.set('X-Total-Count', String(total));
+  res.json(attachGenres(db.prepare(sql).all(params)).map(coverRef));
+});
+
+// Inline (data:) covers are served from their own endpoint instead of being
+// embedded in every list response — they dominated the payload otherwise.
+router.get('/api/books/:id/cover', (req, res) => {
+  const row = db.prepare('SELECT cover_url FROM books WHERE id = ?').get(req.params.id);
+  if (!row || !row.cover_url) return res.status(404).json({ error: 'Not found' });
+  if (!row.cover_url.startsWith('data:')) return res.redirect(302, row.cover_url);
+  const m = /^data:([^;,]+);base64,(.*)$/s.exec(row.cover_url);
+  if (!m) return res.status(404).json({ error: 'Not an inline image' });
+  res.set('Content-Type', m[1]);
+  res.set('Cache-Control', 'public, max-age=300');   // ETag still revalidates edits
+  res.send(Buffer.from(m[2], 'base64'));
 });
 
 router.get('/api/books/:id', (req, res) => {
   const book = db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id);
   if (!book) return res.status(404).json({ error: 'Not found' });
-  res.json(attachGenres([book])[0]);
+  res.json(coverRef(attachGenres([book])[0]));
 });
 
 router.post('/api/books', (req, res) => {
+  if (isCoverRef(req.body.cover_url)) delete req.body.cover_url;
   const data = pick(req.body, BOOK_COLS);
   if (!data.title) return res.status(400).json({ error: 'title is required' });
   const id = insert('books', data);
   if (req.body.genre_ids !== undefined) setBookGenres(id, req.body.genre_ids);
-  res.status(201).json(attachGenres([db.prepare('SELECT * FROM books WHERE id = ?').get(id)])[0]);
+  res.status(201).json(coverRef(attachGenres([db.prepare('SELECT * FROM books WHERE id = ?').get(id)])[0]));
 });
 
 router.put('/api/books/:id', (req, res) => {
   if (!db.prepare('SELECT id FROM books WHERE id = ?').get(req.params.id))
     return res.status(404).json({ error: 'Not found' });
+  // The client may echo back "api/books/:id/cover"; that means "unchanged".
+  if (isCoverRef(req.body.cover_url)) delete req.body.cover_url;
   update('books', req.params.id, pick(req.body, BOOK_COLS));
   if (req.body.genre_ids !== undefined) setBookGenres(req.params.id, req.body.genre_ids);
-  res.json(attachGenres([db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id)])[0]);
+  res.json(coverRef(attachGenres([db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id)])[0]));
 });
 
 router.delete('/api/books/:id', (req, res) => {

@@ -302,6 +302,15 @@ dialog::backdrop { background: rgba(20, 15, 30, 0.55); }
 }
 .tag-field .chip button:hover { color: #d33; }
 
+/* Book list pager */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 4px 16px 28px;
+}
+
 /* Shelves tab: nested room › bookcase groups */
 #shelfList { max-width: 1400px; margin: 0 auto; padding: 0 16px 32px; }
 .room-group { margin-bottom: 26px; }

@@ -66,7 +66,15 @@ const FILTER_CONTROLS = [
   ['#filterShelf', 'shelf_id'],
 ];
 
-async function loadBooks() {
+const PAGE_SIZE = 20;
+let booksOffset = 0;   // how many books are already on screen
+let booksTotal = 0;
+
+// append=false starts a fresh page (filter change); append=true adds the next page.
+async function loadBooks(appendArg = false) {
+  // Coerce: these handlers are sometimes wired straight to events, and an Event
+  // object as the argument must not be read as "append".
+  const append = appendArg === true;
   const params = new URLSearchParams();
   let anyActive = false;
   for (const [sel, param] of FILTER_CONTROLS) {
@@ -75,11 +83,26 @@ async function loadBooks() {
   }
   $('#clearFiltersBtn').hidden = !anyActive;
 
-  const books = await api('/books?' + params.toString());
+  if (!append) booksOffset = 0;
+  params.set('limit', String(PAGE_SIZE));
+  params.set('offset', String(booksOffset));
+
+  // Fetch directly (not via api()) so we can read the X-Total-Count header.
+  const res = await fetch('api/books?' + params.toString());
+  if (!res.ok) throw new Error(res.statusText);
+  const books = await res.json();
+  booksTotal = Number(res.headers.get('X-Total-Count')) || books.length;
+
   const list = $('#list');
-  list.innerHTML = '';
-  $('#empty').hidden = books.length > 0;
+  if (!append) list.innerHTML = '';
   for (const b of books) list.appendChild(renderBookCard(b));
+  booksOffset += books.length;
+
+  $('#empty').hidden = booksOffset > 0;
+  const more = booksOffset < booksTotal;
+  $('#pager').hidden = booksTotal === 0;
+  $('#loadMoreBtn').hidden = !more;
+  $('#pagerCount').textContent = `Showing ${booksOffset} of ${booksTotal}`;
 }
 
 function clearFilters() {
@@ -1390,10 +1413,11 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 window.placeholderCover = placeholderCover;
 
 let searchTimer;
-$('#search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadBooks, 250); });
+$('#search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadBooks(), 250); });
 ['#filterStatus', '#filterFormat', '#filterGenre', '#filterRoom', '#filterBookcase', '#filterShelf']
-  .forEach((s) => $(s).addEventListener('change', loadBooks));
+  .forEach((s) => $(s).addEventListener('change', () => loadBooks()));
 $('#clearFiltersBtn').addEventListener('click', clearFilters);
+$('#loadMoreBtn').addEventListener('click', () => loadBooks(true));
 
 $('#addBtn').onclick = openAddBook; // reassigned per-tab by the tab handler
 $('#addShelfBtn').addEventListener('click', openAddShelf);

@@ -338,6 +338,59 @@ test('typing a new genre in the book form prompts for a definition and saves it'
   await page.close();
 });
 
+test('book list paginates and serves inline covers from their own endpoint', { skip }, async () => {
+  const stamp = String(Date.now()).slice(-6);
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const mk = (body) => fetch(`${BASE}/api/books`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  for (let i = 0; i < 22; i++) await mk({ title: `Pg${stamp} ${String(i).padStart(2, '0')}` });
+  const withCover = await (await mk({ title: `Pg${stamp} cover`, cover_url: png })).json();
+
+  // Inline covers are returned as a reference, not embedded.
+  assert.equal(withCover.cover_url, `api/books/${withCover.id}/cover`, 'data: cover replaced by a reference');
+  const img = await fetch(`${BASE}/api/books/${withCover.id}/cover`);
+  assert.equal(img.status, 200);
+  assert.match(img.headers.get('content-type'), /^image\/png/);
+  assert.ok((await img.arrayBuffer()).byteLength > 0, 'cover endpoint returns image bytes');
+
+  // Echoing the reference back on save must not destroy the stored image.
+  await fetch(`${BASE}/api/books/${withCover.id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: `Pg${stamp} cover`, cover_url: `api/books/${withCover.id}/cover` }),
+  });
+  assert.equal((await fetch(`${BASE}/api/books/${withCover.id}/cover`)).status, 200, 'cover survives a save');
+
+  // Pagination: default page, total header, offset, and limit=0 for everything.
+  const r1 = await fetch(`${BASE}/api/books?q=Pg${stamp}`);
+  const p1 = await r1.json();
+  const total = Number(r1.headers.get('X-Total-Count'));
+  assert.equal(p1.length, 20, 'default page size is 20');
+  assert.equal(total, 23, 'X-Total-Count reports the full match count');
+  const p2 = await (await fetch(`${BASE}/api/books?q=Pg${stamp}&limit=20&offset=20`)).json();
+  assert.equal(p2.length, 3, 'second page holds the remainder');
+  assert.equal(new Set([...p1, ...p2].map((b) => b.id)).size, 23, 'pages do not overlap');
+  const all = await (await fetch(`${BASE}/api/books?q=Pg${stamp}&limit=0`)).json();
+  assert.equal(all.length, 23, 'limit=0 returns everything');
+
+  // UI shows one page plus a working "Load more".
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.type('#search', `Pg${stamp}`);
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal(await page.$$eval('#list .card', (e) => e.length), 20, 'first page rendered');
+  assert.match(await page.$eval('#pagerCount', (e) => e.textContent), /Showing 20 of 23/);
+  await page.click('#loadMoreBtn');
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(await page.$$eval('#list .card', (e) => e.length), 23, 'load more appended the rest');
+  assert.equal(await page.$eval('#loadMoreBtn', (e) => e.hidden), true, 'load more hides at the end');
+
+  // Changing a filter replaces the list rather than appending to it.
+  await page.select('#filterFormat', 'audiobook');
+  await new Promise((r) => setTimeout(r, 600));
+  const after = await page.$$eval('#list .card', (e) => e.length);
+  assert.ok(after < 23, `filter change replaced the list (got ${after} cards)`);
+  await page.close();
+});
+
 test('series field: new entry creates the series, prompts for order, and bumps on collision', { skip }, async () => {
   const seriesTitle = 'Test Series ' + Date.now();
   const page = await browser.newPage();

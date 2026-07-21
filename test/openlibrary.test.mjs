@@ -18,6 +18,16 @@ const BOOK = {
 };
 const fieldsOf = (props) => props.map((p) => p.field).sort();
 
+// Edit comments are a public log, and a log in three tenses reads as three
+// people. Present imperative, the same as a commit subject.
+test('every edit comment is written in the present imperative', () => {
+  for (const [field, comment] of Object.entries(FIELD_COMMENTS)) {
+    const firstWord = comment.split(/\s+/)[0];
+    assert.doesNotMatch(firstWord, /(ing|ed|s)$/i,
+      `${field}: "${firstWord}" is not imperative — write "Add", not "Adding"/"Added"/"Adds"`);
+  }
+});
+
 test('an empty edition record is offered everything we can answer', () => {
   assert.deepEqual(fieldsOf(proposalsFor(BOOK, {})),
     ['cover', 'number_of_pages', 'physical_dimensions', 'physical_format']);

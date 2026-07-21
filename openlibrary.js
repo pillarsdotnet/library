@@ -56,14 +56,14 @@ const FIELDS = [
     // A tag is appended to the subjects it shares a record with, never replacing
     // them: subjects are a communal pile, and we are adding one stone to it.
     apply: (work, value) => ({ ...work, subjects: [...(work.subjects || []), value] }),
-    comment: 'Adding a series tag for this work.',
+    comment: 'Add a series tag for this work.',
   },
   {
     name: 'cover',
     label: 'Cover image',
     has: (ol) => Array.isArray(ol.covers) && ol.covers.some((c) => c > 0),
     ours: (book) => (book.cover_url ? 'cover photo' : null),
-    comment: 'Adding a cover photograph of this edition.',
+    comment: 'Add a cover photograph of this edition.',
   },
   {
     name: 'physical_dimensions',
@@ -75,7 +75,7 @@ const FIELDS = [
       const cm = (mm) => Math.round(mm) / 10;
       return `${cm(h)} x ${cm(w)} x ${cm(t)} centimeters`;
     },
-    comment: 'Adding physical dimensions measured from the book.',
+    comment: 'Add physical dimensions measured from the book.',
   },
   {
     name: 'physical_format',
@@ -85,7 +85,7 @@ const FIELDS = [
     // digital ones describe a file, not an edition of a printed book, so they
     // are never offered.
     ours: (book) => (['hardback', 'paperback'].includes(book.format) ? book.format : null),
-    comment: 'Adding the binding, taken from the copy in hand.',
+    comment: 'Add the binding, taken from the copy in hand.',
   },
   {
     name: 'number_of_pages',
@@ -93,7 +93,7 @@ const FIELDS = [
     has: (ol) => Number.isFinite(ol.number_of_pages) && ol.number_of_pages > 0,
     ours: (book) => (book.page_count > 0 ? book.page_count : null),
     comment:
-      'Adding a page count: the highest explicitly numbered page, disregarding '
+      'Add a page count: the highest explicitly numbered page, disregarding '
       + 'unnumbered pages.',
   },
 ];

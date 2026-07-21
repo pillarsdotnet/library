@@ -1140,6 +1140,141 @@ test('nothing marked hidden is painted, so the crop dialog shows the photo', { s
   }
 });
 
+// Both of these were reported from a phone and neither shows up at desktop
+// widths, so the viewport is the point of the test. The corner canvas was sized
+// on width alone, which made a portrait photo taller than the box that clips it
+// and put the bottom two handles out of reach; and the six-button action row
+// could not wrap, so "Use photo" sat off the right edge.
+// The deeper cause of both phone reports. A filter select will not shrink below
+// its widest option, so one long shelf name made the document scroll sideways —
+// and a sideways-scrolling document drags every <dialog> off-centre with it,
+// which is why a button had to be scrolled into view to be tapped. The invariant
+// is that the page never scrolls sideways, at any phone width.
+test('the page never scrolls sideways, so dialogs stay on screen', { skip }, async () => {
+  // A shelf whose name is long enough to widen the filter select.
+  await fetch(`${BASE}/api/shelves`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      room: 'Living room', bookcase: 'Tall bookcase by the window', label: 'Shelf 3',
+      height_mm: 300, width_mm: 900, depth_mm: 250,
+    }),
+  });
+  const page = await browser.newPage();
+  try {
+    for (const width of [412, 390, 360, 320]) {
+      await page.setViewport({ width, height: 870, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+      await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+      await new Promise((r) => setTimeout(r, 400));
+
+      const { scrollW, clientW, widest } = await page.evaluate(() => {
+        const cw = document.documentElement.clientWidth;
+        const widest = [...document.querySelectorAll('body *')]
+          .map((e) => ({ e, r: e.getBoundingClientRect() }))
+          .filter((o) => o.r.width > 0 && o.r.right > cw + 1)
+          .sort((a, b) => b.r.right - a.r.right)[0];
+        return {
+          scrollW: document.documentElement.scrollWidth,
+          clientW: cw,
+          widest: widest ? `${widest.e.tagName}#${widest.e.id || widest.e.className}` : null,
+        };
+      });
+      assert.ok(scrollW <= clientW + 1,
+        `at ${width}px the page scrolls sideways (${scrollW} > ${clientW}), widest offender: ${widest}`);
+
+      await page.click('#addBtn');
+      await page.waitForSelector('#editDialog[open]');
+      await new Promise((r) => setTimeout(r, 300));
+      const fits = await page.evaluate(() => {
+        const r = document.querySelector('#editDialog').getBoundingClientRect();
+        return r.left >= -1 && r.right <= document.documentElement.clientWidth + 1;
+      });
+      assert.ok(fits, `at ${width}px the dialog is not fully on screen`);
+    }
+  } finally {
+    await page.close();
+  }
+});
+
+test('on a phone, no crop-dialog button is pushed off-screen', { skip }, async () => {
+  // The skewed cover is the fixture that gets auto-crop *offered*, which is what
+  // makes the row six buttons wide — the width that overflowed.
+  const file = join(ROOT, 'test', `tmp-phonebtn-${process.pid}.jpg`);
+  writeFileSync(file, await skewedCoverJpeg());
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 412, height: 870, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+    await page.click('#addBtn');
+    await page.waitForSelector('#editDialog[open]');
+    await (await page.$('#coverUploadFile')).uploadFile(file);
+    await page.waitForSelector('#cropDialog[open]', { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 800));
+
+    assert.equal(await page.$eval('#autoCropToggle', (el) => el.hidden), false,
+      'the six-button row is what is being measured');
+    const offscreen = await page.evaluate(() => {
+      const vw = document.documentElement.clientWidth;
+      return [...document.querySelectorAll('#cropDialog button')]
+        .filter((b) => {
+          const r = b.getBoundingClientRect();
+          return r.width > 0 && (r.right > vw + 1 || r.left < -1);
+        })
+        .map((b) => b.id || b.textContent.trim());
+    });
+    assert.deepEqual(offscreen, [], 'every button in the crop dialog is on screen');
+    await page.close();
+  } finally {
+    rmSync(file, { force: true });
+  }
+});
+
+test('on a phone, every corner handle is reachable', { skip }, async () => {
+  const file = join(ROOT, 'test', `tmp-phone-${process.pid}.jpg`);
+  // Portrait, and taller than the crop area is allowed to be — the shape that broke.
+  writeFileSync(file, await sharp({
+    create: { width: 900, height: 1400, channels: 3, background: { r: 200, g: 190, b: 210 } },
+  }).jpeg().toBuffer());
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 412, height: 870, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+    await page.click('#addBtn');
+    await page.waitForSelector('#editDialog[open]');
+    await (await page.$('#coverUploadFile')).uploadFile(file);
+    await page.waitForSelector('#cropDialog[open]', { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 800));
+
+    await page.click('#cornerMode');
+    await page.waitForSelector('#cornerArea:not([hidden])');
+    await new Promise((r) => setTimeout(r, 500));
+
+    const unreachable = await page.evaluate(async () => {
+      const c = document.querySelector('#cornerCanvas');
+      const img = new Image();
+      await new Promise((r) => { img.onload = r; img.src = document.querySelector('#cropImage').src; });
+      const box = c.getBoundingClientRect();
+      const area = document.querySelector('.crop-area').getBoundingClientRect();
+      const vh = document.documentElement.clientHeight, vw = document.documentElement.clientWidth;
+      // corners() speaks in image pixels: image -> canvas bitmap -> CSS pixels.
+      const k = c.width / img.naturalWidth;
+      const sx = box.width / c.width, sy = box.height / c.height;
+      const visible = {
+        top: Math.max(area.top, 0), bottom: Math.min(area.bottom, vh),
+        left: Math.max(area.left, 0), right: Math.min(area.right, vw),
+      };
+      return window.CornerEditor.corners()
+        .map((p) => ({ x: box.left + p.x * k * sx, y: box.top + p.y * k * sy }))
+        .filter((p) => p.y > visible.bottom + 1 || p.y < visible.top - 1
+                    || p.x > visible.right + 1 || p.x < visible.left - 1).length;
+    });
+    assert.equal(unreachable, 0, 'all four corner handles are inside the visible crop area');
+    await page.close();
+  } finally {
+    rmSync(file, { force: true });
+  }
+});
+
 test('a saved cover keeps its photo and can be re-cropped from it later', { skip }, async () => {
   const file = join(ROOT, 'test', `tmp-recrop-${process.pid}.jpg`);
   writeFileSync(file, await skewedCoverJpeg());

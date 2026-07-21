@@ -458,8 +458,14 @@ function openCornerMode() {
     if (cropper) { cropper.destroy(); cropper = null; }
     showCornerMode(true);
     const area = $('#cropArea') || $('.crop-area');
+    // Both dimensions, or a portrait photo grows taller than the box and the
+    // bottom corners end up clipped out of reach. The crop area's own height is
+    // the truth when it has one; before it has been laid out, 55vh matches the
+    // max-height the stylesheet gives the photo.
     const maxWidth = Math.min(img.naturalWidth, (area ? area.clientWidth : 0) || 900);
-    window.CornerEditor.open($('#cornerCanvas'), img, cropDetectedQuad, maxWidth);
+    const areaHeight = area ? area.clientHeight : 0;
+    const maxHeight = areaHeight > 40 ? areaHeight : Math.round(window.innerHeight * 0.55);
+    window.CornerEditor.open($('#cornerCanvas'), img, cropDetectedQuad, maxWidth, maxHeight);
   };
   img.src = cropOriginalSrc;
 }

@@ -102,11 +102,21 @@
 
   // Start editing. `quad` may come from the detector; without one, an inset
   // rectangle gives four handles that are easy to find and drag.
-  function open(canvasEl, img, quad, maxWidth) {
+  //
+  // The canvas has to fit the space in *both* directions. Sizing it on width
+  // alone made a portrait photo taller than the area it sits in, and the crop
+  // area clips what overflows — so the bottom two handles were off the bottom
+  // of the box, undraggable, on exactly the phone-shaped screens this tool is
+  // for. Fit like `contain`, not like `width: 100%`.
+  function open(canvasEl, img, quad, maxWidth, maxHeight) {
     canvas = canvasEl;
     image = img;
     const natural = { w: img.naturalWidth || img.width, h: img.naturalHeight || img.height };
-    scale = Math.min(1, (maxWidth || natural.w) / natural.w);
+    scale = Math.min(
+      1,
+      (maxWidth || natural.w) / natural.w,
+      (maxHeight || natural.h) / natural.h,
+    );
     canvas.width = Math.max(1, Math.round(natural.w * scale));
     canvas.height = Math.max(1, Math.round(natural.h * scale));
     ctx = canvas.getContext('2d');

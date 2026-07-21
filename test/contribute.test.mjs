@@ -25,6 +25,10 @@ test.before(async () => {
   // nothing else — so exactly the empty fields should come back as proposals.
   olServer = createServer((req, res) => {
     olRequests.push(req.url);
+    if (req.url.startsWith('/isbn/9780000000009')) {   // deliberately unknown to OL
+      res.statusCode = 404;
+      return res.end('{}');
+    }
     if (req.url.startsWith('/isbn/')) {
       res.setHeader('Content-Type', 'application/json');
       return res.end(JSON.stringify({
@@ -63,6 +67,31 @@ test.after(async () => {
   if (olServer) await new Promise((r) => olServer.close(r));
   for (const suffix of ['', '-shm', '-wal']) rmSync(DB_PATH + suffix, { force: true });
 });
+
+// Restart the app with extra environment, for the switches that are read there.
+async function restartServer(extraEnv) {
+  server.kill('SIGKILL');
+  await new Promise((r) => setTimeout(r, 300));
+  server = spawn('node', ['server.js'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      DB_PATH,
+      OPENLIBRARY_BASE: `http://127.0.0.1:${OL_PORT}`,
+      OPENLIBRARY_ACCESS_KEY: '',
+      OPENLIBRARY_SECRET_KEY: '',
+      ...extraEnv,
+    },
+    stdio: 'ignore',
+  });
+  const deadline = Date.now() + 20000;
+  for (;;) {
+    try { if ((await fetch(`${BASE}/api/meta`)).ok) break; } catch { /* not up yet */ }
+    if (Date.now() > deadline) throw new Error('server did not come back');
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
 
 const post = (path, body) => fetch(BASE + path, {
   method: 'POST',
@@ -127,4 +156,31 @@ test('books Open Library has never heard of are counted, not queued', async () =
   const scan = await (await post('/api/ol-contributions/scan')).json();
   assert.equal(typeof scan.unknown, 'number', 'unknown editions are reported back');
   assert.equal(scan.scanned >= 2, true);
+});
+
+// Importing is the one action that creates a record rather than filling a
+// blank, so the default has to be that it does not happen. The scan above
+// already proves an unknown ISBN is counted and not queued; this pins that it
+// is the switch, not luck, and that the switch works when thrown.
+test('an unknown ISBN is queued for import only when importing is switched on', async () => {
+  const made = await (await post('/api/books', {
+    title: 'Not In Open Library', isbn: '9780000000009',
+    authors: 'A Writer', publisher: 'A Press', published_date: '2024',
+    height_mm: 200, width_mm: 130, thickness_mm: 20, format: 'paperback',
+  })).json();
+
+  // The stub 404s this ISBN (it only answers /isbn/ for the one it knows).
+  await post('/api/ol-contributions/scan');
+  let queue = await (await fetch(`${BASE}/api/ol-contributions`)).json();
+  assert.equal(queue.some((r) => r.book_id === made.id && r.field === 'import'), false,
+    'switched off by default: nothing is queued for creation');
+
+  // Restart with the switch on and a source prefix, then scan again.
+  await restartServer({ OPENLIBRARY_ALLOW_IMPORT: 'true', OPENLIBRARY_SOURCE_PREFIX: 'testbot' });
+  await post('/api/ol-contributions/scan');
+  queue = await (await fetch(`${BASE}/api/ol-contributions`)).json();
+  const imp = queue.find((r) => r.book_id === made.id && r.field === 'import');
+  assert.ok(imp, 'switched on: the missing book is proposed as a new record');
+  assert.equal(imp.olid, 'NEW', 'there is no record to point at yet');
+  assert.equal(imp.label, 'New record');
 });

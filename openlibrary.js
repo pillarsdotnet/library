@@ -98,7 +98,7 @@ const FIELDS = [
   },
 ];
 
-export const FIELD_LABELS = Object.fromEntries(FIELDS.map((f) => [f.name, f.label]));
+export const FIELD_LABELS = Object.fromEntries([...FIELDS.map((f) => [f.name, f.label]), ['import', 'New record']]);
 export const FIELD_COMMENTS = Object.fromEntries(FIELDS.map((f) => [f.name, f.comment]));
 
 // Fetch the Open Library edition for an ISBN, and the work behind it. Returns
@@ -146,6 +146,74 @@ export function proposalsFor(book, record, work = null) {
     });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Importing books Open Library has never heard of.
+//
+// This is a different kind of act from everything above. The rest of this file
+// fills blanks in records other people made; this creates records. A bad edit
+// is a wrong value in one field, a bad import is a duplicate or a phantom book
+// in a public catalogue, and duplicates can only be merged by librarians.
+//
+// Hence three brakes:
+//   1. Off unless OPENLIBRARY_ALLOW_IMPORT is set. The bot application filed
+//      for this account says it creates no records; until that is renegotiated,
+//      the switch stays off and nothing can be queued.
+//   2. Proposed only when Open Library genuinely has no edition for the ISBN.
+//   3. Every import is previewed first (`?preview=true` parses, validates and
+//      runs Open Library's own duplicate matching without saving), and what the
+//      preview says is what the reviewer approves.
+// ---------------------------------------------------------------------------
+
+export function importAllowed() {
+  return process.env.OPENLIBRARY_ALLOW_IMPORT === 'true';
+}
+
+// Open Library accepts either a "complete" record (title, authors, publishers,
+// publish_date) or one carrying a strong identifier (title + ISBN/LCCN); both
+// need source_records. Build the fullest record the book supports, and return
+// null when it satisfies neither shape — an import too thin to identify is
+// exactly the kind that becomes someone else's cleanup.
+export function importPayload(book, prefix = process.env.OPENLIBRARY_SOURCE_PREFIX) {
+  const isbn = String(book.isbn || '').replace(/[^0-9Xx]/g, '');
+  const title = String(book.title || '').trim();
+  if (!title || !isbn) return null;
+  if (!prefix) return null;      // the source prefix is assigned by Open Library
+
+  const rec = {
+    title,
+    source_records: [`${prefix}:${isbn}`],
+    [isbn.length === 10 ? 'isbn_10' : 'isbn_13']: [isbn],
+  };
+  const authors = String(book.authors || '').split(',').map((a) => a.trim()).filter(Boolean);
+  if (authors.length) rec.authors = authors.map((name) => ({ name }));
+  if (book.publisher) rec.publishers = [String(book.publisher).trim()];
+  if (book.published_date) rec.publish_date = String(book.published_date).trim();
+  if (book.page_count > 0) rec.number_of_pages = book.page_count;
+  if (['hardback', 'paperback'].includes(book.format)) rec.physical_format = book.format;
+
+  const dims = FIELDS.find((f) => f.name === 'physical_dimensions').ours(book);
+  if (dims) rec.physical_dimensions = dims;
+  return rec;
+}
+
+// One request, either a rehearsal or the real thing. The reply names what was
+// created or matched: { edition: { key, status }, work: { key, status } }.
+export async function sendImport(payload, cookie, { preview = false } = {}, doFetch = globalThis.fetch) {
+  if (!importAllowed()) throw new Error('importing is switched off (OPENLIBRARY_ALLOW_IMPORT)');
+  const r = await doFetch(`${OL}/api/import${preview ? '?preview=true' : ''}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify(payload),
+  });
+  const text = await r.text();
+  let reply = null;
+  try { reply = JSON.parse(text); } catch { /* not JSON: keep the raw text below */ }
+  if (!r.ok || reply?.success === false) {
+    throw new Error(reply?.error || `Open Library refused the import (${r.status}): ${text.slice(0, 200)}`);
+  }
+  return reply;
 }
 
 // ---------------------------------------------------------------------------

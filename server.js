@@ -9,6 +9,7 @@ import { parseEpub } from './epub.js';
 import {
   fetchEdition, proposalsFor, login, sendField, sendCover,
   haveCredentials, FIELD_LABELS, FIELD_COMMENTS,
+  importAllowed, importPayload, sendImport,
 } from './openlibrary.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -296,7 +297,17 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
     let edition = null;
     try { edition = await fetchEdition(book.isbn); } catch { edition = null; }
     scanned += 1;
-    if (!edition) { unknown += 1; continue; }   // no OL edition: nothing to add to
+    if (!edition) {
+      unknown += 1;
+      // Open Library has no edition for this ISBN. Adding one is creating a
+      // record rather than filling a blank, so it happens only when explicitly
+      // switched on — and still only as a proposal.
+      if (importAllowed() && !already.get(book.id, 'import') && importPayload(book)) {
+        add.run(book.id, 'NEW', 'import', book.isbn);
+        queued += 1;
+      }
+      continue;
+    }
     for (const p of proposalsFor(book, edition.record, edition.work)) {
       if (already.get(book.id, p.field)) continue;
       // Each proposal records the record it would edit: the series tag belongs
@@ -345,6 +356,23 @@ router.post('/api/ol-contributions/:id/approve', async (req, res) => {
 
   try {
     const cookie = await login();
+    if (row.field === 'import') {
+      const book = db.prepare('SELECT * FROM books WHERE id = ?').get(row.book_id);
+      const payload = importPayload(book);
+      if (!payload) throw new Error('this book no longer has enough detail to import');
+      // Rehearse first: the preview runs Open Library's own duplicate matching,
+      // so a book that turns out to already exist is caught before anything is
+      // written rather than becoming a duplicate someone has to merge.
+      const dry = await sendImport(payload, cookie, { preview: true });
+      if (dry?.edition?.status === 'matched') {
+        throw new Error(`Open Library already has this book as ${dry.edition.key} — not importing`);
+      }
+      const done = await sendImport(payload, cookie, { preview: false });
+      const created = String(done?.edition?.key || '').split('/').pop() || 'NEW';
+      db.prepare(`UPDATE ol_contributions SET status = 'sent', olid = ?, error = NULL,
+                  reviewed_at = datetime('now') WHERE id = ?`).run(created, row.id);
+      return res.json({ ok: true, olid: created, created: done });
+    }
     if (row.field === 'cover') {
       const m = /^data:[^;,]+;base64,(.*)$/s.exec(row.cover_url || '');
       if (!m) throw new Error('this book no longer has an uploaded cover to send');

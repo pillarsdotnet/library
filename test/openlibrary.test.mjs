@@ -6,7 +6,10 @@
 // a public catalogue.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { proposalsFor, fetchEdition, sendField, FIELD_COMMENTS } from '../openlibrary.js';
+import {
+  proposalsFor, fetchEdition, sendField, FIELD_COMMENTS,
+  importAllowed, importPayload, sendImport,
+} from '../openlibrary.js';
 
 const BOOK = {
   isbn: '9798892426183',
@@ -153,4 +156,62 @@ test('a successful send PUTs the record back with the edit comment attached', as
   assert.equal(body.title, 'Kept', 'the rest of the record survives the edit');
   assert.match(body._comment, /highest explicitly numbered page/i);
   assert.equal(put.opts.headers.Cookie, 'sess=x');
+});
+
+// Importing creates records rather than filling blanks, so the tests here are
+// mostly about the things that must NOT happen.
+test('importing is off unless explicitly switched on', async () => {
+  delete process.env.OPENLIBRARY_ALLOW_IMPORT;
+  assert.equal(importAllowed(), false, 'off by default');
+  await assert.rejects(() => sendImport({}, 'c', {}, async () => {}), /switched off/);
+  process.env.OPENLIBRARY_ALLOW_IMPORT = 'true';
+  assert.equal(importAllowed(), true);
+  delete process.env.OPENLIBRARY_ALLOW_IMPORT;
+});
+
+test('an import payload carries a strong identifier and a source record', () => {
+  const book = { ...BOOK, authors: 'Emily Krempholtz', publisher: 'Podium', published_date: '2024' };
+  const rec = importPayload(book, 'examplebot');
+  assert.equal(rec.title, BOOK.title);
+  assert.deepEqual(rec.isbn_13, ['9798892426183'], '13 digits go in isbn_13');
+  assert.deepEqual(rec.source_records, ['examplebot:9798892426183']);
+  assert.deepEqual(rec.authors, [{ name: 'Emily Krempholtz' }]);
+  assert.deepEqual(rec.publishers, ['Podium']);
+  assert.equal(rec.physical_dimensions, '21 x 14 x 2.5 centimeters');
+  // A 10-digit ISBN belongs in the other field.
+  assert.deepEqual(importPayload({ ...book, isbn: '0261102214' }, 'p').isbn_10, ['0261102214']);
+});
+
+test('nothing too thin to identify is ever offered for import', () => {
+  assert.equal(importPayload({ title: 'No ISBN' }, 'p'), null, 'no identifier, no import');
+  assert.equal(importPayload({ isbn: '9798892426183' }, 'p'), null, 'no title, no import');
+  // The source prefix is assigned by Open Library; without one we do not guess.
+  assert.equal(importPayload(BOOK, ''), null, 'no source prefix, no import');
+  assert.equal(importPayload(BOOK, undefined), null);
+});
+
+test('a refused import surfaces Open Library\'s own reason', async () => {
+  process.env.OPENLIBRARY_ALLOW_IMPORT = 'true';
+  try {
+    const refuse = async () => ({
+      ok: false, status: 400,
+      text: async () => JSON.stringify({ success: false, error_code: 'invalid-value', error: 'title: too short' }),
+    });
+    await assert.rejects(() => sendImport({ title: '' }, 'c', {}, refuse), /too short/);
+    // A 200 carrying success:false is still a refusal.
+    const sneaky = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: false, error: 'nope' }) });
+    await assert.rejects(() => sendImport({}, 'c', {}, sneaky), /nope/);
+  } finally { delete process.env.OPENLIBRARY_ALLOW_IMPORT; }
+});
+
+test('preview mode asks Open Library not to save', async () => {
+  process.env.OPENLIBRARY_ALLOW_IMPORT = 'true';
+  try {
+    const urls = [];
+    const ok = async (url) => { urls.push(url); return { ok: true, status: 200, text: async () => JSON.stringify({ edition: { key: '/books/OL9M', status: 'created' } }) }; };
+    await sendImport({ title: 'x' }, 'c', { preview: true }, ok);
+    await sendImport({ title: 'x' }, 'c', { preview: false }, ok);
+    assert.match(urls[0], /\/api\/import\?preview=true$/, 'the rehearsal says preview');
+    assert.match(urls[1], /\/api\/import$/, 'the real one does not');
+  } finally { delete process.env.OPENLIBRARY_ALLOW_IMPORT; }
 });

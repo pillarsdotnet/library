@@ -813,6 +813,12 @@ async function lookup(fromScan = false) {
     setDimIfEmpty('width_mm', d.width_mm);
     setDimIfEmpty('thickness_mm', d.thickness_mm);
     if (d.cover_url) { bookForm.elements.cover_url.value = d.cover_url; showCover(d.cover_url); }
+    // Series, when Open Library knows one. Filled only into empty boxes, like
+    // every other looked-up field, and the position only when the source
+    // actually numbered it — the series box is committed on blur or save, so
+    // this is a suggestion the user can still overwrite.
+    if (d.series && !$('#seriesInput').value.trim()) $('#seriesInput').value = d.series;
+    if (d.series_order && !$('#seriesPosition').value.trim()) $('#seriesPosition').value = d.series_order;
     // Binding, when a source knows it (Open Library / Barnes & Noble).
     if (d.format && bookForm.elements.format) bookForm.elements.format.value = d.format;
     if (d.source && bookForm.elements.source) bookForm.elements.source.value = d.source;

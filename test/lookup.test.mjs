@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { lookupIsbn, RateLimitError, toMm, parseBarnesNoble, normalizeFormat } from '../lookup.js';
+import { lookupIsbn, RateLimitError, toMm, parseBarnesNoble, normalizeFormat, parseSeries } from '../lookup.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const bnFoxglove = readFileSync(join(FIXTURES, 'barnesnoble-foxglove.html'), 'utf8');
@@ -17,10 +17,12 @@ function fakeFetch(routes, calls) {
   return async (url) => {
     if (calls) calls.push(url);
     const which = url.includes('openlibrary.org/isbn/') ? 'olEdition'
+      : url.includes('openlibrary.org/works/') ? 'olWork'
       : url.includes('openlibrary.org') ? 'ol'
       : url.includes('barnesandnoble.com') ? 'bn' : 'gb';
     // The edition record is optional; absent unless a test supplies one.
-    const res = routes[which] ?? (which === 'olEdition' ? { status: 404 } : { status: 200, body: {}, text: '' });
+    const res = routes[which]
+      ?? ((which === 'olEdition' || which === 'olWork') ? { status: 404 } : { status: 200, body: {}, text: '' });
     const status = res.status ?? 200;
     return {
       status,
@@ -298,4 +300,74 @@ test('toMm converts cm/mm/inches', () => {
   assert.equal(toMm('9.1 inches'), 231); // whole mm
   assert.equal(toMm('20.3'), 203); // bare number defaults to cm
   assert.equal(toMm(''), null);
+});
+
+// We contribute series tags back to Open Library, so we had better read them
+// too. The field is free text and inconsistently numbered in the wild, hence a
+// parser rather than a split.
+test('parseSeries reads the numbering conventions Open Library actually contains', () => {
+  const cases = [
+    ['Discworld (1)', 'Discworld', 1],
+    ['Discworld #1', 'Discworld', 1],
+    ['Discworld -- 1', 'Discworld', 1],
+    ['Discworld Vol. 1', 'Discworld', 1],
+    ['Discworld, 12', 'Discworld', 12],
+    ['Chronique du tueur de roi, #1', 'Chronique du tueur de roi', 1],
+    ['The Discworld series', 'Discworld', null],
+    ['Discworld series', 'Discworld', null],
+    ['Discworld', 'Discworld', null],
+  ];
+  for (const [raw, title, order] of cases) {
+    const got = parseSeries(raw);
+    assert.equal(got?.title, title, `title of ${raw}`);
+    assert.equal(got?.order, order, `order of ${raw}`);
+  }
+  assert.equal(parseSeries(''), null);
+  assert.equal(parseSeries(null), null);
+});
+
+test('lookup returns the series and its position from the edition record', async () => {
+  const isbn = '9780062225672';
+  const calls = [];
+  const data = await lookupIsbn(isbn, {
+    apiKey: null,
+    bindingFallback: false,
+    fetch: fakeFetch({
+      ol: { body: { [`ISBN:${isbn}`]: { title: 'The Colour of Magic' } } },
+      olEdition: { body: { series: ['Discworld (1)'], works: [{ key: '/works/OL453657W' }] } },
+    }, calls),
+  });
+  assert.equal(data.series, 'Discworld');
+  assert.equal(data.series_order, 1);
+  // The edition answered, so the work is not worth a second request.
+  assert.equal(calls.some((u) => u.includes('/works/')), false, 'no needless work fetch');
+});
+
+test('lookup falls back to the work\'s series: tag, which carries no position', async () => {
+  const isbn = '9780062225673';
+  const data = await lookupIsbn(isbn, {
+    apiKey: null,
+    bindingFallback: false,
+    fetch: fakeFetch({
+      ol: { body: { [`ISBN:${isbn}`]: { title: 'Say Cheese and Die!' } } },
+      olEdition: { body: { works: [{ key: '/works/OL72434W' }] } },   // no series here
+      olWork: { body: { subjects: ['Juvenile fiction', 'series:Goosebumps'] } },
+    }),
+  });
+  assert.equal(data.series, 'Goosebumps');
+  assert.equal(data.series_order, null, 'the work tag never numbers the book');
+});
+
+test('a book in no series reports none, and a work miss is harmless', async () => {
+  const isbn = '9780062225674';
+  const data = await lookupIsbn(isbn, {
+    apiKey: null,
+    bindingFallback: false,
+    fetch: fakeFetch({
+      ol: { body: { [`ISBN:${isbn}`]: { title: 'Standalone' } } },
+      olEdition: { body: { works: [{ key: '/works/OL999W' }] } },   // work 404s by default
+    }),
+  });
+  assert.equal(data.series, '');
+  assert.equal(data.series_order, null);
 });

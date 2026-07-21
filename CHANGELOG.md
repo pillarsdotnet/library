@@ -14,6 +14,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   are ever offered — covers, physical dimensions, binding, page count, and the
   series tag on the work. See "Contributing back to Open Library" in the README
   for the account setup and for why series position is not contributed.
+- ISBN lookup now reads the series and, where the source numbers it, the
+  position — from the edition's `series` field, falling back to the work's
+  `series:` subject tag. We contribute series information back, so it would be
+  odd not to accept it.
 - `CHANGELOG.md` (this file).
 
 ### Fixed

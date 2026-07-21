@@ -163,6 +163,46 @@ async function fetchBarnesNoble(isbn, doFetch) {
   }
 }
 
+// Open Library keeps a series in two places, and neither is structured. An
+// edition carries a free-text `series` array whose numbering follows no
+// convention anyone agreed on — "Discworld (1)", "Discworld #1", "Discworld --
+// 1", "Discworld Vol. 1" and plain "Discworld series" all occur in the wild —
+// while a work carries a `series:Name` subject tag, which is the form the
+// contributors' guide sanctions and which holds no number at all.
+//
+// So: take the name from either, and take a position only when the edition
+// string offers one. A position we invent is worse than none.
+export function parseSeries(raw) {
+  if (!raw) return null;
+  let s = String(raw).trim();
+  if (!s) return null;
+
+  let order = null;
+  const numbered = [
+    /^(.*?)[\s,]*\((\d+)\)$/,           // Discworld (1)
+    /^(.*?)[\s,]*#\s*(\d+)$/,           // Discworld #1
+    /^(.*?)\s*[-–—]{1,2}\s*(\d+)$/,     // Discworld -- 1
+    /^(.*?)[\s,]*(?:vol|volume|bk|book|no|nr)\.?\s*(\d+)$/i, // Discworld Vol. 1
+    /^(.*?),\s*(\d+)$/,                 // Discworld, 1
+  ];
+  for (const re of numbered) {
+    const m = re.exec(s);
+    if (m && m[1].trim()) { s = m[1].trim(); order = Number(m[2]); break; }
+  }
+
+  // "The Discworld series" and "Discworld series" both name the same series as
+  // "Discworld"; the decoration is not part of the name.
+  s = s.replace(/\s+series$/i, '').replace(/^the\s+/i, '').replace(/[\s,;:-]+$/, '').trim();
+  if (!s) return null;
+  return { title: s, order: Number.isFinite(order) && order > 0 ? order : null };
+}
+
+// The `series:` tag a work carries in its subjects, per the contributors' FAQ.
+function seriesFromWork(work) {
+  const tag = (work?.subjects || []).find((x) => /^series:/i.test(String(x)));
+  return tag ? parseSeries(String(tag).replace(/^series:/i, '')) : null;
+}
+
 async function fetchOpenLibrary(isbn, doFetch) {
   // The bulk endpoint omits the binding, so ask the edition record for it too.
   // Runs alongside, so it costs no extra wall time, and is optional.
@@ -183,6 +223,20 @@ async function fetchOpenLibrary(isbn, doFetch) {
     const nums = parts.map((p) => toMm(p.trim().replace(/[a-z"]/gi, '') + ' ' + unit)).filter((n) => n != null);
     [h, w, t] = [nums[0] ?? null, nums[1] ?? null, nums[2] ?? null];
   }
+  // The edition's own series string first; it is the only one that can carry a
+  // position. Only when it has none is the work worth a second request — the
+  // tag there names the series but never numbers it.
+  let series = parseSeries(edition?.series?.[0]);
+  if (!series) {
+    const workKey = edition?.works?.[0]?.key;
+    if (/^\/works\/OL\d+W$/.test(workKey || '')) {
+      const work = await doFetch(`https://openlibrary.org${workKey}.json`)
+        .then((x) => (x.ok ? x.json() : null))
+        .catch(() => null);
+      series = seriesFromWork(work);
+    }
+  }
+
   return {
     title: data.title,
     authors: (data.authors || []).map((a) => a.name).join(', '),
@@ -192,6 +246,8 @@ async function fetchOpenLibrary(isbn, doFetch) {
     cover_url: data.cover?.large || data.cover?.medium || data.cover?.small || '',
     format: normalizeFormat(edition?.physical_format),
     height_mm: h, width_mm: w, thickness_mm: t,
+    series: series?.title || '',
+    series_order: series?.order ?? null,
   };
 }
 
@@ -255,6 +311,11 @@ export async function lookupIsbn(isbn, opts = {}) {
       height_mm: ol?.height_mm ?? gb?.height_mm ?? null,
       width_mm: ol?.width_mm ?? gb?.width_mm ?? null,
       thickness_mm: ol?.thickness_mm ?? gb?.thickness_mm ?? null,
+      // Only Open Library publishes a series we can use. Google Books has a
+      // seriesInfo block, but it carries an opaque series id and a display
+      // number rather than the series' name, which is the part we need.
+      series: ol?.series || '',
+      series_order: ol?.series_order ?? null,
       source: ol ? 'openlibrary' : 'googlebooks',
     };
   }
@@ -263,7 +324,8 @@ export async function lookupIsbn(isbn, opts = {}) {
   // sources have nothing, so it also covers the case where Google was throttled.
   // Uses baseFetch (it has its own single-shot timeout, no retry needed).
   const bn = await fetchBarnesNoble(isbn, baseFetch);
-  if (bn) return { isbn, ...bn, source: 'barnesnoble' };
+  // Same shape whichever source answered: the client reads these keys blind.
+  if (bn) return { isbn, ...bn, series: '', series_order: null, source: 'barnesnoble' };
 
   // Still nothing — if a source was rate-limited, that's why (not a missing book).
   const throttled = [openlib, google].some(

@@ -5,3 +5,24 @@ npm run lint || {
   echo "\n✖ Lint failed. Fix the issues above (or run 'npm run lint:fix') before committing."
   exit 1
 }
+
+# Assets are served with ?v=<version from package.json>, so the version is what
+# makes a browser fetch them again. Change a stylesheet without moving the
+# version and the fix reaches the server but not the phone that reported the
+# bug — which looks exactly like the fix not working, and has already cost an
+# afternoon of chasing a layout bug that was fixed all along.
+assets=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^public/.*\.(css|js)$')
+if [ -n "$assets" ]; then
+  if ! git diff --cached -U0 -- package.json | grep -q '^+.*"version"'; then
+    echo ""
+    echo "✖ These served assets changed but the version in package.json did not:"
+    echo "$assets" | sed 's/^/    /'
+    echo ""
+    echo "  Browsers cache styles.css and app.js and will not always revalidate."
+    echo "  Bump \"version\" in package.json (and add a CHANGELOG entry) so the"
+    echo "  ?v= query changes and clients actually fetch the new files."
+    echo ""
+    echo "  Genuinely not user-visible? Commit with --no-verify."
+    exit 1
+  fi
+fi

@@ -5,7 +5,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const PORT = 3196;
 const BASE = `http://127.0.0.1:${PORT}/library`;
@@ -80,4 +84,23 @@ test('saving a book that echoes back the cover reference keeps the image', async
   assert.equal(after.title, 'Echo edited');
   assert.equal(after.cover_url, ref, 'the reference did not overwrite the image');
   assert.match(await (await fetch(`${BASE}/${ref}`)).text(), /fake-jpeg-keep/);
+});
+
+// Served assets carry the app version, so a release is a new URL. Without it a
+// phone can run last week's stylesheet against this week's server, which is how
+// a fixed layout bug went on being reported as broken.
+test('every stylesheet and script is requested with the app version', async () => {
+  const { version } = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const html = await (await fetch(`${BASE}/`)).text();
+
+  const refs = [...html.matchAll(/(?:href|src)="([^"]+\.(?:css|js))(\?[^"]*)?"/g)];
+  assert.ok(refs.length >= 6, `found ${refs.length} asset references`);
+  for (const [, file, query] of refs) {
+    assert.equal(query, `?v=${version}`, `${file} must carry ?v=${version}`);
+  }
+  assert.doesNotMatch(html, /__V__/, 'the placeholder is substituted, not shipped');
+
+  // And the URL actually serves the file, rather than 404ing on the query.
+  const one = await fetch(`${BASE}/styles.css?v=${version}`);
+  assert.equal(one.status, 200);
 });

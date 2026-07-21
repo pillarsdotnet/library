@@ -25,8 +25,16 @@ const router = express.Router();
 
 // Serve index.html with the right <base> href injected for the mount point,
 // so every relative asset/API URL resolves under BASE regardless of the host.
+// Assets carry ?v=<app version>, so a release is a new URL and a phone cannot
+// go on running last week's stylesheet. Browsers revalidate index.html but will
+// happily serve a cached styles.css without asking, which is how a deployed fix
+// can be invisible on the one device that mattered — and indistinguishable from
+// the fix not working. See "Changing CSS or JS" in the README: the version has
+// to move whenever these files do.
+const VERSION = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8')).version;
 const indexHtml = readFileSync(join(__dirname, 'public/index.html'), 'utf8');
-router.get('/', (_req, res) => res.type('html').send(indexHtml.replace('__BASE__', BASE)));
+router.get('/', (_req, res) => res.type('html')
+  .send(indexHtml.replace('__BASE__', BASE).replaceAll('__V__', encodeURIComponent(VERSION))));
 
 router.use(express.static(join(__dirname, 'public'), { index: false }));
 // Serve the scanning libraries shipped via npm so the app works fully offline.

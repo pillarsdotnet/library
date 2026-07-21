@@ -39,6 +39,26 @@ dimensions are stored in **millimetres**. Capacity is computed by treating each
 book's *spine thickness* as the width it consumes along the shelf; a book fits
 if its height ≤ shelf height and its width ≤ shelf depth.
 
+## Changing CSS or JS: bump the version
+
+`index.html` requests every stylesheet and script with `?v=<version>`, filled in
+from `package.json` when the page is served. **The version is the only thing that
+makes a browser fetch those files again.**
+
+So: **any change to `public/*.css` or `public/*.js` needs a version bump in
+`package.json`**, plus a line in [`CHANGELOG.md`](./CHANGELOG.md). The
+`pre-commit` hook enforces this and explains itself if you forget; `--no-verify`
+skips it for changes that genuinely reach no browser.
+
+This is not fussiness. `index.html` is revalidated on every load, but a phone
+will happily go on using a cached `styles.css` for days without asking — so a
+deployed fix can be invisible on the one device that reported the bug, which is
+indistinguishable from the fix not working. That has already happened here once.
+
+Semantic versioning, judged from the user's side: **patch** for a fix, **minor**
+for a feature, **major** when a database written by the new build can no longer
+be read by the old one.
+
 ## Access control: there isn't any
 
 **Every endpoint is unauthenticated.** There are no accounts, no login, no
@@ -269,10 +289,16 @@ Deploy / update — build locally, hand the image to the node, restart the unit.
 There is no image registry, so the image travels over ssh:
 
 ```bash
-docker build -t library.local/home-library:1.0.0 .
-docker save library.local/home-library:1.0.0 | ssh homelab 'sudo docker load'
+V=$(node -p "require('./package.json').version")
+docker build -t "library.local/home-library:$V" -t library.local/home-library:latest .
+docker save "library.local/home-library:$V" library.local/home-library:latest \
+  | ssh homelab 'sudo docker load'
 ssh homelab 'sudo systemctl restart home-library'
 ```
+
+Two tags, on purpose. The unit runs `:latest`, so a release never needs the unit
+edited — and the version tag stays alongside it so you can still tell what is on
+the node, and roll back to a specific build by tagging it `:latest` again.
 
 Docker on the node needs `sudo`. To change a secret, edit
 `/etc/home-library.env` and restart the unit.

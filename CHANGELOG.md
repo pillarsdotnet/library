@@ -5,9 +5,21 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.0.0] — 2026-07-21
+
+The version was still 1.0.0 after a year of features and one migration that
+does not go backwards, so this catches up. Major, not minor: a database opened
+by this release has had its legacy free-text `genre`/`subgenre` columns dropped
+and its `series_books` primary key rebuilt, and an older build will not read it
+back.
 
 ### Added
+
+- Stylesheets and scripts are requested with `?v=<app version>`, so a release
+  is a new URL and a browser cannot go on running a cached copy of last week's
+  CSS. A `pre-commit` check refuses an asset change that does not move the
+  version, since a fix that reaches the server but not the phone looks exactly
+  like a fix that did not work.
 
 - Contribute missing metadata back to Open Library, through a review queue.
   Nothing is sent without approval, and only fields Open Library leaves empty

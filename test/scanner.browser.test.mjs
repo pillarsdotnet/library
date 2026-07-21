@@ -1103,6 +1103,43 @@ test('corners can be dragged by hand and the result is flattened to them', { ski
   }
 });
 
+// The crop dialog opened onto a solid black rectangle: the corner editor's
+// overlay still carried its hidden attribute, but .corner-area sets display,
+// and any author rule that sets display beats the browser's own [hidden] rule
+// however unspecific it is. Checking `el.hidden` cannot catch this — the
+// property was true the whole time — so this asks what the eye asks: is
+// anything marked hidden actually being painted?
+test('nothing marked hidden is painted, so the crop dialog shows the photo', { skip }, async () => {
+  const file = join(ROOT, 'test', `tmp-hidden-${process.pid}.jpg`);
+  writeFileSync(file, await skewedCoverJpeg());
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 412, height: 870, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+    await page.click('#addBtn');
+    await page.waitForSelector('#editDialog[open]');
+    await (await page.$('#coverUploadFile')).uploadFile(file);
+    await page.waitForSelector('#cropDialog[open]', { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 800));
+
+    const painted = await page.evaluate(() => [...document.querySelectorAll('[hidden]')]
+      .filter((el) => getComputedStyle(el).display !== 'none')
+      .map((el) => el.id || el.className || el.tagName));
+    assert.deepEqual(painted, [], 'elements marked hidden must not be displayed');
+
+    // ...and the cropper is what the crop area actually shows.
+    const covered = await page.evaluate(() => {
+      const area = document.querySelector('.crop-area').getBoundingClientRect();
+      const at = document.elementFromPoint(area.left + area.width / 2, area.top + area.height / 2);
+      return !at || !at.closest('.cropper-container');
+    });
+    assert.equal(covered, false, 'the middle of the crop area is the cropper, not an overlay');
+    await page.close();
+  } finally {
+    rmSync(file, { force: true });
+  }
+});
+
 test('a saved cover keeps its photo and can be re-cropped from it later', { skip }, async () => {
   const file = join(ROOT, 'test', `tmp-recrop-${process.pid}.jpg`);
   writeFileSync(file, await skewedCoverJpeg());

@@ -23,6 +23,13 @@
 }
 
 * { box-sizing: border-box; }
+
+/* The browser's own [hidden] rule loses to any author rule that sets display,
+   however unspecific — that is how the corner editor's black overlay came to sit
+   on top of the crop dialog while still carrying the hidden attribute. Say it
+   once, here, so `hidden` means hidden for every element that ever grows a
+   display of its own. */
+[hidden] { display: none !important; }
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;

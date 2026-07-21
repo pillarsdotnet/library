@@ -27,6 +27,10 @@ both iOS Safari and Android Chrome.
 - **Library books** — flag books you've checked out from a public library and
   track the library name and due date.
 - **Search & filter** by text, status, room, genre, or shelf (incl. "Unshelved").
+- **Give back to Open Library** — measurements, binding, page count and cover
+  photos from your own copies can fill gaps in Open Library's records, through a
+  review queue where you approve each one. See
+  [Contributing back to Open Library](#contributing-back-to-open-library).
 
 ## Data model
 
@@ -62,6 +66,8 @@ Environment variables:
 | `DB_PATH`   | `./data/library.db`  | SQLite file location                                |
 | `BASE_PATH` | `` (root)            | Sub-path to serve under, e.g. `/library`            |
 | `GOOGLE_BOOKS_API_KEY` | _(none)_  | Optional; raises the Google Books lookup quota      |
+| `OPENLIBRARY_ACCESS_KEY` | _(none)_ | Optional; needed only to send contributions back    |
+| `OPENLIBRARY_SECRET_KEY` | _(none)_ | Paired with the access key                          |
 
 ### ISBN lookup sources & the Google Books quota
 
@@ -84,17 +90,9 @@ lookups/day and makes this reliable.
 
 #### Install the key
 
-**Kubernetes (homelab):** store it in a secret the Deployment already references
-(via an optional `secretKeyRef`, so the app also runs fine without one):
-
-```bash
-kubectl -n home-library create secret generic home-library-secrets \
-  --from-literal=google-books-api-key=YOUR_KEY
-kubectl -n home-library rollout restart deploy/home-library
-```
-
-To rotate later: `kubectl -n home-library delete secret home-library-secrets`,
-recreate it, then roll out again.
+**Homelab node:** add it to `/etc/home-library.env`, which the systemd unit
+passes to the container, then `ssh homelab 'sudo systemctl restart
+home-library'`. Rotating a key is the same edit followed by the same restart.
 
 **Docker / local:** pass it as an environment variable:
 
@@ -107,37 +105,111 @@ GOOGLE_BOOKS_API_KEY=YOUR_KEY npm start
 injects a matching `<base href>` so every asset and API call is relative — the
 app works at `/` or under any prefix with no rebuild.
 
-### On the homelab Kubernetes cluster
+## Contributing back to Open Library
 
-This repo is deployed to the k8s cluster and served at
-`http://homelab/library/` (also `http://10.0.0.2/library/` and
-`http://100.84.6.113/library/`). The manifests are in [`k8s/`](./k8s).
+Most of this app's metadata comes from Open Library, which is volunteer-run and
+patchy on exactly the things a physical shelf knows: how big the book is, how
+it's bound, how many pages it actually has. **↑ Give back** in the header finds
+those gaps and offers to fill them.
 
-Because the cluster has no image registry, ingress controller, or dynamic
-storage, the deployment:
+Two rules govern the whole feature:
 
-- runs the app as a Deployment pinned to the `homelab` node, with `BASE_PATH=/library`;
-- persists the SQLite DB on a node `hostPath` (`/var/lib/home-library`);
-- exposes it via a NodePort (`30800`);
-- is fronted by the node's existing nginx, which proxies `location /library/`
-  to the NodePort (see [`deploy/nginx-library.conf`](./deploy/nginx-library.conf)).
+1. **Only blanks are ever offered.** If Open Library records a value, it is left
+   alone — even when yours differs. A disagreement is not a correction.
+2. **Nothing is sent without approval.** Proposals sit in a queue; approving one
+   sends it, skipping one retires it for good.
 
-Deploy / update:
+Page count is the field where "missing" and "different" are most easily
+confused, since editions legitimately differ on what counts. This app's
+convention is **the highest explicitly numbered page, disregarding unnumbered
+pages**, and every page-count contribution says so in its edit comment.
+
+**Series** follows Open Library's contributors' guide, which puts a series on
+the *work* as a tag written `[series:series_name]` on the edit form — the
+brackets are form syntax, and what is stored is a plain subject string,
+`series:Discworld`, which is what drives the `/subjects/series:…` pages. So the
+series contribution edits the work record, not the edition, and it is offered
+only when the work carries no series tag at all.
+
+That sanctioned form has nowhere to put a **position**, so the order within a
+series is never sent. A book's membership of a series is a fact about the work;
+its number is a convention (publication order, chronological order, whether
+novellas count) that Open Library's series tag does not model, and this app does
+not invent a place for it.
+
+### Set up an account (one-time)
+
+Contributions are attributed to an account, and automated edits need a **bot**
+account, separate from your personal one.
+
+1. **Create the account.** Register at
+   [openlibrary.org](https://openlibrary.org/account/create) with a username
+   ending in `Bot` — the suffix is required, and lets Recent Changes separate
+   automated edits from human ones.
+2. **Request bot privileges.** Open an issue on the
+   [openlibrary repo](https://github.com/internetarchive/openlibrary/issues)
+   asking a site admin to grant bot privileges and add the account to the `API`
+   usergroup. Say what the bot will edit and how often; ours fills empty
+   `physical_dimensions`, `physical_format` and `number_of_pages` fields, adds a
+   `series:` subject tag to works that have none, and uploads covers for
+   editions that have none, all at human-review pace. Expect this
+   to take a few days — it is a manual review by a volunteer.
+3. **Get the keys.** Signed in as the bot, visit
+   [archive.org/account/s3.php](https://archive.org/account/s3.php) and copy the
+   access key and secret key. (Open Library authenticates with Internet Archive
+   S3-style keys, then hands back a session cookie.)
+4. **Install the keys** the same way as the Google Books key — in
+   `/etc/home-library.env` on the homelab node, or the environment locally:
+
+   ```bash
+   OPENLIBRARY_ACCESS_KEY=your_access_key
+   OPENLIBRARY_SECRET_KEY=your_secret_key
+   ```
+
+Until the keys are set, the queue still collects gaps; it just cannot send them,
+and says so.
+
+### Using it
+
+**↑ Give back** → **Look for gaps** checks your books (most recently updated
+first) against Open Library, one request per book, and queues what it finds.
+Each row names the book, the edition it would edit, the field, and the exact
+value that would be sent. **Send** submits it; **Skip** retires it.
+
+Sending re-reads the live record first and refuses if the blank has been filled
+in the meantime — a queue can sit for days, and someone else may have got there
+first.
+
+### On the homelab node
+
+The app runs on the `homelab` node as a **Docker container managed by systemd**,
+and is served at `http://homelab/library/` (also `http://10.0.0.2/library/`,
+`http://100.84.6.113/library/`, and over HTTPS at
+`https://homelab.dala-hue.ts.net/library/`).
+
+- the unit is `/etc/systemd/system/home-library.service`, with `Restart=always`;
+- the container runs with `BASE_PATH=/library` and `--rm`, so the unit owns its
+  whole lifecycle — never start one by hand, the unit's `ExecStartPre` removes it;
+- the SQLite DB lives on the node at `/var/lib/home-library`, bind-mounted to `/data`;
+- secrets (`GOOGLE_BOOKS_API_KEY`, `OPENLIBRARY_ACCESS_KEY`,
+  `OPENLIBRARY_SECRET_KEY`) come from `/etc/home-library.env` on the node;
+- port 3000 is published on `127.0.0.1:30800`, fronted by the node's nginx, which
+  proxies `location /library/` (see [`deploy/nginx-library.conf`](./deploy/nginx-library.conf)).
+
+Deploy / update — build locally, hand the image to the node, restart the unit.
+There is no image registry, so the image travels over ssh:
 
 ```bash
-# 1. Build and import the image into the homelab node's containerd (no registry):
 docker build -t library.local/home-library:1.0.0 .
-docker save library.local/home-library:1.0.0 | ssh homelab 'sudo ctr -n k8s.io images import -'
-
-# 2. Apply manifests:
-kubectl apply -f k8s/home-library.yaml
-
-# 3. (first time only) add the nginx proxy snippet to the homelab node and reload:
-#    see deploy/nginx-library.conf, then: sudo nginx -t && sudo systemctl reload nginx
-
-# Roll out a new image build (same tag) by restarting the deployment:
-kubectl -n home-library rollout restart deploy/home-library
+docker save library.local/home-library:1.0.0 | ssh homelab 'sudo docker load'
+ssh homelab 'sudo systemctl restart home-library'
 ```
+
+Docker on the node needs `sudo`. To change a secret, edit
+`/etc/home-library.env` and restart the unit.
+
+> The manifests in [`k8s/`](./k8s) are from an earlier Kubernetes deployment and
+> are no longer used; the cluster API is not running.
 
 ## HTTPS (for camera scanning)
 

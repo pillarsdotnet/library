@@ -19,6 +19,7 @@
     <div class="header-actions">
       <span id="count" class="count"></span>
       <button id="unitToggle" class="unit-toggle" title="Toggle units">mm</button>
+      <button id="contributeBtn" type="button" title="Contribute missing data to Open Library">↑ Give back</button>
       <button id="addBtn" class="primary">+ Add book</button>
     </div>
   </header>
@@ -329,6 +330,30 @@
       <span class="grow"></span>
       <button type="button" id="importCloseBtn">Close</button>
       <button type="button" id="importRunBtn" class="primary">Import</button>
+    </div>
+  </dialog>
+
+  <!-- ============ OPEN LIBRARY CONTRIBUTION QUEUE ============ -->
+  <dialog id="contributeDialog">
+    <div class="dialog-head">
+      <h2>Give back to Open Library</h2>
+      <button type="button" class="icon" id="closeContributeDialog" aria-label="Close">✕</button>
+    </div>
+    <p class="hint">
+      Open Library is where most of this app's data comes from. These are gaps in
+      its records that your shelf can fill. Only blanks are ever offered — a value
+      Open Library already holds is left alone, even where yours differs.
+    </p>
+    <p id="contributeCreds" class="msg warn" hidden></p>
+    <div class="dialog-actions">
+      <button type="button" id="contributeScanBtn">⟳ Look for gaps</button>
+      <span id="contributeSummary" class="hint"></span>
+    </div>
+    <div id="contributeList" class="contrib-list"></div>
+    <p id="contributeEmpty" class="empty" hidden>Nothing waiting. Tap <strong>Look for gaps</strong> to check your books against Open Library.</p>
+    <div class="dialog-actions">
+      <span class="grow"></span>
+      <button type="button" id="contributeCloseBtn">Close</button>
     </div>
   </dialog>
 

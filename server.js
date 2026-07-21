@@ -6,6 +6,10 @@ import sharp from 'sharp';
 import db from './db.js';
 import { lookupIsbn, RateLimitError } from './lookup.js';
 import { parseEpub } from './epub.js';
+import {
+  fetchEdition, proposalsFor, login, sendField, sendCover,
+  haveCredentials, FIELD_LABELS, FIELD_COMMENTS,
+} from './openlibrary.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -260,6 +264,102 @@ router.delete('/api/books/:id', (req, res) => {
   const info = db.prepare('DELETE FROM books WHERE id = ?').run(req.params.id);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
   res.status(204).end();
+});
+
+// ---------------------------------------------------------------------------
+// Contributing back to Open Library, through a review queue.
+//
+// Scanning only ever proposes; sending happens when a human approves a row.
+// See openlibrary.js for the two rules that govern what may be proposed.
+// ---------------------------------------------------------------------------
+
+// Look at books with an ISBN and queue up anything Open Library is missing that
+// we can answer. Books already fully proposed cost one request each, so this is
+// deliberately a button rather than something that runs on every save.
+router.post('/api/ol-contributions/scan', async (req, res) => {
+  const limit = Math.min(Number(req.body?.limit) || 25, 100);
+  // The series tag names a series, not a position, so one title per book is all
+  // that is ever sent — the lowest-ordered one when a book sits in several.
+  const books = db.prepare(`
+    SELECT b.*, (
+      SELECT s.title FROM series_books sb JOIN series s ON s.id = sb.series
+      WHERE sb.book = b.id ORDER BY sb."order" LIMIT 1
+    ) AS series_title
+    FROM books b
+    WHERE b.isbn IS NOT NULL AND b.isbn <> ''
+    ORDER BY b.updated_at DESC LIMIT ?`).all(limit);
+  const already = db.prepare('SELECT 1 FROM ol_contributions WHERE book_id = ? AND field = ?');
+  const add = db.prepare(`INSERT OR IGNORE INTO ol_contributions (book_id, olid, field, value)
+                          VALUES (?, ?, ?, ?)`);
+  let scanned = 0, queued = 0, unknown = 0;
+  for (const book of books) {
+    let edition = null;
+    try { edition = await fetchEdition(book.isbn); } catch { edition = null; }
+    scanned += 1;
+    if (!edition) { unknown += 1; continue; }   // no OL edition: nothing to add to
+    for (const p of proposalsFor(book, edition.record, edition.work)) {
+      if (already.get(book.id, p.field)) continue;
+      // Each proposal records the record it would edit: the series tag belongs
+      // to the work, everything else to the edition.
+      add.run(book.id, p.target === 'work' ? edition.workOlid : edition.olid, p.field, p.value);
+      queued += 1;
+    }
+  }
+  res.json({ scanned, queued, unknown });
+});
+
+router.get('/api/ol-contributions', (req, res) => {
+  const status = req.query.status || 'pending';
+  const rows = db.prepare(`
+    SELECT c.*, b.title, b.authors, b.isbn
+    FROM ol_contributions c JOIN books b ON b.id = c.book_id
+    WHERE c.status = ? ORDER BY b.title, c.field`).all(status);
+  res.json(rows.map((r) => ({ ...r, label: FIELD_LABELS[r.field] || r.field })));
+});
+
+router.get('/api/ol-contributions/status', (_req, res) => {
+  const counts = db.prepare('SELECT status, COUNT(*) AS n FROM ol_contributions GROUP BY status').all();
+  res.json({
+    configured: haveCredentials(),
+    counts: Object.fromEntries(counts.map((c) => [c.status, c.n])),
+  });
+});
+
+router.post('/api/ol-contributions/:id/decline', (req, res) => {
+  const info = db.prepare(`UPDATE ol_contributions
+    SET status = 'declined', reviewed_at = datetime('now')
+    WHERE id = ? AND status IN ('pending', 'failed')`).run(req.params.id);
+  if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+});
+
+// Approving is sending: the queue is the review gate, so there is no second
+// confirmation. A failure leaves the row visible with its reason attached
+// rather than swallowing it, so it can be retried or declined.
+router.post('/api/ol-contributions/:id/approve', async (req, res) => {
+  const row = db.prepare(`SELECT c.*, b.cover_url FROM ol_contributions c
+                          JOIN books b ON b.id = c.book_id
+                          WHERE c.id = ? AND c.status IN ('pending', 'failed')`).get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (!haveCredentials()) return res.status(503).json({ error: 'Open Library credentials are not configured' });
+
+  try {
+    const cookie = await login();
+    if (row.field === 'cover') {
+      const m = /^data:[^;,]+;base64,(.*)$/s.exec(row.cover_url || '');
+      if (!m) throw new Error('this book no longer has an uploaded cover to send');
+      await sendCover(row.olid, Buffer.from(m[1], 'base64'), cookie);
+    } else {
+      await sendField(row.olid, row.field, row.value, FIELD_COMMENTS[row.field], cookie);
+    }
+    db.prepare(`UPDATE ol_contributions SET status = 'sent', error = NULL,
+                reviewed_at = datetime('now') WHERE id = ?`).run(row.id);
+    res.json({ ok: true, olid: row.olid });
+  } catch (e) {
+    db.prepare(`UPDATE ol_contributions SET status = 'failed', error = ?,
+                reviewed_at = datetime('now') WHERE id = ?`).run(e.message, row.id);
+    res.status(502).json({ error: e.message });
+  }
 });
 
 // ---------------------------------------------------------------------------

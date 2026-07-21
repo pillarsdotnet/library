@@ -113,6 +113,29 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_book_genres_genre ON book_genres(genre_id);
 
+  -- Proposed contributions back to Open Library, one row per field per book.
+  -- Nothing here has been sent: a row is a suggestion waiting for a human, and
+  -- only ever suggests filling a blank (see openlibrary.js). Rows are kept
+  -- after sending so the same gap is not offered twice.
+  CREATE TABLE IF NOT EXISTS ol_contributions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id     INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    -- the record this would edit: an edition (OL123M) for most fields, the work
+    -- (OL123W) for the series tag, which Open Library keeps on the work.
+    olid        TEXT NOT NULL,
+    field       TEXT NOT NULL,          -- cover | physical_dimensions | physical_format | number_of_pages | series
+    value       TEXT NOT NULL,          -- what we would send, as it would be sent
+    status      TEXT NOT NULL DEFAULT 'pending',  -- pending | sent | declined | failed
+    error       TEXT,                   -- why a send failed, for the reviewer
+    created_at  TEXT DEFAULT (datetime('now')),
+    reviewed_at TEXT
+  );
+  -- One live proposal per book per field: re-scanning a book must not stack up
+  -- duplicates, and a field already sent is never offered again.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_ol_contrib_book_field
+    ON ol_contributions(book_id, field);
+  CREATE INDEX IF NOT EXISTS idx_ol_contrib_status ON ol_contributions(status);
+
   CREATE INDEX IF NOT EXISTS idx_books_isbn   ON books(isbn);
   CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
   CREATE INDEX IF NOT EXISTS idx_books_title  ON books(title);

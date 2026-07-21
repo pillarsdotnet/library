@@ -1690,5 +1690,90 @@ genreForm.addEventListener('submit', saveGenre);
 attachCombo(shelfForm.elements.room, () => META.rooms);
 attachCombo(shelfForm.elements.bookcase, () => META.bookcases);
 
+// ---------------------------------------------------------------------------
+// Giving back to Open Library. The queue is the review gate: approving a row
+// sends it, so the list has to make plain what would go where, and every row
+// says what Open Library currently holds — nothing, by construction.
+// ---------------------------------------------------------------------------
+const contributeDialog = $('#contributeDialog');
+
+async function openContribute() {
+  contributeDialog.showModal();
+  await renderContributions();
+}
+
+async function renderContributions() {
+  const list = $('#contributeList');
+  const [rows, status] = await Promise.all([
+    api('/ol-contributions'),
+    api('/ol-contributions/status'),
+  ]);
+
+  const creds = $('#contributeCreds');
+  creds.hidden = status.configured;
+  if (!status.configured) {
+    creds.textContent = 'No Open Library account is configured, so nothing can be sent yet. '
+      + 'Gaps can still be collected — see the README for the account setup.';
+  }
+
+  const sent = status.counts.sent || 0;
+  $('#contributeSummary').textContent = sent ? `${sent} already contributed.` : '';
+  $('#contributeEmpty').hidden = rows.length > 0;
+
+  list.innerHTML = rows.map((r) => `
+    <div class="contrib" data-id="${r.id}">
+      <div class="contrib-book">
+        <strong>${esc(r.title)}</strong>
+        <span class="hint">${esc(r.authors || '')} · ${esc(r.isbn || '')} · ${esc(r.olid)}</span>
+      </div>
+      <div class="contrib-field">
+        <span class="badge">${esc(r.label)}</span>
+        <span class="contrib-value">${r.field === 'cover' ? 'your cover photo' : esc(r.value)}</span>
+        ${r.error ? `<span class="msg err">${esc(r.error)}</span>` : ''}
+      </div>
+      <div class="contrib-actions">
+        <button type="button" class="primary" data-act="approve" ${status.configured ? '' : 'disabled'}>Send</button>
+        <button type="button" data-act="decline">Skip</button>
+      </div>
+    </div>`).join('');
+}
+
+$('#contributeList').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const row = btn.closest('.contrib');
+  const id = row.dataset.id;
+  btn.disabled = true;
+  try {
+    await api(`/ol-contributions/${id}/${btn.dataset.act}`, { method: 'POST' });
+  } catch (err) {
+    alert(`Could not send: ${err.message}`);
+  }
+  await renderContributions();
+});
+
+$('#contributeScanBtn').addEventListener('click', async () => {
+  const btn = $('#contributeScanBtn');
+  const was = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Looking…';
+  try {
+    // One request per book, so this is a button and not something that fires on
+    // every save. Open Library is a volunteer-run service; we are a guest here.
+    const { scanned, queued } = await api('/ol-contributions/scan', { method: 'POST' });
+    $('#contributeSummary').textContent = `Checked ${scanned} book${scanned === 1 ? '' : 's'}, found ${queued} gap${queued === 1 ? '' : 's'}.`;
+    await renderContributions();
+  } catch (err) {
+    alert('Could not check Open Library: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = was;
+  }
+});
+
+$('#contributeBtn').addEventListener('click', () => openContribute().catch((e) => alert(e.message)));
+$('#closeContributeDialog').addEventListener('click', () => contributeDialog.close());
+$('#contributeCloseBtn').addEventListener('click', () => contributeDialog.close());
+
 applyUnitLabels();
 refresh().catch((err) => alert('Failed to load: ' + err.message));

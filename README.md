@@ -277,9 +277,6 @@ ssh homelab 'sudo systemctl restart home-library'
 Docker on the node needs `sudo`. To change a secret, edit
 `/etc/home-library.env` and restart the unit.
 
-> The manifests in [`k8s/`](./k8s) are from an earlier Kubernetes deployment and
-> are no longer used; the cluster API is not running.
-
 ## HTTPS (for camera scanning)
 
 Browsers only allow camera access over **HTTPS** or on `localhost`, so barcode

@@ -24,6 +24,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   matched rather than duplicated.
 - `CHANGELOG.md` (this file).
 
+### Removed
+
+- The `k8s/` manifests, left over from an earlier Kubernetes deployment that no
+  longer exists. They pinned a node by hostname and named an image tag nothing
+  builds any more, so they were a wrong answer waiting to be followed. Deploy is
+  Docker under systemd — see the README. `git log` has them if they are ever
+  wanted back.
+
 ### Changed
 
 - Nothing in the shipped app names one particular deployment any more. The

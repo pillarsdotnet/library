@@ -18,7 +18,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   position — from the edition's `series` field, falling back to the work's
   `series:` subject tag. We contribute series information back, so it would be
   odd not to accept it.
+- Create records for books Open Library has no edition of, via `/api/import` —
+  off unless `OPENLIBRARY_ALLOW_IMPORT` is set, proposed through the same review
+  queue, and rehearsed with `?preview=true` so a book that turns out to exist is
+  matched rather than duplicated.
 - `CHANGELOG.md` (this file).
+
+### Changed
+
+- Nothing in the shipped app names one particular deployment any more. The
+  "camera needs HTTPS" advice pointed at one homelab's Tailscale URL, which is
+  no use to anyone running this elsewhere; it now names the host actually in
+  use, with a test to keep it that way.
+- README states plainly that there is no authentication of any kind, and what
+  that means before exposing the app anywhere.
 
 ### Fixed
 

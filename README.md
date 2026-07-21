@@ -39,6 +39,29 @@ dimensions are stored in **millimetres**. Capacity is computed by treating each
 book's *spine thickness* as the width it consumes along the shelf; a book fits
 if its height ≤ shelf height and its width ≤ shelf depth.
 
+## Access control: there isn't any
+
+**Every endpoint is unauthenticated.** There are no accounts, no login, no
+per-user anything. Whoever can reach the port can read the whole library, edit
+it, and delete it — and, if Open Library credentials are configured, can send
+contributions to a public catalogue under your account.
+
+That is a deliberate fit for the intended deployment — a private network
+(Tailscale, VPN, or a LAN you trust) where being able to reach the app *is* the
+authorisation — and it is the whole security model. There is nothing else.
+
+So, before putting this anywhere reachable:
+
+- **Do not expose it to the public internet as-is.** Put authentication in front
+  of it — HTTP basic auth in the reverse proxy is enough for a household;
+  `oauth2-proxy`, Authelia or `tailscale serve` if you want something better.
+- **Bind it to somewhere private.** The systemd unit described below publishes
+  the container port on `127.0.0.1` and lets nginx be the only thing that
+  listens outward, which is a good default to copy.
+- **Treat the Open Library keys as the sharp edge.** They turn "someone can
+  scribble on my book list" into "someone can write to a public catalogue as
+  me". Leave them unset unless you are contributing.
+
 ## Run it
 
 ### With Docker (recommended for a homelab)
@@ -68,6 +91,8 @@ Environment variables:
 | `GOOGLE_BOOKS_API_KEY` | _(none)_  | Optional; raises the Google Books lookup quota      |
 | `OPENLIBRARY_ACCESS_KEY` | _(none)_ | Optional; needed only to send contributions back    |
 | `OPENLIBRARY_SECRET_KEY` | _(none)_ | Paired with the access key                          |
+| `OPENLIBRARY_ALLOW_IMPORT` | _(unset)_ | `true` allows creating records for books Open Library lacks |
+| `OPENLIBRARY_SOURCE_PREFIX` | _(none)_ | `source_records` prefix for imports, agreed with Open Library |
 
 ### ISBN lookup sources & the Google Books quota
 
@@ -183,6 +208,35 @@ account, separate from your personal one.
 
 Until the keys are set, the queue still collects gaps; it just cannot send them,
 and says so.
+
+### Books Open Library has never heard of
+
+Some books — recent small-press titles especially — have no Open Library edition
+at all, so there is nothing to contribute to. Those can be *created* through
+`/api/import`, but creating a record is a different act from filling a blank: a
+bad edit is one wrong field, a bad import is a duplicate or a phantom book, and
+duplicates can only be merged by librarians. So it is off by default:
+
+```bash
+OPENLIBRARY_ALLOW_IMPORT=true
+OPENLIBRARY_SOURCE_PREFIX=yourbot   # the source_records prefix, agreed with Open Library
+```
+
+With both set, a scan proposes a new record for any ISBN Open Library does not
+have, provided the book carries enough to identify it — Open Library accepts
+either a complete record (title, authors, publishers, publish date) or a title
+plus a strong identifier (ISBN/LCCN), and both need `source_records`.
+
+Approving one runs it **twice**: first with `?preview=true`, which parses,
+validates and runs Open Library's own duplicate matching without saving. If the
+preview reports the book already matched an existing edition, nothing is
+created and the queue says which record it matched. Only a preview that would
+genuinely create something proceeds to the real import.
+
+> The bot application filed for this account states that it creates no records.
+> Leave `OPENLIBRARY_ALLOW_IMPORT` unset until that scope has been renegotiated
+> with Open Library — running beyond an approved scope is how bot privileges get
+> revoked.
 
 ### Using it
 

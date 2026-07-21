@@ -47,3 +47,32 @@ test('scannerErrorHelp tailors camera guidance to the platform', () => {
   const notFound = { name: 'Error', message: 'Error getting userMedia, error = NotFoundError: none' };
   assert.match(scannerErrorHelp(notFound), /No usable camera/);
 });
+
+// This is somebody else's app too. Nothing about one particular deployment —
+// its hostname, its Tailscale domain, its mount path — belongs in code that
+// ships to everyone; the insecure-context advice used to name one homelab's
+// HTTPS URL, which is no help to anyone running this anywhere else.
+test('the app hard-codes no deployment-specific host', () => {
+  const root = dirname(fileURLToPath(import.meta.url));
+  const shipped = ['public/app.js', 'public/corners.js', 'public/autocrop.js', 'public/index.html',
+    'public/styles.css', 'server.js', 'db.js', 'lookup.js', 'openlibrary.js', 'epub.js'];
+  const forbidden = /\bhomelab\b|dala-hue|\.ts\.net|100\.84\.\d+|10\.0\.0\.\d+/i;
+  for (const rel of shipped) {
+    const src = readFileSync(join(root, '..', rel), 'utf8');
+    const hit = src.split('\n').findIndex((l) => forbidden.test(l));
+    assert.equal(hit, -1, `${rel}:${hit + 1} names one specific deployment: ${src.split('\n')[hit]}`);
+  }
+});
+
+// The insecure-context message has to point at wherever this actually runs.
+test('insecure-context advice names the current host, not a fixed one', () => {
+  const scannerErrorHelp = loadFunction('scannerErrorHelp');
+  Object.defineProperty(globalThis, 'window', { value: { isSecureContext: false }, configurable: true });
+  Object.defineProperty(globalThis, 'location', {
+    value: { host: 'books.example.org:8080', pathname: '/library/' }, configurable: true,
+  });
+  Object.defineProperty(globalThis, 'navigator', { value: { userAgent: '', maxTouchPoints: 0 }, configurable: true });
+  const msg = scannerErrorHelp({ name: 'NotAllowedError', message: 'denied' });
+  assert.match(msg, /https:\/\/books\.example\.org:8080\/library\//, 'points at this deployment');
+  assert.match(msg, /type the ISBN in manually/, 'and offers a way through regardless');
+});

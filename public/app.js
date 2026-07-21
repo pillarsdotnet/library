@@ -973,8 +973,12 @@ function scannerErrorHelp(err) {
   const notFound = /NotFoundError|OverconstrainedError|DevicesNotFound/i.test(hay);
 
   if (!window.isSecureContext) {
-    return 'The camera needs a secure (HTTPS) connection. Open the app at ' +
-      'https://homelab.dala-hue.ts.net/library/ and try again.';
+    // Whatever HTTPS address this deployment has, only the person who set it up
+    // knows it — so name the host actually being used, not somebody else's.
+    const httpsHere = `https://${location.host}${location.pathname}`;
+    return 'The camera needs a secure (HTTPS) connection, and this page was opened over '
+      + `plain HTTP.\n\nTry ${httpsHere} — or ask whoever set this up for the HTTPS address. `
+      + 'You can type the ISBN in manually in the meantime.';
   }
   if (denied) {
     if (iOSNonSafari) {

@@ -146,7 +146,18 @@ account, separate from your personal one.
    [openlibrary.org](https://openlibrary.org/account/create) with a username
    ending in `Bot` — the suffix is required, and lets Recent Changes separate
    automated edits from human ones.
-2. **Request bot privileges.** Open an issue on the
+2. **Request API write access — this one is not optional.** Editing Open Library
+   *through the website* needs no approval; any confirmed account can do it, and
+   librarian status only adds merging and collections. **Editing through the API
+   is gated separately.** Infogami's REST handler calls `can_write()` on every
+   PUT, and Open Library overrides it to allow only accounts with the bot flag,
+   site admins, and members of `/usergroup/api`
+   ([code.py](https://github.com/internetarchive/openlibrary/blob/master/openlibrary/plugins/openlibrary/code.py),
+   [infogami api](https://github.com/internetarchive/infogami/blob/master/infogami/plugins/api/code.py)).
+   Without it every metadata edit here returns **403 Forbidden**, no matter how
+   legitimate.
+
+   So open an issue on the
    [openlibrary repo](https://github.com/internetarchive/openlibrary/issues)
    asking a site admin to grant bot privileges and add the account to the `API`
    usergroup. Say what the bot will edit and how often; ours fills empty
@@ -154,6 +165,10 @@ account, separate from your personal one.
    `series:` subject tag to works that have none, and uploads covers for
    editions that have none, all at human-review pace. Expect this
    to take a few days — it is a manual review by a volunteer.
+
+   **Covers are the exception.** `/books/OL…M/add-cover` is an ordinary form
+   endpoint with no `can_write()` check, so cover uploads should work as soon as
+   the account can log in — before the usergroup request is granted.
 3. **Get the keys.** Signed in as the bot, visit
    [archive.org/account/s3.php](https://archive.org/account/s3.php) and copy the
    access key and secret key. (Open Library authenticates with Internet Archive

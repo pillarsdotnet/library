@@ -26,3 +26,15 @@ if [ -n "$assets" ]; then
     exit 1
   fi
 fi
+
+# The version and its changelog note have drifted apart before — a release
+# shipped with no entry because a scripted edit silently missed. Fail fast if
+# the current version has no section in CHANGELOG.md. (A test enforces this in
+# CI too; this is just the quicker feedback.)
+version=$(node -p "require('./package.json').version" 2>/dev/null)
+if [ -n "$version" ] && ! grep -qF "[$version]" CHANGELOG.md; then
+  echo ""
+  echo "✖ package.json is at $version but CHANGELOG.md has no \"[$version]\" section."
+  echo "  Add the release note before committing."
+  exit 1
+fi

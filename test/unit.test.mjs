@@ -76,3 +76,15 @@ test('insecure-context advice names the current host, not a fixed one', () => {
   assert.match(msg, /https:\/\/books\.example\.org:8080\/library\//, 'points at this deployment');
   assert.match(msg, /type the ISBN in manually/, 'and offers a way through regardless');
 });
+
+// The version bump and its CHANGELOG entry have drifted apart before: a release
+// shipped with no note because a scripted edit silently failed to match. So the
+// invariant is checked here, where nothing can bypass it — the current version
+// must have a section in the changelog.
+test('the current version has a CHANGELOG entry', () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
+  const heading = new RegExp(`^##\\s*\\[${version.replace(/\./g, '\\.')}\\]`, 'm');
+  assert.match(changelog, heading, `CHANGELOG.md has no "## [${version}]" section — add one before releasing`);
+});

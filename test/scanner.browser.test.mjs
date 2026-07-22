@@ -195,6 +195,50 @@ test('scanning a duplicate ISBN opens the choice dialog immediately (not only on
   assert.ok(seed.id, 'seed book exists');
 });
 
+// A scanned barcode can misread into a *different* number whose check digit
+// still passes, so it validates fine and then finds no book. That is a misread
+// far more often than a book no source has, so a scan that 404s offers a
+// re-scan; a rate-limit (503) is a real outage, not a misread, and does not.
+test('a scan that finds nothing offers a re-scan; a rate-limit does not', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+
+  // Intercept the lookup so the test never depends on a live source. Enabled
+  // after load, so only the lookup call is affected.
+  await page.setRequestInterception(true);
+  let reply = { status: 404, body: { error: 'No metadata found for this ISBN' } };
+  page.on('request', (req) => {
+    if (req.url().includes('/api/lookup/')) {
+      req.respond({ status: reply.status, contentType: 'application/json', body: JSON.stringify(reply.body) });
+    } else req.continue();
+  });
+
+  const rescanBtn = () => page.$eval('#lookupMsg', (el) => {
+    const b = el.querySelector('button.link');
+    return b ? b.textContent : null;
+  }).catch(() => null);
+
+  // 404 from a scan → the offer appears, naming the number that missed.
+  await page.evaluate((v) => { document.querySelector('#isbn').value = v; window.lookup(true); }, '9781451787856');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.match(await page.$eval('#lookupMsg', (el) => el.textContent), /9781451787856/, 'the missed number is shown');
+  assert.match((await rescanBtn()) || '', /Scan again/, 'a re-scan is offered');
+
+  // The same 404 from manual entry (not a scan) is just a message, no re-scan.
+  await page.evaluate((v) => { document.querySelector('#isbn').value = v; window.lookup(false); }, '9781451787856');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await rescanBtn(), null, 'no re-scan offer when the ISBN was typed, not scanned');
+
+  // A rate-limited source (503) from a scan is an outage, not a misread.
+  reply = { status: 503, body: { error: 'Google Books is rate-limited right now' } };
+  await page.evaluate((v) => { document.querySelector('#isbn').value = v; window.lookup(true); }, '9781451787856');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await rescanBtn(), null, 'a rate-limit does not offer a re-scan');
+  await page.close();
+});
+
 test('duplicate ISBN prompt: Cancel keeps the record, Edit opens the original', { skip }, async () => {
   const isbn = '9780316158541';
   await fetch(`${BASE}/api/books`, {

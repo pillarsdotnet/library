@@ -3,7 +3,13 @@
 const $ = (sel) => document.querySelector(sel);
 // Relative to the document <base>, so the app works under any mount path (/library).
 const api = (path, opts) => fetch('api' + path, opts).then(async (r) => {
-  if (!r.ok && r.status !== 204) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  if (!r.ok && r.status !== 204) {
+    // Carry the status so callers can tell apart "no such book" (404) from
+    // "source was rate-limited" (503) — a scan should re-offer only the first.
+    const err = new Error((await r.json().catch(() => ({}))).error || r.statusText);
+    err.status = r.status;
+    throw err;
+  }
   return r.status === 204 ? null : r.json();
 });
 
@@ -826,9 +832,34 @@ async function lookup(fromScan = false) {
     msg.textContent = `Found via ${SOURCE_LABELS[d.source] || d.source}.` + (gotDims ? ' Dimensions included.' : ' No dimensions available — measure manually for shelf fit.');
     msg.classList.add(gotDims ? 'ok' : 'warn');
     checkFit();
-  } catch (err) { msg.textContent = err.message; msg.classList.add('err'); }
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.classList.add('err');
+    // A scan that finds nothing is more often a misread barcode than a book no
+    // source has — a 1D barcode can misread into a *different* number whose
+    // check digit still passes (a real one: 9781451787856 for 9781451638356),
+    // so validation cannot catch it and "not found" is where it surfaces. Offer
+    // a re-scan. A rate-limit (503) is not a misread, so it is left alone.
+    if (fromScan === true && err.status === 404) offerRescan(isbn);
+  }
   // A scanned duplicate gets the full choice dialog right away.
   if (fromScan === true) await handleScanDuplicate();
+}
+
+// Turn a not-found after a scan into an offer to try again, rather than a dead
+// end. The number stays in the box so it can be hand-corrected instead, and a
+// fresh scan overwrites it.
+function offerRescan(scanned) {
+  const msg = $('#lookupMsg');
+  msg.className = 'msg warn';
+  msg.textContent = `No match for ${scanned}. A barcode can misread as a different `
+    + 'valid-looking number — scan again, or check the digits by hand. ';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'link';
+  btn.textContent = '📷 Scan again';
+  btn.addEventListener('click', () => { msg.hidden = true; startScanner(); });
+  msg.appendChild(btn);
 }
 
 function setIfEmpty(name, value) {

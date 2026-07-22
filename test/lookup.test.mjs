@@ -173,19 +173,54 @@ test('Barnes & Noble reports the binding of the edition that was asked for', () 
   assert.equal(parseBarnesNoble(bnGraph, '9780593820254').format, 'paperback');
 });
 
-test('skips the B&N scrape when a primary source already reports the binding', async () => {
+test('skips the B&N scrape when every field it could supply is already filled', async () => {
+  // B&N is a heavy scrape, so it is consulted only when it might fill a blank.
+  // A book Open Library describes completely — title, author, publisher, date,
+  // pages, cover and binding — leaves B&N nothing to add, so it is not called.
   const isbn = '9780593820247';
   const calls = [];
   const d = await lookupIsbn(isbn, {
     apiKey: null,
     fetch: fakeFetch({
-      ol: { body: { [`ISBN:${isbn}`]: { title: 'DCC' } } },
+      ol: {
+        body: {
+          [`ISBN:${isbn}`]: {
+            title: 'DCC',
+            authors: [{ name: 'Matt Dinniman' }],
+            publishers: [{ name: 'Ace' }],
+            publish_date: '2024',
+            number_of_pages: 425,
+            cover: { large: 'https://covers/OL1-L.jpg' },
+          },
+        },
+      },
       olEdition: { body: { physical_format: 'Hardcover' } },
       bn: { text: bnGraph },
     }, calls),
   });
   assert.equal(d.format, 'hardback');
-  assert.ok(!calls.some((u) => u.includes('barnesandnoble.com')), 'no scrape when the binding is known');
+  assert.ok(!calls.some((u) => u.includes('barnesandnoble.com')), 'nothing left for B&N to fill, so no scrape');
+});
+
+test('consults B&N to fill any blank it can, not only the binding', async () => {
+  // The new rule: B&N is asked whenever a field it carries is still blank —
+  // here Open Library gives only a title and the binding, so author, publisher,
+  // date, pages and cover are all still B&N's to supply.
+  const isbn = '9780593820247';
+  const calls = [];
+  const d = await lookupIsbn(isbn, {
+    apiKey: null,
+    fetch: fakeFetch({
+      ol: { body: { [`ISBN:${isbn}`]: { title: 'Dungeon Crawler Carl' } } },
+      olEdition: { body: { physical_format: 'Hardcover' } },   // binding known...
+      bn: { text: bnGraph },
+    }, calls),
+  });
+  assert.ok(calls.some((u) => u.includes('barnesandnoble.com')), '...but other fields are blank, so B&N is consulted');
+  assert.equal(d.format, 'hardback', 'the binding Open Library gave is kept');
+  assert.equal(d.authors, 'Matt Dinniman', 'and the missing author is filled from B&N');
+  assert.equal(d.source, 'openlibrary', 'source still credits who answered first');
+  assert.equal(d.title, 'Dungeon Crawler Carl', 'B&N does not overwrite what was already there');
 });
 
 test('consults B&N for the binding when neither primary source records one', async () => {

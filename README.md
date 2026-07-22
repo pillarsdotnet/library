@@ -113,15 +113,39 @@ Environment variables:
 | `OPENLIBRARY_SECRET_KEY` | _(none)_ | Paired with the access key                          |
 | `OPENLIBRARY_ALLOW_IMPORT` | _(unset)_ | `true` allows creating records for books Open Library lacks |
 | `OPENLIBRARY_SOURCE_PREFIX` | _(none)_ | `source_records` prefix for imports, agreed with Open Library |
+| `LOOKUP_TTL_DAYS` | `30` | How long a found lookup stays cached (floored at 1 day) |
+| `LOOKUP_NEGATIVE_TTL_HOURS` | `24` | How long a "not found" stays cached (floored at 24h) |
 
 ### ISBN lookup sources & the Google Books quota
 
-Lookups merge **Open Library** (preferred) and **Google Books**. Open Library
-doesn't have every book, and **keyless Google Books has a very small shared daily
-quota** — when it's exhausted the API returns HTTP 429, and a book that's only on
-Google Books will fail to auto-fill (the app now says it's rate-limited rather
-than "not found"). A free Google Books API key raises the quota to ~1,000
-lookups/day and makes this reliable.
+Lookups draw on three sources, **in order, stopping as soon as the record is
+complete**:
+
+1. **Open Library** — always consulted first.
+2. **Google Books** — only if a field it could supply is still blank (title,
+   author, publisher, date, page count, cover, dimensions; it has no binding).
+3. **Barnes & Noble** — only if a field it could supply is still blank (as above
+   plus binding, but no dimensions). This is a page scrape, so it runs last and
+   only when it might actually help.
+
+Each source fills only the blanks the previous ones left, so a book Open Library
+describes completely costs a single request. Series information comes from Open
+Library alone.
+
+**Every result is cached** (see the `LOOKUP_*` variables above): a re-scan, a
+retry, or a second look at the same book is served from the cache without
+spending another query. A found result is kept 30 days, a "not found" at least
+24 hours. When a source is rate-limited, the cache is used in preference to
+failing — stale metadata beats none. Add `?refresh=1` to a lookup to force a
+re-fetch.
+
+Open Library doesn't have every book, and **keyless Google Books has a very
+small shared daily quota** — when it's exhausted the API returns HTTP 429, and a
+book that's only on Google Books will fail to auto-fill (the app says it's
+rate-limited rather than "not found"). A free Google Books API key raises the
+quota to ~1,000 lookups/day and makes this reliable. The hosts are overridable
+(`OPENLIBRARY_BASE`, `GOOGLE_BOOKS_BASE`, `BARNESNOBLE_BASE`) for a mirror or a
+test double; they default to the real services.
 
 #### Obtain a key (free, no billing required)
 

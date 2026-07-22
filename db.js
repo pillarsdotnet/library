@@ -136,6 +136,19 @@ db.exec(`
     ON ol_contributions(book_id, field);
   CREATE INDEX IF NOT EXISTS idx_ol_contrib_status ON ol_contributions(status);
 
+  -- Cache of ISBN lookups (the merged result across every metadata source), so a
+  -- re-scan, a retry, or a second glance at the same book does not spend another
+  -- query against a rate-limited service. A book's metadata barely changes, so
+  -- hits are cheap and long-lived; misses are kept only briefly, since a book
+  -- absent today may be added to a source tomorrow. A rate-limit is never cached
+  -- — it is a transient outage, not an answer about the book.
+  CREATE TABLE IF NOT EXISTS lookup_cache (
+    isbn       TEXT PRIMARY KEY,
+    found      INTEGER NOT NULL,      -- 1 = metadata cached in the data column, 0 = genuinely not found
+    data       TEXT,                  -- JSON of the lookup result, NULL when not found
+    cached_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE INDEX IF NOT EXISTS idx_books_isbn   ON books(isbn);
   CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
   CREATE INDEX IF NOT EXISTS idx_books_title  ON books(title);

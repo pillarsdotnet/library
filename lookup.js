@@ -10,6 +10,13 @@ export class RateLimitError extends Error {
   }
 }
 
+// Source hosts default to the real services, but are overridable so a mirror —
+// or a test stub — can stand in. OPENLIBRARY_BASE is shared with the
+// contribution module, which points at the same Open Library.
+const OL_BASE = process.env.OPENLIBRARY_BASE || 'https://openlibrary.org';
+const GB_BASE = process.env.GOOGLE_BOOKS_BASE || 'https://www.googleapis.com';
+const BN_BASE = process.env.BARNESNOBLE_BASE || 'https://www.barnesandnoble.com';
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Transient server errors worth retrying (a freshly-enabled Google API key
@@ -152,7 +159,7 @@ export function parseBarnesNoble(html, isbn) {
 // best-effort and tolerant: any failure just yields null.
 async function fetchBarnesNoble(isbn, doFetch) {
   try {
-    const r = await doFetch(`https://www.barnesandnoble.com/w/?ean=${isbn}`, {
+    const r = await doFetch(`${BN_BASE}/w/?ean=${isbn}`, {
       headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'en-US,en;q=0.9' },
       signal: AbortSignal.timeout(8000),
     });
@@ -207,8 +214,8 @@ async function fetchOpenLibrary(isbn, doFetch) {
   // The bulk endpoint omits the binding, so ask the edition record for it too.
   // Runs alongside, so it costs no extra wall time, and is optional.
   const [r, edition] = await Promise.all([
-    doFetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`),
-    doFetch(`https://openlibrary.org/isbn/${isbn}.json`).then((x) => (x.ok ? x.json() : null)).catch(() => null),
+    doFetch(`${OL_BASE}/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`),
+    doFetch(`${OL_BASE}/isbn/${isbn}.json`).then((x) => (x.ok ? x.json() : null)).catch(() => null),
   ]);
   if (r.status === 429) throw new RateLimitError('Open Library rate-limited');
   if (!r.ok) return null;
@@ -230,7 +237,7 @@ async function fetchOpenLibrary(isbn, doFetch) {
   if (!series) {
     const workKey = edition?.works?.[0]?.key;
     if (/^\/works\/OL\d+W$/.test(workKey || '')) {
-      const work = await doFetch(`https://openlibrary.org${workKey}.json`)
+      const work = await doFetch(`${OL_BASE}${workKey}.json`)
         .then((x) => (x.ok ? x.json() : null))
         .catch(() => null);
       series = seriesFromWork(work);
@@ -252,7 +259,7 @@ async function fetchOpenLibrary(isbn, doFetch) {
 }
 
 async function fetchGoogleBooks(isbn, doFetch, apiKey) {
-  let url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&country=US`;
+  let url = `${GB_BASE}/books/v1/volumes?q=isbn:${isbn}&country=US`;
   if (apiKey) url += `&key=${apiKey}`;
   const r = await doFetch(url);
   // Keyless Google Books has a tiny shared daily quota; surface that distinctly.
@@ -273,64 +280,79 @@ async function fetchGoogleBooks(isbn, doFetch, apiKey) {
   };
 }
 
-// Look up an ISBN. Returns merged metadata (Open Library preferred, Google Books
-// filling gaps), null if neither source has the book, or throws RateLimitError
-// if a source was throttled and nothing else answered.
+// A value counts as present only if it actually says something: an empty string,
+// a null, or a zero page-count / dimension is a blank to be filled.
+const isFilled = (v) => v !== null && v !== undefined && v !== '' && v !== 0;
+const allFilled = (obj, keys) => keys.every((k) => isFilled(obj[k]));
+// Copy over only the blanks. A source that returns '' or null for a field it
+// does not carry (Google Books has no binding; Barnes & Noble has no
+// dimensions) simply fills nothing there — capability enforces itself.
+function fillBlanks(target, src) {
+  if (!src) return;
+  for (const [k, v] of Object.entries(src)) {
+    if (isFilled(v) && !isFilled(target[k])) target[k] = v;
+  }
+}
+
+// The fields each source can actually supply, intersected with what the app
+// stores — so a source is consulted only when it could fill a field still blank.
+// Google Books carries no binding; Barnes & Noble carries no dimensions; only
+// Open Library carries a usable series, so no fallback is asked for one.
+const GOOGLE_FIELDS = ['title', 'authors', 'publisher', 'published_date',
+  'page_count', 'cover_url', 'height_mm', 'width_mm', 'thickness_mm'];
+const BN_FIELDS = ['title', 'authors', 'publisher', 'published_date',
+  'page_count', 'cover_url', 'format'];
+
+// Look up an ISBN, consulting sources in order and stopping as soon as the
+// answer is complete: Open Library first, then Google Books only if a field it
+// could supply is still blank, then Barnes & Noble on the same condition. Each
+// source fills only the blanks the previous ones left. Returns the merged
+// record, null if no source has the book, or throws RateLimitError if a source
+// was throttled and nothing else answered.
 export async function lookupIsbn(isbn, opts = {}) {
   const baseFetch = opts.fetch || globalThis.fetch;
   const apiKey = opts.apiKey ?? process.env.GOOGLE_BOOKS_API_KEY;
   // Retry transient 5xx on the JSON APIs (smooths Google's new-key warm-up 503s).
   const doFetch = withRetry(baseFetch, opts.retries ?? 3, opts.retryDelayMs ?? 250);
 
-  const [openlib, google] = await Promise.allSettled([
-    fetchOpenLibrary(isbn, doFetch),
-    fetchGoogleBooks(isbn, doFetch, apiKey),
-  ]);
-  const ol = openlib.status === 'fulfilled' ? openlib.value : null;
-  const gb = google.status === 'fulfilled' ? google.value : null;
+  const result = {
+    isbn, title: '', authors: '', publisher: '', published_date: '',
+    page_count: null, cover_url: '', format: '',
+    height_mm: null, width_mm: null, thickness_mm: null,
+    series: '', series_order: null,
+  };
+  let sourceName = null;   // credited to the first source that answered
+  let throttled = false;
 
-  if (ol || gb) {
-    const first = (...vals) => vals.find((v) => v != null && v !== '') ?? '';
-    let format = first(ol?.format, gb?.format);
-    // Neither primary source records the binding for roughly half of editions.
-    // Barnes & Noble publishes it per edition, so ask them just for that. The
-    // scrape is heavy, hence only when it is the missing piece, and any failure
-    // simply leaves the field empty. Opt out with { bindingFallback: false }.
-    if (!format && opts.bindingFallback !== false) {
-      format = (await fetchBarnesNoble(isbn, baseFetch))?.format || '';
+  const consult = async (name, run) => {
+    let data = null;
+    try { data = await run(); } catch (err) {
+      if (err instanceof RateLimitError) { throttled = true; return; }
+      throw err;
     }
-    return {
-      isbn,
-      title: first(ol?.title, gb?.title),
-      authors: first(ol?.authors, gb?.authors),
-      publisher: first(ol?.publisher, gb?.publisher),
-      published_date: first(ol?.published_date, gb?.published_date),
-      page_count: first(ol?.page_count, gb?.page_count) || null,
-      cover_url: first(ol?.cover_url, gb?.cover_url),
-      format,
-      height_mm: ol?.height_mm ?? gb?.height_mm ?? null,
-      width_mm: ol?.width_mm ?? gb?.width_mm ?? null,
-      thickness_mm: ol?.thickness_mm ?? gb?.thickness_mm ?? null,
-      // Only Open Library publishes a series we can use. Google Books has a
-      // seriesInfo block, but it carries an opaque series id and a display
-      // number rather than the series' name, which is the part we need.
-      series: ol?.series || '',
-      series_order: ol?.series_order ?? null,
-      source: ol ? 'openlibrary' : 'googlebooks',
-    };
+    if (data) { if (!sourceName) sourceName = name; fillBlanks(result, data); }
+  };
+
+  // 1. Open Library.
+  await consult('openlibrary', () => fetchOpenLibrary(isbn, doFetch));
+
+  // 2-3. Google Books, only if it could fill something still blank.
+  if (!allFilled(result, GOOGLE_FIELDS)) {
+    await consult('googlebooks', () => fetchGoogleBooks(isbn, doFetch, apiKey));
   }
 
-  // Last-resort fallback: scrape Barnes & Noble. Runs only when the primary
-  // sources have nothing, so it also covers the case where Google was throttled.
-  // Uses baseFetch (it has its own single-shot timeout, no retry needed).
-  const bn = await fetchBarnesNoble(isbn, baseFetch);
-  // Same shape whichever source answered: the client reads these keys blind.
-  if (bn) return { isbn, ...bn, series: '', series_order: null, source: 'barnesnoble' };
+  // 4-5. Barnes & Noble, likewise — a heavy scrape, so only when it might help.
+  // Uses baseFetch (it has its own single-shot timeout, no retry). Opt out with
+  // { bindingFallback: false }.
+  if (opts.bindingFallback !== false && !allFilled(result, BN_FIELDS)) {
+    await consult('barnesnoble', () => fetchBarnesNoble(isbn, baseFetch));
+  }
 
-  // Still nothing — if a source was rate-limited, that's why (not a missing book).
-  const throttled = [openlib, google].some(
-    (r) => r.status === 'rejected' && r.reason instanceof RateLimitError,
-  );
-  if (throttled) throw new RateLimitError();
-  return null;
+  if (!sourceName) {
+    // Nothing found — if a source was rate-limited, that's why, not a missing book.
+    if (throttled) throw new RateLimitError();
+    return null;
+  }
+  result.source = sourceName;
+  return result;
 }

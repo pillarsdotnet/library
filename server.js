@@ -693,21 +693,67 @@ router.delete('/api/genres/:id', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// ISBN lookup — merges Open Library and Google Books (see lookup.js).
+// ISBN lookup — merges Open Library and Google Books (see lookup.js), behind a
+// cache so a re-scan or retry does not spend another query on a book already
+// answered. Every cached answer — found or not — is kept at least 24 hours;
+// found ones longer, since metadata barely changes. `?refresh=1` skips the
+// cache to re-fetch on demand.
+//
+// When a source is rate-limited, stale cache beats no data: rather than fail, a
+// throttled lookup falls back to whatever was last cached for the ISBN, however
+// old, and only errors when nothing was ever cached. A rate-limit is itself
+// never written to the cache — it is an outage, not an answer about the book.
 // ---------------------------------------------------------------------------
+const DAY_MS = 24 * 3600 * 1000;
+// Floor every TTL at 24h so nothing is ever discarded younger than a day.
+const LOOKUP_TTL_MS = Math.max(Number(process.env.LOOKUP_TTL_DAYS ?? 30) * DAY_MS, DAY_MS);
+const NEGATIVE_TTL_MS = Math.max(Number(process.env.LOOKUP_NEGATIVE_TTL_HOURS ?? 24) * 3600 * 1000, DAY_MS);
+
+const getCachedLookup = db.prepare('SELECT found, data, cached_at FROM lookup_cache WHERE isbn = ?');
+const putCachedLookup = db.prepare(`INSERT INTO lookup_cache (isbn, found, data, cached_at)
+  VALUES (@isbn, @found, @data, datetime('now'))
+  ON CONFLICT(isbn) DO UPDATE SET found = @found, data = @data, cached_at = datetime('now')`);
+
+const cacheAgeMs = (row) => Date.now() - new Date(row.cached_at + 'Z').getTime();
+// A cached row is fresh if it is younger than the TTL for its kind.
+function freshCachedLookup(isbn) {
+  const row = getCachedLookup.get(isbn);
+  if (!row) return null;
+  const ttlMs = row.found ? LOOKUP_TTL_MS : NEGATIVE_TTL_MS;
+  return cacheAgeMs(row) <= ttlMs ? row : null;
+}
+
+// Turn a cached row into a response. `state` is the X-Lookup-Cache label.
+function serveCached(res, row, state) {
+  res.set('X-Lookup-Cache', state);
+  if (row.found) return res.json(JSON.parse(row.data));
+  return res.status(404).json({ error: 'No metadata found for this ISBN' });
+}
+
 router.get('/api/lookup/:isbn', async (req, res) => {
   const isbn = req.params.isbn.replace(/[^0-9Xx]/g, '');
   if (!isbn) return res.status(400).json({ error: 'invalid isbn' });
 
+  if (req.query.refresh !== '1') {
+    const fresh = freshCachedLookup(isbn);
+    if (fresh) return serveCached(res, fresh, 'hit');
+  }
+
   try {
     const data = await lookupIsbn(isbn);
+    // Cache the answer either way — found, or a genuine "no source has it".
+    putCachedLookup.run({ isbn, found: data ? 1 : 0, data: data ? JSON.stringify(data) : null });
+    res.set('X-Lookup-Cache', 'miss');
     if (!data) return res.status(404).json({ error: 'No metadata found for this ISBN' });
     res.json(data);
   } catch (err) {
     if (err instanceof RateLimitError) {
+      // Prefer stale data to no data: whatever was last cached, however old.
+      const stale = getCachedLookup.get(isbn);
+      if (stale) return serveCached(res, stale, 'stale');
       return res.status(503).json({
-        error: 'Google Books is rate-limited right now (no API key set). Try again later, '
-          + 'or set GOOGLE_BOOKS_API_KEY. This book may just not be in Open Library.',
+        error: 'A metadata source is rate-limited right now, and this ISBN has not been '
+          + 'looked up before, so there is nothing cached to fall back on. Try again later.',
       });
     }
     console.error('lookup failed', err);

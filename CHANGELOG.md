@@ -5,6 +5,41 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.2.0] — 2026-07-21
+
+### Added
+
+- ISBN lookups are cached, so a re-scan, a retry, or a second look at the same
+  book does not spend another query against a rate-limited source. Every answer
+  — found or not — is kept at least 24 hours; found ones for 30 days, since
+  metadata barely changes. `?refresh=1` on the lookup endpoint re-fetches on
+  demand.
+
+### Changed
+
+- Metadata sources are now consulted in order and only as needed, rather than
+  Open Library and Google Books always in parallel: Open Library first, then
+  Google Books only if a field it could supply is still blank, then Barnes &
+  Noble on the same condition. A book Open Library describes completely costs
+  one request, not three — and Barnes & Noble, a heavy scrape, now fills any
+  blank field it can rather than the binding alone.
+- When a source is rate-limited, a lookup falls back to whatever was last cached
+  for that ISBN, however old, in preference to failing — stale data beats no
+  data. Only an ISBN never looked up before returns an error.
+- Metadata source hosts are overridable (`OPENLIBRARY_BASE`, `GOOGLE_BOOKS_BASE`,
+  `BARNESNOBLE_BASE`), so a mirror or a test stub can stand in. They default to
+  the real services.
+
+## [2.1.0] — 2026-07-21
+
+### Added
+
+- When a scanned ISBN finds no metadata, the app offers a re-scan rather than a
+  dead end. A 1D barcode can misread into a *different* number whose check digit
+  still passes — 9781451787856 for 9781451638356 (War Maid's Choice) is a real
+  one — so validation cannot catch it and "not found" is where it surfaces. A
+  rate-limited source (503) is an outage, not a misread, and does not prompt.
+
 ## [2.0.0] — 2026-07-21
 
 The version was still 1.0.0 after a year of features and one migration that

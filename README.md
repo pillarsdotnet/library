@@ -309,20 +309,27 @@ and is served at `http://homelab/library/` (also `http://10.0.0.2/library/`,
 - port 3000 is published on `127.0.0.1:30800`, fronted by the node's nginx, which
   proxies `location /library/` (see [`deploy/nginx-library.conf`](./deploy/nginx-library.conf)).
 
-Deploy / update — build locally, hand the image to the node, restart the unit.
-There is no image registry, so the image travels over ssh:
+Deploy / update — one script builds locally, hands the image to the node over
+ssh (there is no image registry), restarts the unit, and prunes old images:
 
 ```bash
-V=$(node -p "require('./package.json').version")
-docker build -t "library.local/home-library:$V" -t library.local/home-library:latest .
-docker save "library.local/home-library:$V" library.local/home-library:latest \
-  | ssh homelab 'sudo docker load'
-ssh homelab 'sudo systemctl restart home-library'
+deploy/deploy.sh                 # deploys to host "homelab"
+HOST=myhost deploy/deploy.sh     # or to another host
 ```
 
-Two tags, on purpose. The unit runs `:latest`, so a release never needs the unit
-edited — and the version tag stays alongside it so you can still tell what is on
-the node, and roll back to a specific build by tagging it `:latest` again.
+It tags the build with both the version and `:latest`. The unit runs `:latest`,
+so a release never needs the unit edited; the version tag stays alongside so you
+can tell what is on the node. After restarting, every home-library image except
+the one just deployed is pruned — the running container keeps a reference to its
+own image, so this can never remove what is in use. **Roll back** by checking out
+the tag and re-running the script:
+
+```bash
+git checkout v2.1.0 && deploy/deploy.sh
+```
+
+Each release is tagged in git (`git tag -l 'v*'`), so a rollback is a name, not
+a commit hunt.
 
 Docker on the node needs `sudo`. To change a secret, edit
 `/etc/home-library.env` and restart the unit.

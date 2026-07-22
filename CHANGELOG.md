@@ -5,6 +5,15 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- `deploy/deploy.sh` now is the deploy: it builds, ships the image to the node,
+  restarts the unit, and prunes every old home-library image afterwards, leaving
+  only what is running. Rollback is `git checkout v<x.y.z> && deploy/deploy.sh` —
+  each release is a git tag.
+
 ## [2.2.0] — 2026-07-21
 
 ### Added

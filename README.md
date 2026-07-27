@@ -310,19 +310,33 @@ and is served at `http://homelab/library/` (also `http://10.0.0.2/library/`,
   proxies `location /library/` (see [`deploy/nginx-library.conf`](./deploy/nginx-library.conf)).
 
 Deploy / update — one script builds locally, hands the image to the node over
-ssh (there is no image registry), restarts the unit, and prunes old images:
+ssh (there is no image registry), restarts the unit, health-checks it, and prunes
+old images:
 
 ```bash
 deploy/deploy.sh                 # deploys to host "homelab"
 HOST=myhost deploy/deploy.sh     # or to another host
+HEALTH_TIMEOUT=120 deploy/deploy.sh   # allow longer for the app to come up
 ```
 
 It tags the build with both the version and `:latest`. The unit runs `:latest`,
 so a release never needs the unit edited; the version tag stays alongside so you
-can tell what is on the node. After restarting, every home-library image except
-the one just deployed is pruned — the running container keeps a reference to its
-own image, so this can never remove what is in use. **Roll back** by checking out
-the tag and re-running the script:
+can tell what is on the node.
+
+After the restart the script **will not report success until the app answers**.
+Because the unit has `Restart=always`, `systemctl restart` exits 0 even when the
+container dies on startup and respawns forever — so the restart proves nothing on
+its own. The check polls `http://127.0.0.1:30800/library/` on the node (the port is
+loopback-only) until it returns 200, up to `HEALTH_TIMEOUT` seconds, and then
+confirms the running container really is the image just built, catching a restart
+that quietly kept older code. If either check fails the script prints
+`systemctl status` and the container log, exits non-zero, and **skips the prune**,
+so every previous image is still on the node to roll back to.
+
+Only once the check passes is every home-library image except the one just
+deployed pruned — the running container keeps a reference to its own image, so
+this can never remove what is in use. **Roll back** by checking out the tag and
+re-running the script:
 
 ```bash
 git checkout v2.1.0 && deploy/deploy.sh

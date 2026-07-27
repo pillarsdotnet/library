@@ -13,6 +13,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   restarts the unit, and prunes every old home-library image afterwards, leaving
   only what is running. Rollback is `git checkout v<x.y.z> && deploy/deploy.sh` —
   each release is a git tag.
+- A deploy no longer reports success until the app answers. Because the unit has
+  `Restart=always`, `systemctl restart` exits 0 even while the container is dying
+  and respawning in a loop, so a deploy could report success over a total outage.
+  The script now polls the app on the node for HTTP 200 (`HEALTH_TIMEOUT`, default
+  60s) and confirms the running container is the image just built; on failure it
+  dumps `systemctl status` and the container log, skips the prune so the previous
+  images remain for rollback, and exits non-zero.
 
 ## [2.2.0] — 2026-07-21
 

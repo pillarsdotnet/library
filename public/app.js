@@ -150,8 +150,8 @@ function renderBookCard(b) {
       ${b.is_library_book && b.due_date
         // The word matters as much as the colour: colour alone conveys nothing to a
         // screen reader, or to anyone who cannot distinguish it.
-        ? `<p class="loc due${isOverdue(b.due_date, todayUtcIso()) ? ' overdue' : ''}">⏰ ${
-            isOverdue(b.due_date, todayUtcIso()) ? 'Overdue since' : 'Due'} ${esc(b.due_date)}</p>`
+        ? `<p class="loc due${isOverdue(b.due_date, todayLocalIso()) ? ' overdue' : ''}">⏰ ${
+            isOverdue(b.due_date, todayLocalIso()) ? 'Overdue since' : 'Due'} ${esc(b.due_date)}</p>`
         : ''}
       ${b.source ? `<p class="loc muted-text">via ${esc(SOURCE_LABELS[b.source] || b.source)}</p>` : ''}
     </div>`;
@@ -983,18 +983,23 @@ function onQuaggaDetected(result) {
 // Is a library book's due date in the past? Pure and date-injectable so it can be
 // tested without waiting for the calendar.
 //
-// Compared as YYYY-MM-DD strings, which sorts correctly, and deliberately against a
-// UTC "today" to match the server's date('now') in the overdue filter. Using the local
-// date here instead would let the badge and the "Overdue only" filter disagree for a
-// few hours each night, and a UI arguing with itself is worse than being slightly
-// eager. A book due TODAY is not overdue: only strictly earlier dates are.
+// Compared as YYYY-MM-DD strings, which sorts correctly, against the LOCAL civil
+// date — the same basis as the server's date('now','localtime') in the overdue
+// filter, so the card and the "Overdue only" filter always agree. "Overdue" is a
+// question about the calendar on the wall: a book due today must not turn red at 8pm
+// merely because UTC has already rolled over. A book due TODAY is not overdue; only
+// strictly earlier dates are.
 function isOverdue(dueDate, todayIso) {
   if (!dueDate) return false;
   return String(dueDate).slice(0, 10) < todayIso;
 }
 
-function todayUtcIso() {
-  return new Date().toISOString().slice(0, 10);
+// Built from the local date parts rather than toISOString(), which is always UTC and
+// would be a day ahead for anyone west of Greenwich for part of every day.
+function todayLocalIso() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function isValidEan(code) {

@@ -5,6 +5,26 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.2] — 2026-07-28
+
+### Changed
+
+- Due dates are now judged against the **local civil date** on both sides — the
+  server's overdue filter uses `date('now','localtime')` and the card compares against
+  the browser's local date. "Overdue" is a question about the calendar on the wall, so
+  a book due today should not turn red at 8pm merely because UTC has rolled over.
+
+  This only means anything if the container is told its timezone: SQLite reads the
+  process timezone, so without `TZ` the container runs on UTC and `localtime` is a
+  no-op. `TZ` therefore belongs in the env file passed to the container — setting it
+  via systemd `Environment=` looks right and does nothing, because that reaches the
+  `docker run` client rather than the container. In a failover pair it must be set
+  **identically on both nodes**: inheriting the host would make a book overdue on one
+  node and not the other, depending on which is active.
+
+  The server now logs its timezone at startup, so a container silently running on UTC
+  is visible rather than quietly shifting what counts as overdue.
+
 ## [2.3.1] — 2026-07-27
 
 ### Changed

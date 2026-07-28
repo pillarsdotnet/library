@@ -305,6 +305,12 @@ behind the node's nginx, served under a sub-path such as `/library/`.
 - the container runs with `BASE_PATH=/library` and `--rm`, so the unit owns its
   whole lifecycle — never start one by hand, the unit's `ExecStartPre` removes it;
 - the SQLite DB lives on the node at `/var/lib/home-library`, bind-mounted to `/data`;
+- **`TZ` must be set in that env file** (e.g. `TZ=America/New_York`). Due dates are
+  compared against the local civil date, and SQLite reads the process timezone, so
+  without it the container runs on UTC and "overdue" silently shifts by hours. Setting
+  it via systemd `Environment=` does *not* work — that reaches the `docker run` client,
+  not the container. With two nodes, set the same value on both, or a book is overdue
+  on one and not the other. The server logs its timezone at startup;
 - secrets (`GOOGLE_BOOKS_API_KEY`, `OPENLIBRARY_ACCESS_KEY`,
   `OPENLIBRARY_SECRET_KEY`) come from `/etc/home-library.env` on the node;
 - port 3000 is published on `127.0.0.1:30800`, fronted by the node's nginx, which

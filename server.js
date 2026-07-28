@@ -195,7 +195,12 @@ router.get('/api/books', (req, res) => {
   // with no due date still counts as borrowed — it is undated, not un-borrowed, and
   // excluding it would quietly hide the thing this filter exists to surface.
   if (library === 'overdue') {
-    where.push("b.is_library_book = 1 AND b.due_date IS NOT NULL AND b.due_date < date('now')");
+    // date('now','localtime'), not UTC: "overdue" is a question about the calendar on
+    // the wall, and a book due today should not turn red at 8pm because it is already
+    // tomorrow in UTC. SQLite reads the process timezone, so the container MUST be
+    // given TZ — without it this silently means UTC. The startup log states the
+    // timezone in use so a missing TZ is visible rather than quietly wrong.
+    where.push("b.is_library_book = 1 AND b.due_date IS NOT NULL AND b.due_date < date('now','localtime')");
   } else if (library) {
     where.push('b.is_library_book = 1');
   }
@@ -817,4 +822,11 @@ router.post('/api/import/epub', express.raw({ type: () => true, limit: '80mb' })
 
 app.use(BASE || '/', router);
 
-app.listen(PORT, () => console.log(`📚 Home Library on http://localhost:${PORT}${BASE}/`));
+app.listen(PORT, () => {
+  // Due dates are compared against the local civil date, so the timezone is part of
+  // the app's behaviour, not just cosmetics. Stating it makes a container running on
+  // the default UTC obvious instead of subtly shifting what counts as overdue.
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  console.log(`📚 Home Library on http://localhost:${PORT}${BASE}/`);
+  console.log(`   timezone ${tz}${tz === 'UTC' ? ' (set TZ if that is not intended — due dates use it)' : ''}`);
+});

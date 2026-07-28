@@ -353,8 +353,10 @@ Docker on the node needs `sudo`. To change a secret, edit
 
 ## Two-node failover (optional)
 
-`deploy/failover.sh` and the two units beside it move the app between a preferred
-node and a standby, so exactly one node is writable at a time. The SQLite database
+`deploy/failover.sh` and the two units beside it move the app between two nodes, so
+exactly one node is writable at a time. **Both nodes run identical units**, so either
+one hands the database over when it shuts down — without that, shutting down whichever
+node happens to be active strands the only authoritative copy on a powered-off box. The SQLite database
 travels with the active node, and a floating address follows it, so clients keep one
 URL. It is a **graceful handoff, not high availability** — the shutdown half only
 runs on an orderly shutdown, so a power cut leaves the preferred node owning the
@@ -382,6 +384,18 @@ Ordering alone is not a requirement: without it the app starts even after the
 handoff deliberately refused, serves the stale local copy, and the address unit
 advertises it — turning "refuse to serve stale data" into "serve stale data as
 authoritative".
+
+`PREFERRED` (default `homelab`) breaks the tie, because identical units otherwise
+mean a standby that reboots would pull the database from a perfectly healthy active
+node and take over. Only the preferred node reclaims on boot; the other comes up
+active solely if it already owns the database, i.e. the preferred node handed over
+and has not returned.
+
+A standby boot is a normal outcome, not an error, so it must not leave failed units.
+`db-claim` writes an activity flag under `/run` only on the node that should be
+running, and the app and address units test it with `ConditionPathExists`, which
+makes systemd **skip** them cleanly. The flag lives in `/run` deliberately: a reboot
+clears it, so every boot has to decide afresh.
 
 Requirements: passwordless ssh between the nodes for a key restricted by
 `command=` to `deploy/failover-peer.sh` (a fixed verb list, so the credential cannot

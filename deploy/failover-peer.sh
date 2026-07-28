@@ -24,6 +24,8 @@ OWNER_FILE=$DATA_DIR/OWNER
 IMAGE=library.local/home-library:latest
 HEALTH_URL=http://127.0.0.1:30800/library/
 VIP=192.168.144.1
+# Must match ACTIVE_FLAG in failover.sh: the app unit will not start without it.
+ACTIVE_FLAG=/run/home-library-active
 VIP_DEV=lo
 KEEP=10
 
@@ -107,7 +109,18 @@ case "$verb" in
     chmod 644 "$DB"
     ;;
 
-  svc-start)  systemctl start "$SERVICE" ;;
+  # The app unit has ConditionPathExists on the activity flag, so it must exist
+  # before the start or systemd silently skips the unit.
+  #
+  # --job-mode=ignore-dependencies matters: the app unit Requires= the database
+  # unit, so a plain start would pull in a full db-claim here — withdrawing the VIP
+  # this node is about to be given, stopping the initiator's app again, and doing a
+  # redundant checkpoint. The node calling this verb has already done all of that
+  # work; this must only start the app.
+  svc-start)
+    : > "$ACTIVE_FLAG"
+    systemctl start --job-mode=ignore-dependencies "$SERVICE"
+    ;;
 
   # `docker run` exits non-zero when its container is killed, so an intentional
   # stop still lands the unit in "failed". Clear it, or the standby node sits
@@ -115,6 +128,7 @@ case "$verb" in
   svc-stop)
     systemctl stop "$SERVICE"
     systemctl reset-failed "$SERVICE" 2>/dev/null || true
+    rm -f "$ACTIVE_FLAG"
     ;;
 
   health)     curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$HEALTH_URL" || true ;;

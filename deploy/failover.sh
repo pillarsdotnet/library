@@ -61,6 +61,19 @@ KEEP="${KEEP:-10}"
 VIP_DEV="${VIP_DEV:-lo}"
 LOCK="/run/home-library-failover.lock"
 
+# Which node reclaims the service when it boots. Both nodes run identical units, so
+# something has to break the tie: without it a standby that reboots would pull the
+# database from a perfectly healthy preferred node and take over.
+PREFERRED="${PREFERRED:-homelab}"
+
+# "This node should be running the app." Lives in /run, so a reboot clears it and
+# db-claim has to decide afresh every boot. The app and vip units test it with
+# ConditionPathExists, which makes systemd SKIP them rather than fail them — a
+# standby boot is a normal outcome, not an error.
+ACTIVE_FLAG="${ACTIVE_FLAG:-/run/home-library-active}"
+mark_active()   { : > "$ACTIVE_FLAG"; }
+mark_standby()  { rm -f "$ACTIVE_FLAG"; }
+
 ME=$(hostname -s)
 log() { echo "[failover $(date -Is)] $*" >&2; }
 die() { log "FAILED: $*"; exit 1; }
@@ -236,6 +249,18 @@ db-claim)
   log "db-claim on $ME (peer $PEER_NAME)"
   raw_local=$(owner_raw_local)
   o_local=$(owner_node "$raw_local")
+
+  # A standby that reboots must leave a healthy active node completely alone: no
+  # VIP change, no stopping its app, no pulling its database. Only the preferred
+  # node reclaims on boot; a non-preferred node comes up active only if it already
+  # owns the database, i.e. the preferred node handed over and has not come back.
+  if [ "$ME" != "$PREFERRED" ] && [ "$o_local" != "$ME" ]; then
+    log "standby boot: $o_local owns the database and $ME is not the preferred node"
+    log "staying standby — the app and VIP units will be skipped"
+    mark_standby
+    exit 0
+  fi
+
   vip_down_local
 
   if ! peer_reachable; then
@@ -274,6 +299,7 @@ db-claim)
     fi
     set_owner "$ME"
   fi
+  mark_active
   ;;
 
 # Boot, after the app started: claim the floating address once it answers.
@@ -302,6 +328,7 @@ db-release)
   on_peer svc-start
   wait_healthy peer || die "peer did not come up; VIP left unassigned, DB is on both"
   vip_up_peer
+  mark_standby
   log "active on $PEER_NAME"
   ;;
 

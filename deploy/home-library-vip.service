@@ -10,6 +10,10 @@
 
 [Unit]
 Description=Home Library floating IP
+# Skipped, not failed, on a standby boot: db-claim only creates this flag on the
+# node that should be running the app. A standby coming up is a normal outcome and
+# must not look like an error.
+ConditionPathExists=/run/home-library-active
 After=home-library.service
 Requires=home-library.service
 # If the app goes away, the VIP should not keep pointing here.

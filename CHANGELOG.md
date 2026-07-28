@@ -25,6 +25,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   guard. If the marker names the unreachable peer as owner, it refuses to start
   rather than serve a stale copy as authoritative.
 
+  Both nodes run identical units, so whichever is active hands over when it shuts
+  down. `PREFERRED` decides which node reclaims on boot, since otherwise a standby
+  reboot would take the service from a healthy active node; the other node comes up
+  active only if it already owns the database. A standby boot skips the app and
+  address units via `ConditionPathExists` on an activity flag, so it leaves nothing
+  in a failed state.
+
 ### Changed
 
 - The README now describes deploying generically — by the node's role rather than

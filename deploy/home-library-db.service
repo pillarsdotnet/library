@@ -13,7 +13,10 @@
 # Never call systemctl against the local app from inside a hook; express the
 # ordering as a dependency and let systemd sequence it.
 #
-# Install (on the node that should normally be active):
+# Install on BOTH nodes, identically. PREFERRED (default: homelab) decides which one
+# reclaims the service when it boots; the other comes up active only if it already
+# owns the database, i.e. the preferred node handed over and has not returned.
+# Install:
 #   cp deploy/failover.sh /usr/local/sbin/home-library-failover && chmod 755 "$_"
 #   cp deploy/home-library-db.service deploy/home-library-vip.service /etc/systemd/system/
 #   systemctl edit home-library-db     # Environment=PEER=... and VIP=...
@@ -21,14 +24,15 @@
 #   systemctl daemon-reload
 #   systemctl enable home-library-db home-library-vip
 #
-#   # REQUIRED, and only on the preferred node: make the app refuse to start when
-#   # the handoff failed. Ordering (Before=) is not a requirement, so without this
-#   # the app starts anyway after db-claim deliberately refused, serves the stale
-#   # local copy, and lets the vip unit advertise it as authoritative. Do NOT add
-#   # this on the standby, which has no db unit and would become unstartable.
+#   # REQUIRED on BOTH nodes. Two separate jobs:
+#   #  * Requires= — ordering (Before=) is not a requirement, so without it the app
+#   #    starts anyway after db-claim deliberately refused, serves the stale local
+#   #    copy, and lets the vip unit advertise it as authoritative.
+#   #  * ConditionPathExists= — lets a standby boot SKIP the app cleanly instead of
+#   #    failing. db-claim creates the flag only on the node that should be active.
 #   mkdir -p /etc/systemd/system/home-library.service.d
-#   printf '[Unit]\nRequires=home-library-db.service\n' \
-#       > /etc/systemd/system/home-library.service.d/require-db.conf
+#   printf '[Unit]\nRequires=home-library-db.service\nConditionPathExists=/run/home-library-active\n' \
+#       > /etc/systemd/system/home-library.service.d/failover.conf
 #
 #   # Recommended on BOTH nodes: an intentional stop otherwise leaves the unit
 #   # failed, because `docker run` exits non-zero when its container is killed.

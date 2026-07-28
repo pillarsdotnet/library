@@ -28,8 +28,32 @@ HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-60}"
 echo "→ building $IMAGE:$V (+ :latest)"
 docker build -t "$IMAGE:$V" -t "$IMAGE:latest" "$ROOT"
 
+WANT_ID=$(docker image inspect -f '{{.Id}}' "$IMAGE:latest")
+die_standby() { echo "✗ $*" >&2; exit 1; }
+
 echo "→ shipping the image to $HOST"
 docker save "$IMAGE:$V" "$IMAGE:latest" | ssh "$HOST" 'sudo docker load'
+
+# A node running the failover units may be the STANDBY, whose app is deliberately not
+# running: only the node holding the database serves. Restarting it there would either
+# do nothing (systemd skips the unit, its activity flag being absent) or wrongly start
+# a second writer — and the health check would then report a failure that is actually
+# correct behaviour. So ship the image and stop, leaving it ready for the next handoff.
+#
+# Detected rather than flagged, so `deploy/deploy.sh` is safe to run against either
+# node without the operator having to remember which one is live. A deployment with no
+# failover units keeps behaving exactly as before.
+STANDBY=$(ssh "$HOST" 'if [ -e /etc/systemd/system/home-library-db.service ] \
+    && [ ! -e /run/home-library-active ]; then echo yes; else echo no; fi')
+
+if [ "$STANDBY" = yes ]; then
+  echo "→ $HOST is the failover standby: image shipped, not restarting"
+  # Still confirm the image actually landed and is the one just built, since that is
+  # the whole point of deploying to a standby.
+  got=$(ssh "$HOST" "sudo docker image inspect -f '{{.Id}}' $IMAGE:latest 2>/dev/null || echo none")
+  [ "$got" = "$WANT_ID" ] || die_standby "image on $HOST is $got, expected $WANT_ID"
+  echo "  ✓ $IMAGE:latest on $HOST is the image just built"
+else
 
 echo "→ restarting on $HOST"
 ssh "$HOST" 'sudo systemctl restart home-library'
@@ -42,8 +66,6 @@ ssh "$HOST" 'sudo systemctl restart home-library'
 #
 # The whole poll runs in a single ssh session on purpose: the port is
 # loopback-only on the node, and every extra connection can cost a 1Password tap.
-WANT_ID=$(docker image inspect -f '{{.Id}}' "$IMAGE:latest")
-
 echo "→ health-checking $HEALTH_URL (up to ${HEALTH_TIMEOUT}s)"
 if ! ssh "$HOST" 'sudo sh -s' <<EOF
 set -eu
@@ -74,6 +96,7 @@ then
   exit 1
 fi
 echo "  ✓ HTTP 200, and the running container is the image just built"
+fi
 
 echo "→ pruning old images on $HOST (keeping :$V and :latest)"
 # Remove every home-library image tag except the one just deployed and :latest,

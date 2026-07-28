@@ -18,6 +18,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The filter composes with search and the other filters, and the total count honours
   it so paging stays correct.
 
+### Changed
+
+- `deploy/deploy.sh` detects a failover standby and ships the image without
+  restarting it. The standby's app is deliberately not running, so a restart there
+  would do nothing and the health check would report a failure that is in fact
+  correct behaviour. Detected rather than flagged, so the script is safe to run
+  against either node without knowing which is live; a deployment with no failover
+  units behaves exactly as before.
+
 - Active/passive failover between two nodes (`deploy/failover.sh` plus the
   `home-library-db` and `home-library-vip` units). The database follows whichever
   node is active, and a floating address follows it, so exactly one node is ever

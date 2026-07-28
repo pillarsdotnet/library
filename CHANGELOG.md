@@ -5,6 +5,23 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.1] — 2026-07-27
+
+### Changed
+
+- An overdue library book now looks overdue: the due line turns red, bold, and reads
+  "Overdue since" rather than "Due". Previously **every** due date was coloured like a
+  warning, so a book three weeks late looked identical to one due next month — there
+  was nothing louder left to say for the case that actually matters. Future dates are
+  now muted and only overdue is coloured, so the signal carries meaning. The state is
+  stated in words as well as colour, since colour alone reaches neither a screen reader
+  nor anyone who cannot distinguish it, and a separate dark-mode colour is used because
+  the light-mode red is unreadable on a dark surface.
+
+  "Overdue" is judged against a UTC date to match the server's `date('now')` in the
+  overdue filter; using the local date would let the badge and the "Overdue only"
+  filter disagree for a few hours each night. A book due *today* is not overdue.
+
 ## [2.3.0] — 2026-07-27
 
 ### Added

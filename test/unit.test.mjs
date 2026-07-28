@@ -88,3 +88,32 @@ test('the current version has a CHANGELOG entry', () => {
   const heading = new RegExp(`^##\\s*\\[${version.replace(/\./g, '\\.')}\\]`, 'm');
   assert.match(changelog, heading, `CHANGELOG.md has no "## [${version}]" section — add one before releasing`);
 });
+
+test('isOverdue treats only strictly earlier dates as late', () => {
+  const isOverdue = loadFunction('isOverdue');
+  // A book due today is not overdue: you still have the day to return it.
+  assert.equal(isOverdue('2026-07-28', '2026-07-28'), false, 'due today');
+  assert.equal(isOverdue('2026-07-27', '2026-07-28'), true, 'due yesterday');
+  assert.equal(isOverdue('2026-07-29', '2026-07-28'), false, 'due tomorrow');
+  // Year and month boundaries, where a naive comparison tends to go wrong.
+  assert.equal(isOverdue('2025-12-31', '2026-01-01'), true, 'across a year');
+  assert.equal(isOverdue('2026-01-01', '2025-12-31'), false, 'not yet, across a year');
+  assert.equal(isOverdue('2026-08-01', '2026-07-31'), false, 'not yet, across a month');
+});
+
+test('isOverdue treats a missing due date as not overdue', () => {
+  const isOverdue = loadFunction('isOverdue');
+  // A borrowed book with no recorded date is undated, not late. Flagging it would
+  // cry wolf on every such book.
+  for (const empty of [null, undefined, '']) {
+    assert.equal(isOverdue(empty, '2026-07-28'), false, `empty due date: ${String(empty)}`);
+  }
+});
+
+test('isOverdue tolerates a datetime, not just a bare date', () => {
+  const isOverdue = loadFunction('isOverdue');
+  // Nothing writes a time today, but the column is free text and a future import
+  // could. Comparing the first ten characters keeps that from silently misreading.
+  assert.equal(isOverdue('2026-07-27T09:00:00Z', '2026-07-28'), true);
+  assert.equal(isOverdue('2026-07-29T09:00:00Z', '2026-07-28'), false);
+});

@@ -147,7 +147,12 @@ function renderBookCard(b) {
       ${location ? `<p class="loc">📍 ${esc(location)}</p>` : '<p class="loc muted-text">Unshelved</p>'}
       ${dims ? `<p class="loc">📐 ${dims}</p>` : ''}
       ${b.status === 'loaned' && b.loaned_to ? `<p class="loc">👤 ${esc(b.loaned_to)}</p>` : ''}
-      ${b.is_library_book && b.due_date ? `<p class="loc due">⏰ Due ${esc(b.due_date)}</p>` : ''}
+      ${b.is_library_book && b.due_date
+        // The word matters as much as the colour: colour alone conveys nothing to a
+        // screen reader, or to anyone who cannot distinguish it.
+        ? `<p class="loc due${isOverdue(b.due_date, todayUtcIso()) ? ' overdue' : ''}">⏰ ${
+            isOverdue(b.due_date, todayUtcIso()) ? 'Overdue since' : 'Due'} ${esc(b.due_date)}</p>`
+        : ''}
       ${b.source ? `<p class="loc muted-text">via ${esc(SOURCE_LABELS[b.source] || b.source)}</p>` : ''}
     </div>`;
   return card;
@@ -975,6 +980,23 @@ function onQuaggaDetected(result) {
 }
 
 // Validate an EAN-13 / EAN-8 / UPC-A check digit to reject misreads.
+// Is a library book's due date in the past? Pure and date-injectable so it can be
+// tested without waiting for the calendar.
+//
+// Compared as YYYY-MM-DD strings, which sorts correctly, and deliberately against a
+// UTC "today" to match the server's date('now') in the overdue filter. Using the local
+// date here instead would let the badge and the "Overdue only" filter disagree for a
+// few hours each night, and a UI arguing with itself is worse than being slightly
+// eager. A book due TODAY is not overdue: only strictly earlier dates are.
+function isOverdue(dueDate, todayIso) {
+  if (!dueDate) return false;
+  return String(dueDate).slice(0, 10) < todayIso;
+}
+
+function todayUtcIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function isValidEan(code) {
   if (!/^\d+$/.test(code) || ![8, 12, 13].includes(code.length)) return false;
   const digits = code.split('').map(Number);

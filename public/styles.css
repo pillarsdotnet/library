@@ -158,7 +158,11 @@ button.icon { border: none; background: transparent; color: inherit; font-size: 
 .card-body h3 { margin: 0 0 2px; font-size: 1rem; line-height: 1.25; }
 .authors { margin: 0 0 8px; color: var(--muted); font-size: 0.85rem; }
 .loc { margin: 4px 0 0; font-size: 0.8rem; color: var(--muted); }
-.loc.due { color: #c66; }
+/* A future due date is information, not an alarm. It used to be coloured like a
+   warning, which left nothing louder for a book that is genuinely late — so only
+   overdue gets the alarming treatment, and the signal means something. */
+.loc.due { color: var(--muted); }
+.loc.due.overdue { color: #b3261e; font-weight: 600; }
 
 .badges { display: flex; flex-wrap: wrap; gap: 5px; }
 .badge {
@@ -181,6 +185,8 @@ button.icon { border: none; background: transparent; color: inherit; font-size: 
   .status-read { background: #2b3547; color: #a9bad6; }
   .status-loaned { background: #4a3320; color: #e0a86a; }
   .badge.library { background: #1e3548; color: #8fc7f0; }
+  /* #b3261e is unreadable on a dark surface. */
+  .loc.due.overdue { color: #ff9a90; }
 }
 
 .empty { text-align: center; color: var(--muted); padding: 48px 16px; }

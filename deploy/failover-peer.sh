@@ -109,14 +109,28 @@ case "$verb" in
     chmod 644 "$DB"
     ;;
 
-  # The app unit has ConditionPathExists on the activity flag, so it must exist
-  # before the start or systemd silently skips the unit.
+  # Bring this node fully up as the active one, through its OWN units.
   #
-  # --job-mode=ignore-dependencies matters: the app unit Requires= the database
-  # unit, so a plain start would pull in a full db-claim here — withdrawing the VIP
-  # this node is about to be given, stopping the initiator's app again, and doing a
-  # redundant checkpoint. The node calling this verb has already done all of that
-  # work; this must only start the app.
+  # This exists because starting only the app was not enough. The handoff used to
+  # start the app directly and assign the address by verb, which left this node's
+  # home-library-db and home-library-vip units INACTIVE while it was in fact serving.
+  # systemd's view then disagreed with reality, and the consequence only showed up
+  # later: this node's next shutdown ran no ExecStop at all, so it handed nothing
+  # back and left the app dead with the address still pointing at it.
+  #
+  # Starting the units instead means db-claim runs here. It finds this node already
+  # owns the database (the initiator set that before calling this), keeps the local
+  # copy, and ends with all three units active — so the next shutdown hands over
+  # properly. The cost is one redundant checkpoint and generation bump per handoff.
+  #
+  # The app unit's ConditionPathExists is satisfied in time because db-claim creates
+  # the activity flag and is ordered Before= the app.
+  takeover)
+    systemctl start home-library-db "$SERVICE" home-library-vip
+    ;;
+
+  # Manual use only. Starts just the app, bypassing the units — which is exactly the
+  # state described above, so do not use this for a handoff.
   svc-start)
     : > "$ACTIVE_FLAG"
     systemctl start --job-mode=ignore-dependencies "$SERVICE"

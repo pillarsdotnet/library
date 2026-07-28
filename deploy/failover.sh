@@ -325,9 +325,13 @@ db-release)
   checkpoint_local
   push_db "$g_local" "$g_peer" "$m_local" "$m_peer"
   set_owner "$PEER_NAME"
-  on_peer svc-start
+  # Hand over by starting the peer's OWN units rather than poking its app and address
+  # directly. Doing the latter left the peer's db and vip units inactive, so its
+  # systemd state did not reflect that it was active and its next shutdown ran no
+  # ExecStop — it handed nothing back. The peer's db-claim will see it already owns
+  # the database, keep its copy, and claim the address through its own vip unit.
+  on_peer takeover || die "$PEER_NAME failed to take over; DB is on both, VIP unassigned"
   wait_healthy peer || die "peer did not come up; VIP left unassigned, DB is on both"
-  vip_up_peer
   mark_standby
   log "active on $PEER_NAME"
   ;;

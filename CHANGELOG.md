@@ -32,6 +32,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   address units via `ConditionPathExists` on an activity flag, so it leaves nothing
   in a failed state.
 
+  A handoff starts the receiving node's own units rather than starting its app and
+  assigning its address by remote verb. The latter left the receiver's units inactive
+  while it was in fact serving, so systemd disagreed with reality and — the part that
+  actually bit — the receiver's next shutdown ran no ExecStop and handed nothing back.
+
 ### Changed
 
 - The README now describes deploying generically — by the node's role rather than

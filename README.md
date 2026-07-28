@@ -379,6 +379,10 @@ Two units bracket the app so that systemd — not the script — sequences every
 A hook must never run `systemctl` against the app it brackets — asking systemd to
 run a job while it is waiting on your `ExecStop` deadlocks until the timeout.
 
+A handoff must also start the receiving node's **own units**, not just its app.
+Starting the app directly leaves that node's units inactive while it is serving, and
+systemd then runs no `ExecStop` on its next shutdown — so it hands nothing back.
+
 The app unit must also **`Requires=`** the database unit on the preferred node.
 Ordering alone is not a requirement: without it the app starts even after the
 handoff deliberately refused, serves the stale local copy, and the address unit

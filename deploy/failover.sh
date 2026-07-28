@@ -2,9 +2,14 @@
 # Hand the live Home Library between two nodes, moving the SQLite database with
 # it so exactly one node is ever writable.
 #
-#   failover.sh to-local    this node takes over   (run at startup)
-#   failover.sh to-remote   the peer takes over    (run at shutdown)
 #   failover.sh status      show who owns the app
+#   failover.sh to-local    take over here   (manual)
+#   failover.sh to-remote   hand to the peer (manual)
+#
+# At boot and shutdown systemd drives the four hook modes instead — db-claim,
+# vip-claim, vip-release, db-release — via home-library-db.service and
+# home-library-vip.service. Never invoke the hook modes by hand while those units
+# are enabled; use to-local / to-remote, which sequence them safely.
 #
 # WHY AN OWNER MARKER
 # The obvious version of this — "on startup, copy the peer's database here" —
@@ -25,8 +30,9 @@
 # Tailscale has no floating-address primitive in this version, so the VIP is a /32
 # advertised as a subnet route by whichever node is active, and removed when it is
 # not. Two one-time prerequisites, or the VIP silently does not route:
-#   1. Approve the route for BOTH nodes in the admin console, or add an
-#      autoApprovers entry for it to the tailnet policy file.
+#   1. An autoApprovers entry for the route in the tailnet policy file. Approving
+#      by hand is not enough: approval is per-node, so the standby's advertisement
+#      is unapproved and the address points nowhere until someone notices.
 #   2. Clients must accept routes (`tailscale set --accept-routes`). Phones do by
 #      default; Linux desktops do not.
 set -eu
@@ -64,6 +70,18 @@ die() { log "FAILED: $*"; exit 1; }
 on_peer() {
   ssh -i "$KEY" -p "$PEER_PORT" -o ConnectTimeout=10 -o BatchMode=yes \
       -o StrictHostKeyChecking=accept-new "root@$PEER" "$@"
+}
+
+# Is the peer reachable? Retried, because at boot the mesh VPN daemon can be
+# "active" while the tailnet is not yet connected — observed 8s after tailscaled
+# started and still failing — so a single attempt misreports a healthy peer as gone.
+peer_reachable() {
+  _i=0
+  while [ $_i -lt 10 ]; do
+    if on_peer hostname >/dev/null 2>&1; then return 0; fi
+    _i=$((_i + 1)); sleep 3
+  done
+  return 1
 }
 
 # One handoff at a time. Two overlapping runs could hand the DB both ways.
@@ -216,21 +234,46 @@ case "${1:-}" in
 # Boot, before the app starts: put the right database in place.
 db-claim)
   log "db-claim on $ME (peer $PEER_NAME)"
-  raw_peer=$(owner_raw_peer); raw_local=$(owner_raw_local)
-  o_peer=$(owner_node "$raw_peer"); g_peer=$(owner_gen "$raw_peer")
-  g_local=$(owner_gen "$raw_local")
-  m_peer=$(db_mtime_peer 2>/dev/null || echo 0); m_local=$(db_mtime_local)
-  log "ownership: peer=$o_peer gen(peer)=$g_peer gen(local)=$g_local | mtimes: local=$m_local peer=$m_peer"
-  vip_down_local; vip_down_peer || true
-  on_peer svc-stop || log "warning: could not stop the app on $PEER_NAME"
-  if [ "$o_peer" = "$PEER_NAME" ]; then
-    checkpoint_peer && pull_db "$g_peer" "$g_local" "$m_peer" "$m_local"
-    log "pulled the database from $PEER_NAME"
+  raw_local=$(owner_raw_local)
+  o_local=$(owner_node "$raw_local")
+  vip_down_local
+
+  if ! peer_reachable; then
+    # Degraded path. The peer's marker is the only thing that can tell us whether it
+    # took over, so with the peer unreachable we must not guess.
+    log "WARNING: $PEER_NAME is unreachable"
+    case "$o_local" in
+      "$ME"|none)
+        # Our own marker says we hold it, so serving the local copy is correct.
+        # Deliberately do NOT bump the generation: we could not compare against the
+        # peer, and raising ours above a copy we never saw would defeat the guard and
+        # let a later push overwrite newer data.
+        log "local marker says $o_local owns it; keeping the local copy, generation unchanged"
+        checkpoint_local; snapshot_local
+        ;;
+      *)
+        # The peer owns it and we cannot reach it. Serving our stale copy would
+        # present it as authoritative and set up a silent overwrite later.
+        die "the database is owned by $o_local, which is unreachable; refusing to serve a stale copy"
+        ;;
+    esac
   else
-    log "peer does not own the database (owner=$o_peer); KEEPING the local copy"
-    checkpoint_local; snapshot_local
+    raw_peer=$(owner_raw_peer)
+    o_peer=$(owner_node "$raw_peer"); g_peer=$(owner_gen "$raw_peer")
+    g_local=$(owner_gen "$raw_local")
+    m_peer=$(db_mtime_peer 2>/dev/null || echo 0); m_local=$(db_mtime_local)
+    log "ownership: peer=$o_peer gen(peer)=$g_peer gen(local)=$g_local | mtimes: local=$m_local peer=$m_peer"
+    vip_down_peer || true
+    on_peer svc-stop || log "warning: could not stop the app on $PEER_NAME"
+    if [ "$o_peer" = "$PEER_NAME" ]; then
+      checkpoint_peer && pull_db "$g_peer" "$g_local" "$m_peer" "$m_local"
+      log "pulled the database from $PEER_NAME"
+    else
+      log "peer does not own the database (owner=$o_peer); KEEPING the local copy"
+      checkpoint_local; snapshot_local
+    fi
+    set_owner "$ME"
   fi
-  set_owner "$ME"
   ;;
 
 # Boot, after the app started: claim the floating address once it answers.

@@ -23,7 +23,10 @@
 
 [Unit]
 Description=Home Library database handoff
-After=network-online.target docker.service
+# tailscaled too: the peer is reached over the tailnet, and being ordered only
+# After=network-online.target left the peer unreachable at boot. The script also
+# retries, because "tailscaled is active" is not "the tailnet is connected".
+After=network-online.target docker.service tailscaled.service
 Wants=network-online.target
 Requires=docker.service
 Before=home-library.service

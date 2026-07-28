@@ -19,6 +19,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   database updates its mtime, so a standby started for any reason would otherwise
   look newer than the rightful owner and block the next legitimate handoff.
 
+  If the peer cannot be reached, the node never guesses: it keeps its own copy only
+  when its own marker already names it as owner, and does so *without* advancing the
+  generation, since raising it above a copy that was never compared would defeat the
+  guard. If the marker names the unreachable peer as owner, it refuses to start
+  rather than serve a stale copy as authoritative.
+
 ### Changed
 
 - The README now describes deploying generically — by the node's role rather than

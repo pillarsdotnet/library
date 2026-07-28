@@ -1,0 +1,42 @@
+# Moves the SQLite database to whichever node is becoming active.
+#
+# Before=home-library.service is load-bearing in BOTH directions:
+#   * on boot it runs first, so the right database is in place before the app opens it;
+#   * on shutdown it runs LAST, after systemd has already stopped the app, so the
+#     database is quiescent and this unit never has to stop the app itself.
+#
+# That last point is the whole reason this is a separate unit. An earlier single-unit
+# design was ordered After=home-library.service and called `systemctl stop
+# home-library` from its own ExecStop — which deadlocks, because systemd will not run
+# that stop job until the ExecStop it is already waiting on returns. It hung until
+# TimeoutStopSec every time, leaving the handoff half-done and the app down.
+# Never call systemctl against the local app from inside a hook; express the
+# ordering as a dependency and let systemd sequence it.
+#
+# Install (on the node that should normally be active):
+#   cp deploy/failover.sh /usr/local/sbin/home-library-failover && chmod 755 "$_"
+#   cp deploy/home-library-db.service deploy/home-library-vip.service /etc/systemd/system/
+#   systemctl edit home-library-db     # Environment=PEER=... and VIP=...
+#   systemctl edit home-library-vip    # the same two
+#   systemctl daemon-reload
+#   systemctl enable home-library-db home-library-vip
+
+[Unit]
+Description=Home Library database handoff
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+Before=home-library.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# A handoff copies the whole database over ssh and waits for a health check at the
+# far end. Too short and shutdown kills it mid-copy.
+TimeoutStartSec=600
+TimeoutStopSec=600
+ExecStart=/usr/local/sbin/home-library-failover db-claim
+ExecStop=/usr/local/sbin/home-library-failover db-release
+
+[Install]
+WantedBy=multi-user.target

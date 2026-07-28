@@ -84,7 +84,7 @@ So, before putting this anywhere reachable:
 
 ## Run it
 
-### With Docker (recommended for a homelab)
+### With Docker (recommended for a self-hosted server)
 
 ```bash
 docker compose up -d --build
@@ -159,9 +159,9 @@ test double; they default to the real services.
 
 #### Install the key
 
-**Homelab node:** add it to `/etc/home-library.env`, which the systemd unit
-passes to the container, then `ssh homelab 'sudo systemctl restart
-home-library'`. Rotating a key is the same edit followed by the same restart.
+**Systemd node:** add it to `/etc/home-library.env`, which the systemd unit passes
+to the container, then restart the unit (`sudo systemctl restart home-library`).
+Rotating a key is the same edit followed by the same restart.
 
 **Docker / local:** pass it as an environment variable:
 
@@ -243,7 +243,7 @@ account, separate from your personal one.
    access key and secret key. (Open Library authenticates with Internet Archive
    S3-style keys, then hands back a session cookie.)
 4. **Install the keys** the same way as the Google Books key — in
-   `/etc/home-library.env` on the homelab node, or the environment locally:
+   `/etc/home-library.env` on the node, or the environment locally:
 
    ```bash
    OPENLIBRARY_ACCESS_KEY=your_access_key
@@ -293,12 +293,10 @@ Sending re-reads the live record first and refuses if the blank has been filled
 in the meantime — a queue can sit for days, and someone else may have got there
 first.
 
-### On the homelab node
+### On a server, as a systemd-managed container
 
-The app runs on the `homelab` node as a **Docker container managed by systemd**,
-and is served at `http://homelab/library/` (also `http://10.0.0.2/library/`,
-`http://100.84.6.113/library/`, and over HTTPS at
-`https://homelab.dala-hue.ts.net/library/`).
+The intended deployment runs the app as a **Docker container managed by systemd**,
+behind the node's nginx, served under a sub-path such as `/library/`.
 
 - the unit is `/etc/systemd/system/home-library.service`, with `Restart=always`;
 - the container runs with `BASE_PATH=/library` and `--rm`, so the unit owns its
@@ -314,10 +312,15 @@ ssh (there is no image registry), restarts the unit, health-checks it, and prune
 old images:
 
 ```bash
-deploy/deploy.sh                 # deploys to host "homelab"
-HOST=myhost deploy/deploy.sh     # or to another host
+HOST=<node> deploy/deploy.sh          # deploy to a specific node
+deploy/deploy.sh                      # or to the default node set in the script
 HEALTH_TIMEOUT=120 deploy/deploy.sh   # allow longer for the app to come up
+HEALTH_URL=http://127.0.0.1:30800/library/ deploy/deploy.sh   # non-default port/path
 ```
+
+`HOST` is an ssh destination — a `Host` alias from your `~/.ssh/config` is the
+easiest way to carry a non-standard port or username. The node needs Docker,
+`curl`, and passwordless `sudo`.
 
 It tags the build with both the version and `:latest`. The unit runs `:latest`,
 so a release never needs the unit edited; the version tag stays alongside so you
@@ -348,28 +351,69 @@ a commit hunt.
 Docker on the node needs `sudo`. To change a secret, edit
 `/etc/home-library.env` and restart the unit.
 
+## Two-node failover (optional)
+
+`deploy/failover.sh` and the two units beside it move the app between a preferred
+node and a standby, so exactly one node is writable at a time. The SQLite database
+travels with the active node, and a floating address follows it, so clients keep one
+URL. It is a **graceful handoff, not high availability** — the shutdown half only
+runs on an orderly shutdown, so a power cut leaves the preferred node owning the
+database and the standby deliberately does *not* self-promote.
+
+Which copy is authoritative is decided by an owner marker holding a node name and a
+**generation counter**, written on both nodes at every handoff. A push or pull is
+refused if the destination's generation is higher, i.e. a later handoff produced it.
+File timestamps are logged but never gate a handoff: opening a SQLite database
+updates its mtime, so a standby started for any reason would otherwise look newer
+than the rightful owner and block the next legitimate failover.
+
+Two units bracket the app so that systemd — not the script — sequences everything:
+
+| Unit | Ordering | Boot | Shutdown |
+|---|---|---|---|
+| `home-library-db` | `Before=home-library` | runs first, puts the database in place | runs last, app already stopped |
+| `home-library-vip` | `After=home-library` | runs last, claims the address once healthy | runs first, withdraws it |
+
+A hook must never run `systemctl` against the app it brackets — asking systemd to
+run a job while it is waiting on your `ExecStop` deadlocks until the timeout.
+
+Requirements: passwordless ssh between the nodes for a key restricted by
+`command=` to `deploy/failover-peer.sh` (a fixed verb list, so the credential cannot
+do more than its job), and if the floating address is a mesh-VPN route, an
+auto-approver for it — otherwise the standby's advertisement is unapproved and the
+address points nowhere for exactly as long as it takes someone to notice.
+
 ## HTTPS (for camera scanning)
 
 Browsers only allow camera access over **HTTPS** or on `localhost`, so barcode
-scanning needs an HTTPS URL. This deployment uses a **Tailscale cert** via
-`tailscale serve`, which terminates TLS and proxies to the node's nginx:
+scanning needs an HTTPS URL. Any TLS front end works — what matters is that the
+certificate is one the phone already trusts, so a self-signed cert is not enough.
 
-```bash
-# One-time: enable "HTTPS Certificates" in the Tailscale admin console
-# (https://login.tailscale.com/admin/dns), then on the homelab node:
-sudo tailscale serve --bg --https=443 http://127.0.0.1:80
-```
+Two approaches that need no public DNS:
 
-Tailscale obtains and auto-renews the Let's Encrypt cert; no cron needed. The
-app is then available over HTTPS at:
+- **A mesh VPN that issues certs for its own names.** Tailscale, for example, can
+  obtain and auto-renew a Let's Encrypt cert for a node's MagicDNS name and
+  terminate TLS in front of nginx:
 
-**https://homelab.dala-hue.ts.net/library/**  (reachable from any device on the tailnet)
+  ```bash
+  # One-time: enable "HTTPS Certificates" in the admin console, then on the node:
+  sudo tailscale serve --bg --https=443 http://127.0.0.1:80
+  ```
 
-A Tailscale cert is only valid for the node's MagicDNS name, so the bare IPs
-(`10.0.0.2`, `100.84.6.113`) and the short name `homelab` stay on plain **HTTP**
-— fine for browsing on the LAN, but use the `ts.net` URL from your phone when you
-want to scan. Because Tailscale proxies to nginx over http, the nginx `/library`
-redirect uses `absolute_redirect off` so it preserves the client's scheme.
+  The app is then reachable at `https://<node>.<tailnet>.ts.net/library/` from any
+  device on the VPN.
+
+- **A real domain plus certbot**, if the node has one, terminating TLS in nginx
+  directly.
+
+Such a certificate is only valid for that **one name**, so bare IP addresses and
+short hostnames stay on plain HTTP — fine for browsing on a trusted LAN, but use
+the certificate's name from a phone when you want to scan.
+
+If TLS is terminated ahead of nginx and proxied onward over http, keep
+`absolute_redirect off` on the `/library` redirect (as
+[`deploy/nginx-library.conf`](./deploy/nginx-library.conf) does) so the redirect
+preserves the client's scheme instead of forcing https clients back to http.
 
 ## API
 

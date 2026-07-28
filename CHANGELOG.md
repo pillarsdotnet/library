@@ -7,7 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Active/passive failover between two nodes (`deploy/failover.sh` plus the
+  `home-library-db` and `home-library-vip` units). The database follows whichever
+  node is active, and a floating address follows it, so exactly one node is ever
+  writable. Two interlocks guard the handoff: an owner marker carrying a
+  **generation counter**, which decides authoritatively which copy is newer, and a
+  refusal to overwrite a copy produced by a later handoff. mtimes are logged as a
+  diagnostic but deliberately do **not** gate anything — merely opening a SQLite
+  database updates its mtime, so a standby started for any reason would otherwise
+  look newer than the rightful owner and block the next legitimate handoff.
+
 ### Changed
+
+- The README now describes deploying generically — by the node's role rather than
+  by name — instead of documenting one specific host and its addresses.
 
 - `deploy/deploy.sh` now is the deploy: it builds, ships the image to the node,
   restarts the unit, and prunes every old home-library image afterwards, leaving

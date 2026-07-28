@@ -1,0 +1,28 @@
+# Owns the floating address, and only while the local app is actually answering.
+#
+# After=home-library.service is the mirror of the db unit's Before=:
+#   * on boot this runs LAST, so the VIP is advertised only once the app responds —
+#     the address never points at a node that cannot serve;
+#   * on shutdown it runs FIRST, withdrawing the route before anything is torn down.
+#
+# Like the db unit, this never runs systemctl against the local app. It only waits
+# for the app's health endpoint and then adds/removes the address and route.
+
+[Unit]
+Description=Home Library floating IP
+After=home-library.service
+Requires=home-library.service
+# If the app goes away, the VIP should not keep pointing here.
+BindsTo=home-library.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Waits for the app's health check (up to ~60s inside the script) before claiming.
+TimeoutStartSec=180
+TimeoutStopSec=120
+ExecStart=/usr/local/sbin/home-library-failover vip-claim
+ExecStop=/usr/local/sbin/home-library-failover vip-release
+
+[Install]
+WantedBy=multi-user.target

@@ -5,9 +5,18 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.3.0] — 2026-07-27
 
 ### Added
+
+- Library books can be listed **by due date**, soonest first, with an
+  **overdue-only** option. Borrowed books with no due date sort last rather than
+  first: SQLite orders NULL ahead of any value, so the obvious `ORDER BY due_date`
+  buries the genuinely urgent books beneath ones with no deadline at all. Being
+  flagged as borrowed is what qualifies a book, not merely having a date, so a stray
+  date on a book you own does not appear as something the library is waiting for.
+  The filter composes with search and the other filters, and the total count honours
+  it so paging stays correct.
 
 - Active/passive failover between two nodes (`deploy/failover.sh` plus the
   `home-library-db` and `home-library-vip` units). The database follows whichever

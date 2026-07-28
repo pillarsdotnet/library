@@ -25,8 +25,11 @@ both iOS Safari and Android Chrome.
   book won't fit the shelf you're assigning it to.
 - **Status** — To be read / Reading / Read / Loaned out (with borrower name).
 - **Library books** — flag books you've checked out from a public library and
-  track the library name and due date.
-- **Search & filter** by text, status, room, genre, or shelf (incl. "Unshelved").
+  track the library name and due date. Filter to **just the borrowed ones, ordered
+  by due date** (soonest first, undated last), or to **overdue only** — the list
+  answers "what do I owe the library, and when" rather than making you hunt.
+- **Search & filter** by text, status, library/overdue, format, genre, series, room,
+  bookcase, or shelf (incl. "Unshelved"). Filters compose.
 - **Give back to Open Library** — measurements, binding, page count and cover
   photos from your own copies can fill gaps in Open Library's records, through a
   review queue where you approve each one. See

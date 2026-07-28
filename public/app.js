@@ -68,7 +68,8 @@ document.querySelectorAll('.tab').forEach((tab) => {
 // ---------------------------------------------------------------------------
 // Search box + filter selects, mapped to their query params.
 const FILTER_CONTROLS = [
-  ['#search', 'q'], ['#filterStatus', 'status'], ['#filterFormat', 'format'],
+  ['#search', 'q'], ['#filterStatus', 'status'], ['#filterLibrary', 'library'],
+  ['#filterFormat', 'format'],
   ['#filterGenre', 'genre_id'], ['#filterSeries', 'series_id'],
   ['#filterRoom', 'room'], ['#filterBookcase', 'bookcase'],
   ['#filterShelf', 'shelf_id'],
@@ -1674,7 +1675,7 @@ window.placeholderCover = placeholderCover;
 
 let searchTimer;
 $('#search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadBooks(), 250); });
-['#filterStatus', '#filterFormat', '#filterGenre', '#filterSeries', '#filterRoom', '#filterBookcase', '#filterShelf']
+['#filterStatus', '#filterLibrary', '#filterFormat', '#filterGenre', '#filterSeries', '#filterRoom', '#filterBookcase', '#filterShelf']
   .forEach((s) => $(s).addEventListener('change', () => loadBooks()));
 $('#clearFiltersBtn').addEventListener('click', clearFilters);
 $('#loadMoreBtn').addEventListener('click', () => loadBooks(true));

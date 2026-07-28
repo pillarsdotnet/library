@@ -163,7 +163,7 @@ function attachGenres(books) {
 }
 
 router.get('/api/books', (req, res) => {
-  const { q, status, room, bookcase, genre_id, series_id, format, shelf_id } = req.query;
+  const { q, status, room, bookcase, genre_id, series_id, format, shelf_id, library } = req.query;
   const where = [];
   const params = {};
 
@@ -191,6 +191,15 @@ router.get('/api/books', (req, res) => {
   if (shelf_id === 'none') where.push('b.shelf_id IS NULL');
   else if (shelf_id) { where.push('b.shelf_id = @shelf_id'); params.shelf_id = shelf_id; }
 
+  // Library-borrowed books, optionally only those already overdue. A borrowed book
+  // with no due date still counts as borrowed — it is undated, not un-borrowed, and
+  // excluding it would quietly hide the thing this filter exists to surface.
+  if (library === 'overdue') {
+    where.push("b.is_library_book = 1 AND b.due_date IS NOT NULL AND b.due_date < date('now')");
+  } else if (library) {
+    where.push('b.is_library_book = 1');
+  }
+
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const from = `FROM books b LEFT JOIN shelves s ON s.id = b.shelf_id ${whereSql}`;
   const total = db.prepare(`SELECT COUNT(*) AS n ${from}`).get(params).n;
@@ -203,7 +212,13 @@ router.get('/api/books', (req, res) => {
   // Filtering to one series reads far better in reading order than alphabetically:
   // by lowest position, then highest (so "book 1" precedes "books 1-5", which
   // precedes "books 1-15"), then by where the copy lives, shelved copies first.
-  const orderBy = (series_id && series_id !== 'none')
+  // Asking for library books is asking about deadlines, so soonest-due first is the
+  // only order that answers it — the same reasoning as the series case that follows.
+  // Undated borrowings sort LAST: SQLite orders NULL before any value, which would
+  // otherwise bury the genuinely urgent books beneath ones with no deadline at all.
+  const orderBy = library
+    ? 'b.due_date IS NULL, b.due_date, sort_title(b.title)'
+    : (series_id && series_id !== 'none')
     ? `(SELECT MIN(sb."order") FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id),
        (SELECT MAX(sb."order") FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id),
        s.room IS NULL, s.room COLLATE NOCASE, s.bookcase COLLATE NOCASE, s.label COLLATE NOCASE,

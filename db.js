@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { sortTitle } from './sorttitle.js';
 import { canonicalIsbn } from './isbn.js';
+import { coverToken } from './covers.js';
 import { GENRE_SEED } from './genres-seed.js';
 
 const DB_PATH = process.env.DB_PATH || './data/library.db';
@@ -141,6 +142,11 @@ db.exec(`
     -- the pixels outside it are gone for good.
     cover_url       TEXT,
     cover_source    TEXT,
+    -- Cache-busting tokens for the two images above, stored rather than derived.
+    -- A listing needs the token but not the image; keeping it here is what lets
+    -- the list query leave the base64 on disk. See covers.js.
+    cover_token     TEXT,
+    cover_source_token TEXT,
 
     notes           TEXT,
     created_at      TEXT DEFAULT (datetime('now')),
@@ -559,12 +565,44 @@ if (LEGACY_BOOKS) {
   }
 }
 
+// Cover tokens for databases created before they existed, and for rows the split
+// above just wrote. Backfilled once; from then on the write paths maintain them.
+{
+  const copyCols = db.prepare('PRAGMA table_info(copies)').all().map((c) => c.name);
+  if (!copyCols.includes('cover_token')) db.exec('ALTER TABLE copies ADD COLUMN cover_token TEXT');
+  if (!copyCols.includes('cover_source_token')) db.exec('ALTER TABLE copies ADD COLUMN cover_source_token TEXT');
+
+  const pending = db.prepare(`SELECT id, cover_url, cover_source FROM copies
+    WHERE (cover_url IS NOT NULL AND cover_url <> '' AND cover_token IS NULL)
+       OR (cover_source IS NOT NULL AND cover_source <> '' AND cover_source_token IS NULL)`).all();
+  if (pending.length) {
+    const setTokens = db.prepare('UPDATE copies SET cover_token = @t, cover_source_token = @st WHERE id = @id');
+    const fill = db.transaction(() => {
+      for (const r of pending) {
+        setTokens.run({
+          id: r.id,
+          t: r.cover_url ? coverToken(r.cover_url) : null,
+          st: r.cover_source ? coverToken(r.cover_source) : null,
+        });
+      }
+    });
+    fill();
+  }
+}
+
 // ─── the `books` compatibility view ─────────────────────────────────────────────
 // Reads keep working exactly as before: one row per copy, edition columns folded
 // in. `library_name` is preserved as an alias so existing queries and API
 // responses are unchanged even though the column is now `borrowed_from`.
 //
 // A copy's own photograph wins over the edition's stock artwork.
+// Recreated rather than left alone when its shape is out of date: a view is
+// derived, so dropping one loses nothing, and a stale definition would silently
+// deprive the list query of the columns that keep the images off the read path.
+if (objectKind('books') === 'view'
+    && !db.prepare('PRAGMA table_info(books)').all().some((c) => c.name === 'cover_token')) {
+  db.exec('DROP VIEW books');
+}
 if (objectKind('books') !== 'view') {
   db.exec(`
     CREATE VIEW books AS
@@ -586,6 +624,12 @@ if (objectKind('books') !== 'view') {
       e.source                          AS source,
       COALESCE(c.cover_url, e.cover_url) AS cover_url,
       c.cover_source                    AS cover_source,
+      -- The three small columns a listing needs INSTEAD of the two big ones. A
+      -- copy's own photograph is identified by its token; when it has none, the
+      -- edition's stock artwork is a short URL that costs nothing to carry.
+      c.cover_token                     AS cover_token,
+      c.cover_source_token              AS cover_source_token,
+      e.cover_url                       AS edition_cover_url,
       c.jacket                          AS jacket,
       c.shelf_id                        AS shelf_id,
       c.status                          AS status,

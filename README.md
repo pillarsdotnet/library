@@ -78,6 +78,23 @@ All physical dimensions are stored in **millimetres**. Capacity is computed by
 treating each book's *spine thickness* as the width it consumes along the shelf;
 a book fits if its height ≤ shelf height and its width ≤ shelf depth.
 
+### Covers, and why listings never select them
+
+A photographed cover is stored inline as a base64 data-URL on the copy, and those
+images are roughly **half the database**. The API never returns them in a
+listing: each becomes a reference to `api/books/:id/cover`, carrying a token so
+the URL changes when the image does — without that, a browser holding a cached
+copy goes on showing the old photo after a new one is saved, which looks exactly
+like the save having failed.
+
+The token is **stored** (`copies.cover_token`), not hashed from the image on
+read, so a listing can select the token and leave the base64 on disk. Deriving it
+in SQL is not an option: `length()` walks the whole overflow chain to count
+characters and costs as much as fetching the bytes. Queries that return books
+therefore select an explicit column list (`BOOK_SELECT` in `server.js`) rather
+than `b.*` — adding a cover column back to it silently costs about 4× the
+throughput of every listing.
+
 ### Upgrading from 2.x
 
 The 3.0.0 migration runs on first start and is **one-way** — a database it has

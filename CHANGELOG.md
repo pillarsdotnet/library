@@ -5,6 +5,35 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.2.0] — 2026-07-31
+
+### Changed
+
+- **Listings no longer read cover images they were only going to throw away.**
+  Covers are stored inline as base64 data-URLs — about 47% of the database — and
+  every list request pulled 608 KB of them out of SQLite so that `coverRef` could
+  replace each one with a URL. None of those bytes ever reached a client.
+
+  The cache-busting token is now stored beside the image (`copies.cover_token`,
+  `copies.cover_source_token`) instead of being hashed from it on every read, so
+  listings can select the token and leave the base64 on disk. It cannot be derived
+  in SQL instead: `length()` walks the whole overflow chain to count characters
+  and measured exactly as expensive as fetching the bytes.
+
+  Measured on 663 real books: **252 → 960 req/s** on the default list page, p50 at
+  25 concurrent clients **92 ms → 26 ms**, and the whole-library response
+  (`limit=0`) blocks other requests for 7 ms instead of 27 ms.
+
+- **Genre and series decoration is scoped to the page.** `attachGenres` ran two
+  queries with no `WHERE` clause, reading every row of `book_genres` and
+  `series_books` to decorate twenty books — a cost that grew with the size of the
+  library rather than the size of the page, so it got quietly worse forever.
+
+- The EPUB import returns its cover as a reference like every other book
+  response, rather than echoing back half a megabyte of base64 the client had
+  just uploaded. `cover_source` is now `null` rather than `''` when a copy has no
+  kept-back original; both are falsy, and nothing read it any other way.
+
 ## [3.1.0] — 2026-07-31
 
 ### Added

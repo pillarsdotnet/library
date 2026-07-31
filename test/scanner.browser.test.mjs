@@ -1072,7 +1072,13 @@ test('EPUB import endpoint: parses metadata, resizes cover, creates an e-book', 
   assert.equal(book.isbn, '9780765397539');
   assert.equal(book.format, 'ebook');
   assert.equal(book.source, 'epub');
-  assert.match(book.cover_url, /^data:image\/jpeg;base64,/);
+  // A reference, not the bytes: the importer just supplied this image and every
+  // other book response returns covers this way. Fetching it proves the cover
+  // really was stored and resized, which the raw data-URL only implied.
+  assert.match(book.cover_url, new RegExp(`^api/books/${book.id}/cover\\?v=`));
+  const img = await fetch(`${BASE}/${book.cover_url}`);
+  assert.equal(img.status, 200);
+  assert.equal(img.headers.get('content-type'), 'image/jpeg');
 });
 
 test('cover photo: file → crop dialog → "Use photo" sets a data-URL cover', { skip }, async () => {

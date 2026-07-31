@@ -56,6 +56,10 @@ header {
   color: var(--accent-ink);
 }
 header h1 { font-size: 1.15rem; margin: 0; }
+/* The running version, beside the title. Deliberately quiet: it is for telling
+   which build a device is actually showing — the question a cached stylesheet
+   makes hard to answer — not something to read at a glance. */
+header h1 .version { font-size: 0.7rem; font-weight: 400; opacity: 0.65; margin-left: 0.35rem; }
 .header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; }
 .count { font-size: 0.85rem; opacity: 0.9; }
 

@@ -1,0 +1,18 @@
+# Hourly database copy to the failover node.
+# Install as /etc/cron.d/home-library-db-sync on BOTH nodes (mode 644, root-owned).
+#
+# Installed on both because the script itself decides whether to act: it returns
+# immediately unless this node holds /run/home-library-active. A handoff moves the
+# sync along with the database, with no crontab to remember to edit.
+#
+# 17 past the hour, not 0: nothing else here runs on the hour, and a snapshot that
+# collides with some other job's disk burst is slower for no reason.
+#
+# stdout is discarded and stderr is not: the script logs its normal course to the
+# journal via logger, so anything reaching stderr here is a genuine failure and
+# should become cron mail. A peer that is merely offline exits 0 and says so in the
+# journal, which is the one failure deliberately kept quiet.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+17 * * * * root /usr/local/sbin/home-library-db-sync >/dev/null

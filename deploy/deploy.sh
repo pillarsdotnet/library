@@ -28,23 +28,38 @@ HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-60}"
 echo "→ building $IMAGE:$V (+ :latest)"
 docker build -t "$IMAGE:$V" -t "$IMAGE:latest" "$ROOT"
 
-WANT_ID=$(docker image inspect -f '{{.Id}}' "$IMAGE:latest")
 die_standby() { echo "✗ $*" >&2; exit 1; }
 
 echo "→ shipping the image to $HOST"
 docker save "$IMAGE:$V" "$IMAGE:latest" | ssh "$HOST" 'sudo docker load'
 
-# A node running the failover units may be the STANDBY, whose app is deliberately not
-# running: only the node holding the database serves. Restarting it there would either
-# do nothing (systemd skips the unit, its activity flag being absent) or wrongly start
-# a second writer — and the health check would then report a failure that is actually
-# correct behaviour. So ship the image and stop, leaving it ready for the next handoff.
+# Two things in one round trip, because every ssh can cost a 1Password tap.
 #
-# Detected rather than flagged, so `deploy/deploy.sh` is safe to run against either
-# node without the operator having to remember which one is live. A deployment with no
-# failover units keeps behaving exactly as before.
-STANDBY=$(ssh "$HOST" 'if [ -e /etc/systemd/system/home-library-db.service ] \
-    && [ ! -e /run/home-library-active ]; then echo yes; else echo no; fi')
+# 1. The image id AS THE FAR SIDE SEES IT. It deliberately is not taken locally: a
+#    daemon using the OCI image store reports an id that is a manifest-list digest,
+#    while one using the classic store reports the config digest. The two never
+#    compare equal, so a locally-taken id fails every check below against a remote
+#    that stores images differently — after the restart has already happened. The
+#    version tag just loaded names exactly what this deploy shipped, so asking the
+#    far side about it compares like with like.
+#
+# 2. Whether this node is the STANDBY, whose app is deliberately not running: only
+#    the node holding the database serves. Restarting it there would either do
+#    nothing (systemd skips the unit, its activity flag being absent) or wrongly
+#    start a second writer — and the health check would then report a failure that
+#    is actually correct behaviour. So ship the image and stop, leaving it ready
+#    for the next handoff.
+#
+#    Detected rather than flagged, so `deploy/deploy.sh` is safe to run against
+#    either node without the operator having to remember which one is live. A
+#    deployment with no failover units keeps behaving exactly as before.
+remote_state=$(ssh "$HOST" "
+  sudo docker image inspect -f '{{.Id}}' $IMAGE:$V 2>/dev/null || echo none
+  if [ -e /etc/systemd/system/home-library-db.service ] \
+      && [ ! -e /run/home-library-active ]; then echo yes; else echo no; fi")
+WANT_ID=$(printf '%s\n' "$remote_state" | sed -n 1p)
+STANDBY=$(printf '%s\n' "$remote_state" | sed -n 2p)
+[ "$WANT_ID" = none ] && die_standby "$IMAGE:$V did not load on $HOST"
 
 if [ "$STANDBY" = yes ]; then
   echo "→ $HOST is the failover standby: image shipped, not restarting"

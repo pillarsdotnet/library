@@ -89,11 +89,15 @@ case "$verb" in
     ' >/dev/null
     ;;
 
-  # Timestamped hardlink so a bad handoff is recoverable. A later rename cannot
-  # disturb it: rename repoints the directory entry, the link keeps the old inode.
+  # Timestamped COPY so a bad handoff is recoverable. This was `ln -f`, which is
+  # not a snapshot: a hardlink is another name for the same inode, and SQLite
+  # writes in place, so the whole rotation tracked the live database instead of
+  # preserving anything. `.backup` rather than `cp` because it is consistent
+  # against a database something still has open.
   db-snapshot)
     [ -f "$DB" ] || exit 0
-    ln -f "$DB" "$DB.$(date -u +%Y%m%dT%H%M%SZ)"
+    command -v sqlite3 >/dev/null || { echo "sqlite3 is required to snapshot" >&2; exit 1; }
+    sqlite3 "$DB" ".backup '$DB.$(date -u +%Y%m%dT%H%M%SZ)'"
     ls -1t "$DB".*Z 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r old; do rm -f "$old"; done
     ;;
 

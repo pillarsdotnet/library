@@ -111,7 +111,9 @@ test('a scan queues only the gaps, and approving is blocked without credentials'
   assert.equal(scan.scanned >= 1, true);
 
   const queue = await (await fetch(`${BASE}/api/ol-contributions`)).json();
-  const mine = queue.filter((r) => r.book_id === made.id);
+  // Proposals key on the edition now: the edit targets Open Library's record
+  // for the ISBN, not one shelf's copy of it.
+  const mine = queue.filter((r) => r.edition_id === made.edition_id);
   const fields = mine.map((r) => r.field).sort();
   assert.deepEqual(fields, ['physical_dimensions', 'physical_format'],
     'the page count and cover Open Library already has are not offered');
@@ -121,7 +123,7 @@ test('a scan queues only the gaps, and approving is blocked without credentials'
   // Scanning again must not stack up a second copy of the same proposal.
   await post('/api/ol-contributions/scan');
   const again = await (await fetch(`${BASE}/api/ol-contributions`)).json();
-  assert.equal(again.filter((r) => r.book_id === made.id).length, 2, 'no duplicates');
+  assert.equal(again.filter((r) => r.edition_id === made.edition_id).length, 2, 'no duplicates');
 
   // Nothing can be sent while the account is unconfigured, and the queue says so.
   const status = await (await fetch(`${BASE}/api/ol-contributions/status`)).json();
@@ -172,14 +174,14 @@ test('an unknown ISBN is queued for import only when importing is switched on', 
   // The stub 404s this ISBN (it only answers /isbn/ for the one it knows).
   await post('/api/ol-contributions/scan');
   let queue = await (await fetch(`${BASE}/api/ol-contributions`)).json();
-  assert.equal(queue.some((r) => r.book_id === made.id && r.field === 'import'), false,
+  assert.equal(queue.some((r) => r.edition_id === made.edition_id && r.field === 'import'), false,
     'switched off by default: nothing is queued for creation');
 
   // Restart with the switch on and a source prefix, then scan again.
   await restartServer({ OPENLIBRARY_ALLOW_IMPORT: 'true', OPENLIBRARY_SOURCE_PREFIX: 'testbot' });
   await post('/api/ol-contributions/scan');
   queue = await (await fetch(`${BASE}/api/ol-contributions`)).json();
-  const imp = queue.find((r) => r.book_id === made.id && r.field === 'import');
+  const imp = queue.find((r) => r.edition_id === made.edition_id && r.field === 'import');
   assert.ok(imp, 'switched on: the missing book is proposed as a new record');
   assert.equal(imp.olid, 'NEW', 'there is no record to point at yet');
   assert.equal(imp.label, 'New record');

@@ -5,6 +5,95 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.1.0] — 2026-07-31
+
+### Added
+
+- The running version is shown beside the title, in the header and the browser
+  tab. Assets are cache-busted by version, so "which build is this device
+  actually showing?" was previously unanswerable from the device itself — which
+  is the question that matters when a deployed fix appears not to have worked.
+
+- **Hourly one-way copy of the database to the failover node**
+  (`deploy/db-sync.sh`, `/etc/cron.d/home-library-db-sync`). Installed on both
+  nodes and inert on whichever one is not active, so the job follows the database
+  through a handoff instead of naming a fixed master.
+
+  It skips before doing any work when nothing has been written since the last run
+  — fingerprinting the database *and* its WAL, since in WAL mode the main file's
+  contents can sit unchanged through a busy hour. A peer that is simply offline
+  logs to the journal and exits 0, because an hourly cron mail about a known-down
+  standby is how people learn to ignore cron mail; anything else fails loudly.
+
+  The copy lands in `<data dir>/standby/library.db` on the peer and never on the
+  peer's own `library.db`: overwriting that would bypass `assert_generation_ok()`,
+  which exists to refuse replacing a copy a later handoff produced. It is a
+  disaster copy, restored deliberately, not a replication channel. Transport is a
+  dedicated key pinned to `rrsync -wo`, which can only write and only into that
+  directory — the failover key is pinned to the verb script and deliberately has
+  no path to rsync.
+
+### Fixed
+
+- **The failover snapshots were not backups.** `snapshot_local()` and the peer's
+  `db-snapshot` verb both took a timestamped **hardlink** — another name for the
+  same inode. SQLite writes in place, so all ten "generations" tracked the live
+  database and the rotation preserved nothing; it looked exactly like a working
+  set of restore points. They are now `.backup` copies, which are consistent even
+  against a database something still has open (`cp` would not be). Ten
+  generations of a 12 MB database now costs 120 MB of disk, which is the price of
+  those files meaning anything at all.
+
+## [3.0.0] — 2026-07-31
+
+### Changed
+
+- **Book data is split along the ISBN.** The flat `books` table becomes two:
+  `editions` holds everything an ISBN determines and every copy therefore shares
+  (title, authors, publisher, page count, and the physical facts of the edition);
+  `copies` holds what is true of one object on one shelf (dust jacket, shelf,
+  status, loan, library borrowing, notes, and a photograph of that copy).
+
+  Catalogue a book you already own and the second copy arrives fully described,
+  because the metadata was never the copy's to begin with. Correct a publisher
+  once and every copy is corrected. This is also the groundwork for hosting more
+  than one library: editions are shared, copies are not.
+
+  `books` remains as a **read-only view** joining the two, so every existing
+  query and API response is unchanged — including `library_name`, now an alias
+  of `copies.borrowed_from`. Writes name `editions` and `copies` directly:
+  SQLite reports `lastInsertRowid` 0 and `changes` 0 for writes through a view,
+  which would look like success while doing nothing.
+
+  **Major, because the migration is one-way**: a database written by this build
+  cannot be read by 2.x, which expects `books` to be a table.
+
+- **An edition is identified by ISBN *and* format**, not by ISBN alone. In
+  principle one ISBN means one format, since a hardback and a paperback are
+  separately numbered — but e-books have ASINs rather than ISBNs, and importers
+  staple the print ISBN onto the e-book record. Matching on the ISBN alone fused
+  Kindle files to hardbacks: the merged record kept one format and the other's
+  physical dimensions, so a hardback on a shelf reported itself as an e-book.
+  Changing a copy's format now moves it to its own edition rather than rebinding
+  every copy that shares the ISBN.
+
+- **ISBNs are canonicalised to ISBN-13 before they are stored.** `0441013597`
+  and `9780441013593` are the same book; stored verbatim they produced two
+  records that never merged. Check digits are verified rather than trusted — an
+  ISBN that fails its check digit is kept for display but never used to match,
+  because merging on a value we cannot verify would fuse two unrelated books and
+  overwrite one's metadata with the other's. The lookup cache is re-keyed the
+  same way, so a book cached from one spelling is found from the other.
+
+- Genres, series membership and Open Library proposals now key on the **edition**
+  rather than on a copy. Two copies of one book are tagged once, appear in a
+  series once, and queue any given Open Library edit once. Open Library
+  contribution rows expose `edition_id` where they previously exposed `book_id`.
+
+- A second copy of a known ISBN now shows that book's title. It is edition data,
+  so a title typed into the add form before the duplicate was detected is not
+  kept — two copies of one ISBN cannot disagree about what the book is called.
+
 ## [2.3.2] — 2026-07-28
 
 ### Changed

@@ -33,7 +33,10 @@ test('db.js adds the source column to a pre-existing books table, preserving row
   assert.equal(row.status, 'read', 'existing data intact');
   assert.equal(row.source, null, 'existing rows get NULL source');
 
-  db.prepare('INSERT INTO books (title, source) VALUES (?, ?)').run('New Book', 'barnesnoble');
+  // Writes go to the tables; reading it back through the `books` view checks
+  // both that the column works and that the view still presents it.
+  const ed = db.prepare('INSERT INTO editions (title, source) VALUES (?, ?)').run('New Book', 'barnesnoble').lastInsertRowid;
+  db.prepare('INSERT INTO copies (edition_id) VALUES (?)').run(ed);
   assert.equal(db.prepare('SELECT source FROM books WHERE title = ?').get('New Book').source, 'barnesnoble');
 
   db.close();
@@ -104,12 +107,16 @@ test('a new database declares dimension columns as INTEGER and stores them as in
   const dbPath = join(dir, 'library.db');
   execFileSync('node', ['-e', `await import(${JSON.stringify(DB_JS)})`], { env: { ...process.env, DB_PATH: dbPath } });
   const fresh = new Database(dbPath);
-  for (const [table, cols] of [['books', ['height_mm', 'width_mm', 'thickness_mm']], ['shelves', ['height_mm', 'width_mm', 'depth_mm']]]) {
+  // Book dimensions are edition data now (every copy of one ISBN is the same
+  // size), so the declared types live on `editions`; `books` is a view, whose
+  // columns carry no declared type at all.
+  for (const [table, cols] of [['editions', ['height_mm', 'width_mm', 'thickness_mm']], ['shelves', ['height_mm', 'width_mm', 'depth_mm']]]) {
     const info = fresh.prepare(`PRAGMA table_info(${table})`).all();
     for (const c of cols) assert.equal(info.find((x) => x.name === c).type, 'INTEGER', `${table}.${c} declared INTEGER`);
   }
-  fresh.prepare('INSERT INTO books (title, height_mm) VALUES (?, ?)').run('X', 241);
-  assert.equal(fresh.prepare("SELECT typeof(height_mm) AS t FROM books WHERE title = 'X'").get().t, 'integer');
+  // `books` is a read-only view, so this writes to the table that owns the column.
+  fresh.prepare('INSERT INTO editions (title, height_mm) VALUES (?, ?)').run('X', 241);
+  assert.equal(fresh.prepare("SELECT typeof(height_mm) AS t FROM editions WHERE title = 'X'").get().t, 'integer');
   fresh.close();
   rmSync(dir, { recursive: true, force: true });
 });

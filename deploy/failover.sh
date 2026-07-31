@@ -117,12 +117,23 @@ checkpoint_local() {
 }
 checkpoint_peer() { on_peer db-checkpoint; }
 
-# Snapshot the destination's current DB to a timestamped hardlink before it is
-# replaced, so a bad handoff is recoverable. A rename cannot disturb the link:
-# it repoints the directory entry and leaves the old inode held by the link.
+# Snapshot the destination's current DB to a timestamped COPY before it is
+# replaced, so a bad handoff is recoverable.
+#
+# This used to be `ln -f`, which is not a snapshot at all: a hardlink is another
+# NAME for the same inode, and SQLite writes in place, so every "snapshot" changed
+# in lockstep with the live database. The whole rotation looked like a set of
+# restore points and was in fact one file under ten names. (The old comment
+# reasoned about rename repointing the directory entry — true, and irrelevant,
+# because the destructive path here is a write, not a rename.)
+#
+# `.backup` rather than `cp`: it is consistent against a database that something
+# still has open, which `cp` is not. Real copies cost real disk — ten generations
+# of a 12 MB database is 120 MB — which is the price of them existing at all.
 snapshot_local() {
   [ -f "$DB" ] || return 0
-  ln -f "$DB" "$DB.$(date -u +%Y%m%dT%H%M%SZ)"
+  command -v sqlite3 >/dev/null || die "sqlite3 is required to snapshot the database"
+  sqlite3 "$DB" ".backup '$DB.$(date -u +%Y%m%dT%H%M%SZ)'"
   ls -1t "$DB".*Z 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r old; do rm -f "$old"; done
 }
 snapshot_peer() { on_peer db-snapshot; }

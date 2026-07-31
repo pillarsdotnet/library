@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import db from './db.js';
+import { canonicalIsbn } from './isbn.js';
 import { lookupIsbn, RateLimitError } from './lookup.js';
 import { parseEpub } from './epub.js';
 import {
@@ -33,8 +34,14 @@ const router = express.Router();
 // to move whenever these files do.
 const VERSION = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8')).version;
 const indexHtml = readFileSync(join(__dirname, 'public/index.html'), 'utf8');
+// __V__ is the cache-busting query value and is URI-encoded; __VERSION__ is the
+// same version for display, left raw so a build-metadata suffix (1.2.3+build)
+// reads as itself rather than as %2Bbuild. The two placeholders cannot collide:
+// "__VERSION__" does not contain "__V__".
 router.get('/', (_req, res) => res.type('html')
-  .send(indexHtml.replace('__BASE__', BASE).replaceAll('__V__', encodeURIComponent(VERSION))));
+  .send(indexHtml.replace('__BASE__', BASE)
+    .replaceAll('__V__', encodeURIComponent(VERSION))
+    .replaceAll('__VERSION__', VERSION)));
 
 router.use(express.static(join(__dirname, 'public'), { index: false }));
 // Serve the scanning libraries shipped via npm so the app works fully offline.
@@ -74,14 +81,25 @@ const round1 = (n) => Math.round(n * 10) / 10;
 // ---------------------------------------------------------------------------
 // Writable columns. Anything else in a request body is ignored.
 // ---------------------------------------------------------------------------
-const BOOK_COLS = [
-  'isbn', 'title', 'authors', 'publisher', 'published_date', 'page_count', 'cover_url', 'cover_source',
-  'format', 'jacket', 'height_mm', 'width_mm', 'thickness_mm',
+// Split along the edition/copy line — see the schema notes in db.js. Everything
+// the ISBN settles (including format and dimensions: a hardback and a paperback
+// carry different ISBNs) belongs to the edition and is therefore shared by every
+// copy. Only these four groups differ between two copies of one book: whether
+// the dust jacket survived, where it sits, its reading status, and its notes.
+const EDITION_COLS = [
+  'title', 'authors', 'publisher', 'published_date', 'page_count',
+  'format', 'height_mm', 'width_mm', 'thickness_mm', 'source',
+];
+const COPY_COLS = [
+  'jacket',
   'shelf_id',
   'status', 'loaned_to',
-  'is_library_book', 'library_name', 'due_date',
-  'source', 'notes',
+  'is_library_book', 'due_date',
+  'notes',
 ];
+// Accepted from clients; `isbn` and the cover fields are routed by hand because
+// each needs a decision rather than a column copy.
+const BOOK_COLS = [...EDITION_COLS, ...COPY_COLS, 'isbn', 'cover_url', 'cover_source', 'library_name'];
 const SHELF_COLS = ['room', 'bookcase', 'label', 'height_mm', 'width_mm', 'depth_mm', 'notes'];
 const NUMERIC = new Set(['page_count', 'height_mm', 'width_mm', 'thickness_mm', 'depth_mm', 'shelf_id']);
 // Dimensions are whole millimetres; round whatever a client sends.
@@ -117,47 +135,113 @@ function update(table, id, data) {
 
 // ---------------------------------------------------------------------------
 // Books CRUD
+//
+// A "book" in the API is a COPY joined to its EDITION (the `books` view). The
+// view is read-only, so every write below names editions and copies directly:
+// SQLite reports lastInsertRowid 0 and changes 0 for writes through a view, and
+// both are load-bearing here.
 // ---------------------------------------------------------------------------
 
-// Replace a book's genres with the given list of genre ids (ignores unknown ids).
-function setBookGenres(bookId, genreIds) {
+// Route an incoming body to the two tables that own its fields.
+function splitBookData(data) {
+  const edition = {};
+  const copy = {};
+  for (const k of EDITION_COLS) if (data[k] !== undefined) edition[k] = data[k];
+  for (const k of COPY_COLS) if (data[k] !== undefined) copy[k] = data[k];
+  // Renamed on the way in: `library_name` (which public library it came from)
+  // would sit confusingly beside the tenant `library_id` that multi-library adds.
+  if (data.library_name !== undefined) copy.borrowed_from = data.library_name;
+  // A photograph is a fact about the copy that was photographed; a fetched URL
+  // is the edition's artwork, shared by every copy.
+  if (data.cover_url !== undefined) {
+    if (typeof data.cover_url === 'string' && data.cover_url.startsWith('data:')) copy.cover_url = data.cover_url;
+    else edition.cover_url = data.cover_url;
+  }
+  if (data.cover_source !== undefined) copy.cover_source = data.cover_source;
+  return { edition, copy };
+}
+
+// Find the edition an ISBN names, or create it.
+//
+// Only a verifiable ISBN merges copies onto a shared edition, and only when they
+// also agree on format. One that fails its check digit gets an edition to
+// itself: merging on a value we cannot check would fuse two unrelated books and
+// overwrite one book's metadata with the other's. The raw text is kept for
+// display either way.
+//
+// Format is part of the key because e-books have ASINs, not ISBNs, and importers
+// staple the print ISBN onto the e-book record. On the ISBN alone a Kindle file
+// and a hardback merge, and one of them loses its format and gains the other's
+// physical dimensions.
+function resolveEdition(editionData, isbnRaw) {
+  const canon = canonicalIsbn(isbnRaw);
+  if (canon) {
+    // Mirrors the column default, so a client that omits format still matches
+    // the paperback it means.
+    const format = editionData.format ?? 'paperback';
+    const found = db.prepare('SELECT * FROM editions WHERE isbn13 = ? AND format = ?').get(canon, format);
+    if (found) {
+      // Contribute only what the shared record is still missing. This edition
+      // may already back somebody else's copy, so filling a blank is welcome
+      // but overwriting a value is not ours to do.
+      const fill = {};
+      for (const [k, v] of Object.entries(editionData)) {
+        if ((found[k] === null || found[k] === '') && v !== null && v !== undefined && v !== '') fill[k] = v;
+      }
+      if (Object.keys(fill).length) update('editions', found.id, fill);
+      return found.id;
+    }
+  }
+  return insert('editions', {
+    ...editionData,
+    format: editionData.format ?? 'paperback',   // explicit, so it matches next time
+    isbn13: canon,
+    isbn_text: isbnRaw ?? null,
+  });
+}
+
+// Replace an edition's genres with the given list of genre ids (ignores unknown
+// ids). Genres belong to the edition, so this affects every copy of the book —
+// which is the point: two copies of one ISBN are one book, tagged once.
+function setBookGenres(editionId, genreIds) {
   if (!Array.isArray(genreIds)) return;
-  db.prepare('DELETE FROM book_genres WHERE book_id = ?').run(bookId);
-  const link = db.prepare('INSERT OR IGNORE INTO book_genres (book_id, genre_id) VALUES (?, ?)');
+  db.prepare('DELETE FROM book_genres WHERE edition_id = ?').run(editionId);
+  const link = db.prepare('INSERT OR IGNORE INTO book_genres (edition_id, genre_id) VALUES (?, ?)');
   const known = db.prepare('SELECT id FROM genres WHERE id = ?');
   for (const gid of genreIds) {
     const n = Number(gid);
-    if (n && known.get(n)) link.run(bookId, n);
+    if (n && known.get(n)) link.run(editionId, n);
   }
 }
 
-// Attach each book's genres (id + name + parent_id) to the given rows.
+// Attach each row's genres (id + name + parent_id) and series position. Both are
+// edition-level, so they are looked up by edition_id and land on every copy.
 function attachGenres(books) {
   if (!books.length) return books;
   const rows = db.prepare(`
-    SELECT bg.book_id, g.id, g.name, g.parent_id
+    SELECT bg.edition_id, g.id, g.name, g.parent_id
     FROM book_genres bg JOIN genres g ON g.id = bg.genre_id
     ORDER BY g.name COLLATE NOCASE`).all();
-  const byBook = new Map();
+  const byEdition = new Map();
   for (const r of rows) {
-    if (!byBook.has(r.book_id)) byBook.set(r.book_id, []);
-    byBook.get(r.book_id).push({ id: r.id, name: r.name, parent_id: r.parent_id });
+    if (!byEdition.has(r.edition_id)) byEdition.set(r.edition_id, []);
+    byEdition.get(r.edition_id).push({ id: r.id, name: r.name, parent_id: r.parent_id });
   }
-  // A book may hold several positions (an omnibus), so collect them per book.
+  // An edition may hold several positions (an omnibus), so collect them per edition.
   const seriesRows = db.prepare(`
-    SELECT sb.book, sb.series AS series_id, sb."order" AS "order", s.title
+    SELECT sb.edition, sb.series AS series_id, sb."order" AS "order", s.title
     FROM series_books sb JOIN series s ON s.id = sb.series
     ORDER BY sb."order"`).all();
-  const seriesByBook = new Map();
+  const seriesByEdition = new Map();
   for (const r of seriesRows) {
-    if (!seriesByBook.has(r.book)) seriesByBook.set(r.book, { series_id: r.series_id, title: r.title, orders: [] });
-    seriesByBook.get(r.book).orders.push(r.order);
+    if (!seriesByEdition.has(r.edition)) seriesByEdition.set(r.edition, { series_id: r.series_id, title: r.title, orders: [] });
+    seriesByEdition.get(r.edition).orders.push(r.order);
   }
-  for (const v of seriesByBook.values()) v.order = v.orders[0];   // earliest position
+  for (const v of seriesByEdition.values()) v.order = v.orders[0];   // earliest position
   for (const b of books) {
-    b.genres = byBook.get(b.id) || [];
+    b.genres = byEdition.get(b.edition_id) || [];
     b.genre_ids = b.genres.map((g) => g.id);
-    b.series = seriesByBook.get(b.id) || null;
+    b.series = seriesByEdition.get(b.edition_id) || null;
   }
   return books;
 }
@@ -175,15 +259,15 @@ router.get('/api/books', (req, res) => {
     if (value) { where.push(`b.${field} = @${field}`); params[field] = value; }
   }
   if (genre_id === 'none') {
-    where.push('NOT EXISTS (SELECT 1 FROM book_genres bg WHERE bg.book_id = b.id)');
+    where.push('NOT EXISTS (SELECT 1 FROM book_genres bg WHERE bg.edition_id = b.edition_id)');
   } else if (genre_id) {
-    where.push('EXISTS (SELECT 1 FROM book_genres bg WHERE bg.book_id = b.id AND bg.genre_id = @genre_id)');
+    where.push('EXISTS (SELECT 1 FROM book_genres bg WHERE bg.edition_id = b.edition_id AND bg.genre_id = @genre_id)');
     params.genre_id = Number(genre_id);
   }
   if (series_id === 'none') {
-    where.push('NOT EXISTS (SELECT 1 FROM series_books sb WHERE sb.book = b.id)');
+    where.push('NOT EXISTS (SELECT 1 FROM series_books sb WHERE sb.edition = b.edition_id)');
   } else if (series_id) {
-    where.push('EXISTS (SELECT 1 FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id)');
+    where.push('EXISTS (SELECT 1 FROM series_books sb WHERE sb.edition = b.edition_id AND sb.series = @series_id)');
     params.series_id = Number(series_id);
   }
   if (room) { where.push('s.room = @room'); params.room = room; }
@@ -224,8 +308,8 @@ router.get('/api/books', (req, res) => {
   const orderBy = library
     ? 'b.due_date IS NULL, b.due_date, sort_title(b.title)'
     : (series_id && series_id !== 'none')
-    ? `(SELECT MIN(sb."order") FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id),
-       (SELECT MAX(sb."order") FROM series_books sb WHERE sb.book = b.id AND sb.series = @series_id),
+    ? `(SELECT MIN(sb."order") FROM series_books sb WHERE sb.edition = b.edition_id AND sb.series = @series_id),
+       (SELECT MAX(sb."order") FROM series_books sb WHERE sb.edition = b.edition_id AND sb.series = @series_id),
        s.room IS NULL, s.room COLLATE NOCASE, s.bookcase COLLATE NOCASE, s.label COLLATE NOCASE,
        sort_title(b.title)`
     : 'sort_title(b.title)';
@@ -273,24 +357,65 @@ router.post('/api/books', (req, res) => {
   if (isCoverRef(req.body.cover_source)) delete req.body.cover_source;
   const data = pick(req.body, BOOK_COLS);
   if (!data.title) return res.status(400).json({ error: 'title is required' });
-  const id = insert('books', data);
-  if (req.body.genre_ids !== undefined) setBookGenres(id, req.body.genre_ids);
+  const { edition, copy } = splitBookData(data);
+  // One transaction: a copy without its edition, or genres attached to an
+  // edition whose copy failed to insert, would both be worse than no book.
+  const create = db.transaction(() => {
+    const editionId = resolveEdition(edition, data.isbn);
+    const id = insert('copies', { ...copy, edition_id: editionId });
+    if (req.body.genre_ids !== undefined) setBookGenres(editionId, req.body.genre_ids);
+    return id;
+  });
+  const id = create();
   res.status(201).json(coverRef(attachGenres([db.prepare('SELECT * FROM books WHERE id = ?').get(id)])[0]));
 });
 
 router.put('/api/books/:id', (req, res) => {
-  if (!db.prepare('SELECT id FROM books WHERE id = ?').get(req.params.id))
-    return res.status(404).json({ error: 'Not found' });
+  const current = db.prepare('SELECT id, edition_id FROM copies WHERE id = ?').get(req.params.id);
+  if (!current) return res.status(404).json({ error: 'Not found' });
   // The client may echo back "api/books/:id/cover"; that means "unchanged".
   if (isCoverRef(req.body.cover_url)) delete req.body.cover_url;
   if (isCoverRef(req.body.cover_source)) delete req.body.cover_source;
-  update('books', req.params.id, pick(req.body, BOOK_COLS));
-  if (req.body.genre_ids !== undefined) setBookGenres(req.params.id, req.body.genre_ids);
+  const data = pick(req.body, BOOK_COLS);
+  const { edition, copy } = splitBookData(data);
+
+  const save = db.transaction(() => {
+    let editionId = current.edition_id;
+    const curEd = db.prepare('SELECT * FROM editions WHERE id = ?').get(editionId);
+    // Editing the ISBN or the format re-identifies the book: the physical copy
+    // is the same object, but it is now recorded as a copy of a different
+    // edition. It moves rather than dragging the old edition's identity with it
+    // — and it carries its metadata across, so a correction does not blank the
+    // record. Format counts because it is half of the identity key: without
+    // this, correcting one copy's binding would silently rebind every copy, or
+    // collide with the edition that already holds that (isbn, format).
+    const isbnChanged = data.isbn !== undefined && canonicalIsbn(data.isbn) !== curEd.isbn13;
+    const formatChanged = edition.format !== undefined && edition.format !== curEd.format;
+    if (isbnChanged || formatChanged) {
+      const carried = {};
+      for (const k of EDITION_COLS) if (curEd[k] !== null) carried[k] = curEd[k];
+      if (curEd.cover_url) carried.cover_url = curEd.cover_url;
+      // Keep the ISBN we already had when only the format moved, or the copy
+      // would land on a new edition with its ISBN silently dropped.
+      const isbn = data.isbn !== undefined ? data.isbn : (curEd.isbn13 ?? curEd.isbn_text);
+      editionId = resolveEdition({ ...carried, ...edition }, isbn);
+      db.prepare('UPDATE copies SET edition_id = ? WHERE id = ?').run(editionId, current.id);
+    } else if (Object.keys(edition).length) {
+      // Edition data is shared by every copy, so this edit is visible on all of them.
+      update('editions', editionId, edition);
+    }
+    if (Object.keys(copy).length) update('copies', current.id, copy);
+    if (req.body.genre_ids !== undefined) setBookGenres(editionId, req.body.genre_ids);
+  });
+  save();
   res.json(coverRef(attachGenres([db.prepare('SELECT * FROM books WHERE id = ?').get(req.params.id)])[0]));
 });
 
+// Deletes the copy. The edition stays: it is shared metadata that another copy
+// may still reference, and it costs a row to keep the book re-addable without a
+// fresh lookup.
 router.delete('/api/books/:id', (req, res) => {
-  const info = db.prepare('DELETE FROM books WHERE id = ?').run(req.params.id);
+  const info = db.prepare('DELETE FROM copies WHERE id = ?').run(req.params.id);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
   res.status(204).end();
 });
@@ -309,19 +434,29 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
   const limit = Math.min(Number(req.body?.limit) || 25, 100);
   // The series tag names a series, not a position, so one title per book is all
   // that is ever sent — the lowest-ordered one when a book sits in several.
+  // Over editions, not copies: the proposal edits Open Library's record for an
+  // ISBN, so owning three copies of a book is no reason to scan it three times.
   const books = db.prepare(`
-    SELECT b.*, (
+    SELECT e.*, e.id AS edition_id, COALESCE(e.isbn13, e.isbn_text) AS isbn, (
       SELECT s.title FROM series_books sb JOIN series s ON s.id = sb.series
-      WHERE sb.book = b.id ORDER BY sb."order" LIMIT 1
-    ) AS series_title
-    FROM books b
-    WHERE b.isbn IS NOT NULL AND b.isbn <> ''
-    ORDER BY b.updated_at DESC LIMIT ?`).all(limit);
-  const already = db.prepare('SELECT 1 FROM ol_contributions WHERE book_id = ? AND field = ?');
-  const add = db.prepare(`INSERT OR IGNORE INTO ol_contributions (book_id, olid, field, value)
+      WHERE sb.edition = e.id ORDER BY sb."order" LIMIT 1
+    ) AS series_title,
+    (SELECT c.cover_url FROM copies c WHERE c.edition_id = e.id AND c.cover_url IS NOT NULL LIMIT 1) AS copy_cover
+    FROM editions e
+    -- Any ISBN we hold, not just a verifiable one: an ISBN that fails its check
+    -- digit is still worth asking Open Library about, and the answer ("unknown")
+    -- is more useful than silently skipping the book.
+    WHERE COALESCE(e.isbn13, e.isbn_text) IS NOT NULL AND COALESCE(e.isbn13, e.isbn_text) <> ''
+    ORDER BY e.updated_at DESC LIMIT ?`).all(limit);
+  const already = db.prepare('SELECT 1 FROM ol_contributions WHERE edition_id = ? AND field = ?');
+  const add = db.prepare(`INSERT OR IGNORE INTO ol_contributions (edition_id, olid, field, value)
                           VALUES (?, ?, ?, ?)`);
   let scanned = 0, queued = 0, unknown = 0;
   for (const book of books) {
+    // Only a photograph one of our copies actually carries is ours to offer.
+    // The edition's own cover_url is stock artwork, quite possibly Open
+    // Library's own, and uploading that back to them proposes nothing.
+    book.cover_url = book.copy_cover;
     let edition = null;
     try { edition = await fetchEdition(book.isbn); } catch { edition = null; }
     scanned += 1;
@@ -330,17 +465,17 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
       // Open Library has no edition for this ISBN. Adding one is creating a
       // record rather than filling a blank, so it happens only when explicitly
       // switched on — and still only as a proposal.
-      if (importAllowed() && !already.get(book.id, 'import') && importPayload(book)) {
-        add.run(book.id, 'NEW', 'import', book.isbn);
+      if (importAllowed() && !already.get(book.edition_id, 'import') && importPayload(book)) {
+        add.run(book.edition_id, 'NEW', 'import', book.isbn);
         queued += 1;
       }
       continue;
     }
     for (const p of proposalsFor(book, edition.record, edition.work)) {
-      if (already.get(book.id, p.field)) continue;
+      if (already.get(book.edition_id, p.field)) continue;
       // Each proposal records the record it would edit: the series tag belongs
       // to the work, everything else to the edition.
-      add.run(book.id, p.target === 'work' ? edition.workOlid : edition.olid, p.field, p.value);
+      add.run(book.edition_id, p.target === 'work' ? edition.workOlid : edition.olid, p.field, p.value);
       queued += 1;
     }
   }
@@ -349,10 +484,12 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
 
 router.get('/api/ol-contributions', (req, res) => {
   const status = req.query.status || 'pending';
+  // Joined to editions, not to the books view: a book owned in duplicate would
+  // otherwise list the same proposal once per copy.
   const rows = db.prepare(`
-    SELECT c.*, b.title, b.authors, b.isbn
-    FROM ol_contributions c JOIN books b ON b.id = c.book_id
-    WHERE c.status = ? ORDER BY b.title, c.field`).all(status);
+    SELECT c.*, e.title, e.authors, COALESCE(e.isbn13, e.isbn_text) AS isbn
+    FROM ol_contributions c JOIN editions e ON e.id = c.edition_id
+    WHERE c.status = ? ORDER BY e.title, c.field`).all(status);
   res.json(rows.map((r) => ({ ...r, label: FIELD_LABELS[r.field] || r.field })));
 });
 
@@ -376,16 +513,21 @@ router.post('/api/ol-contributions/:id/decline', (req, res) => {
 // confirmation. A failure leaves the row visible with its reason attached
 // rather than swallowing it, so it can be retried or declined.
 router.post('/api/ol-contributions/:id/approve', async (req, res) => {
-  const row = db.prepare(`SELECT c.*, b.cover_url FROM ol_contributions c
-                          JOIN books b ON b.id = c.book_id
-                          WHERE c.id = ? AND c.status IN ('pending', 'failed')`).get(req.params.id);
+  // The sendable cover is a photograph one of our copies carries, never the
+  // edition's stock artwork — see the scan above.
+  const row = db.prepare(`SELECT c.*,
+      (SELECT cp.cover_url FROM copies cp
+        WHERE cp.edition_id = c.edition_id AND cp.cover_url IS NOT NULL LIMIT 1) AS cover_url
+    FROM ol_contributions c
+    WHERE c.id = ? AND c.status IN ('pending', 'failed')`).get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
   if (!haveCredentials()) return res.status(503).json({ error: 'Open Library credentials are not configured' });
 
   try {
     const cookie = await login();
     if (row.field === 'import') {
-      const book = db.prepare('SELECT * FROM books WHERE id = ?').get(row.book_id);
+      // Any copy of the edition presents the same importable metadata.
+      const book = db.prepare('SELECT * FROM books WHERE edition_id = ? LIMIT 1').get(row.edition_id);
       const payload = importPayload(book);
       if (!payload) throw new Error('this book no longer has enough detail to import');
       // Rehearse first: the preview runs Open Library's own duplicate matching,
@@ -592,10 +734,16 @@ router.post('/api/series', (req, res) => {
   res.status(201).json(db.prepare('SELECT * FROM series WHERE id = ?').get(id));
 });
 
+// Series membership belongs to the edition, so a series lists one entry per
+// volume however many copies of it are owned. The representative copy is the
+// lowest-numbered one, which keeps every entry linkable to a real /api/books/:id.
+const SERIES_MEMBER_JOIN = `FROM series_books sb
+  JOIN books b ON b.id = (SELECT MIN(c.id) FROM copies c WHERE c.edition_id = sb.edition)`;
+
 router.get('/api/series/:id/books', (req, res) => {
   res.json(db.prepare(`
     SELECT sb."order" AS "order", b.*
-    FROM series_books sb JOIN books b ON b.id = sb.book
+    ${SERIES_MEMBER_JOIN}
     WHERE sb.series = ? ORDER BY sb."order", sort_title(b.title)`).all(req.params.id));
 });
 
@@ -607,8 +755,11 @@ router.post('/api/series/:id/books', (req, res) => {
   if (!db.prepare('SELECT id FROM series WHERE id = ?').get(seriesId)) {
     return res.status(404).json({ error: 'series not found' });
   }
+  // The API still speaks in book (copy) ids; the position is recorded against
+  // the edition, so placing one copy places the book however many copies exist.
   const bookId = Number(req.body.book_id);
-  if (!bookId || !db.prepare('SELECT id FROM books WHERE id = ?').get(bookId)) {
+  const copy = bookId ? db.prepare('SELECT edition_id FROM copies WHERE id = ?').get(bookId) : null;
+  if (!copy) {
     return res.status(400).json({ error: 'valid book_id is required' });
   }
   const orders = parseOrders(req.body.orders ?? req.body.order);
@@ -618,14 +769,14 @@ router.post('/api/series/:id/books', (req, res) => {
 
   const place = db.transaction(() => {
     // Re-placing the same book replaces all of its positions in this series.
-    db.prepare('DELETE FROM series_books WHERE series = ? AND book = ?').run(seriesId, bookId);
-    const ins = db.prepare('INSERT INTO series_books (series, "order", book) VALUES (?, ?, ?)');
-    for (const o of orders) ins.run(seriesId, o, bookId);
+    db.prepare('DELETE FROM series_books WHERE series = ? AND edition = ?').run(seriesId, copy.edition_id);
+    const ins = db.prepare('INSERT INTO series_books (series, "order", edition) VALUES (?, ?, ?)');
+    for (const o of orders) ins.run(seriesId, o, copy.edition_id);
   });
   place();
   res.status(201).json(db.prepare(`
     SELECT sb."order" AS "order", b.id, b.title
-    FROM series_books sb JOIN books b ON b.id = sb.book
+    ${SERIES_MEMBER_JOIN}
     WHERE sb.series = ? ORDER BY sb."order", sort_title(b.title)`).all(seriesId));
 });
 
@@ -633,7 +784,10 @@ router.post('/api/series/:id/books', (req, res) => {
 // the series, not positions in a list (renumbering would be wrong when several
 // editions share a number).
 router.delete('/api/series/:id/books/:bookId', (req, res) => {
-  const info = db.prepare('DELETE FROM series_books WHERE series = ? AND book = ?').run(Number(req.params.id), req.params.bookId);
+  const copy = db.prepare('SELECT edition_id FROM copies WHERE id = ?').get(req.params.bookId);
+  if (!copy) return res.status(404).json({ error: 'Not found' });
+  const info = db.prepare('DELETE FROM series_books WHERE series = ? AND edition = ?')
+    .run(Number(req.params.id), copy.edition_id);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
   res.status(204).end();
 });
@@ -816,7 +970,12 @@ router.post('/api/import/epub', express.raw({ type: () => true, limit: '80mb' })
     source: 'epub',
     shelf_id: req.query.shelf_id || null,
   }, BOOK_COLS);
-  const id = insert('books', data);
+  const { edition, copy } = splitBookData(data);
+  const create = db.transaction(() => {
+    const editionId = resolveEdition(edition, data.isbn);
+    return insert('copies', { ...copy, edition_id: editionId });
+  });
+  const id = create();
   res.status(201).json(db.prepare('SELECT * FROM books WHERE id = ?').get(id));
 });
 

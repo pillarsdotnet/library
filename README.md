@@ -37,10 +37,54 @@ both iOS Safari and Android Chrome.
 
 ## Data model
 
-Two tables in SQLite (`shelves`, `books`) — see [`db.js`](./db.js). All physical
-dimensions are stored in **millimetres**. Capacity is computed by treating each
-book's *spine thickness* as the width it consumes along the shelf; a book fits
-if its height ≤ shelf height and its width ≤ shelf depth.
+SQLite — see [`db.js`](./db.js). Book data is split along the ISBN:
+
+| Table | Holds | Why |
+| --- | --- | --- |
+| `editions` | Title, authors, publisher, published date, page count, **format**, **dimensions**, stock cover artwork, metadata source | Everything an ISBN determines, and therefore identical for every copy |
+| `copies` | Dust jacket, shelf, status, loan, library borrowing + due date, notes, a photograph of *this* copy | Everything true of one physical object on one shelf |
+| `shelves` | Room, bookcase, label, clearances | Where copies live |
+
+Format and dimensions are **edition** data, which surprises people: a hardback
+and a paperback of one book carry *different ISBNs*, so the ISBN settles the
+binding and the size. Of the edit form's "Physical" group, only the dust jacket
+is per-copy — your copy lost its jacket, mine did not.
+
+Genres, series membership and Open Library proposals hang off the **edition**:
+two copies of one book are one book, tagged once and queued once. Editions also
+carry `ol_work_id`, unused today — it is the anchor for moving genres and series
+up to *work* level later (Open Library keeps the series tag on the work, `OL…W`,
+and the rest on the edition, `OL…M`) without another table split.
+
+`books` is a **read-only view** joining a copy to its edition, so every query and
+API response looks as it always did; `library_name` is an alias of
+`copies.borrowed_from`. Writes must name `editions` and `copies` — SQLite reports
+`lastInsertRowid` 0 and `changes` 0 for writes through a view, so a write there
+would look like success while doing nothing.
+
+ISBNs are stored canonically as ISBN-13, so the 10- and 13-digit spellings of one
+book cannot become two records. Check digits are verified: an ISBN that fails is
+kept for display but never used to match, because merging on an unverifiable
+value would fuse two unrelated books.
+
+An edition is keyed on **`(isbn13, format)`**, not on the ISBN alone. E-books
+have ASINs rather than ISBNs, and importers routinely staple the print ISBN onto
+the e-book record — so matching on the ISBN alone merges a Kindle file into a
+hardback, and one of them loses its format and inherits the other's physical
+dimensions. Two records must agree on what kind of object they are before they
+are treated as the same edition.
+
+All physical dimensions are stored in **millimetres**. Capacity is computed by
+treating each book's *spine thickness* as the width it consumes along the shelf;
+a book fits if its height ≤ shelf height and its width ≤ shelf depth.
+
+### Upgrading from 2.x
+
+The 3.0.0 migration runs on first start and is **one-way** — a database it has
+touched cannot be read by 2.x. Copies keep their old book ids, so existing
+`/api/books/:id` links still resolve. Back the database up first; the split
+merges any copies whose ISBNs canonicalise to the same value, unioning their
+genres and collapsing duplicate Open Library proposals.
 
 ## Changing CSS or JS: bump the version
 
@@ -410,11 +454,43 @@ running, and the app and address units test it with `ConditionPathExists`, which
 makes systemd **skip** them cleanly. The flag lives in `/run` deliberately: a reboot
 clears it, so every boot has to decide afresh.
 
+Before a handoff replaces a database, the old one is kept as a timestamped
+**copy** (`.backup`, so it is consistent even against an open database), ten
+generations deep. These were once hardlinks, which is not a snapshot at all — a
+hardlink is another name for the same inode, and SQLite writes in place, so every
+"generation" tracked the live file and the rotation preserved nothing while
+looking exactly like a working backup rotation.
+
 Requirements: passwordless ssh between the nodes for a key restricted by
 `command=` to `deploy/failover-peer.sh` (a fixed verb list, so the credential cannot
 do more than its job), and if the floating address is a mesh-VPN route, an
 auto-approver for it — otherwise the standby's advertisement is unapproved and the
 address points nowhere for exactly as long as it takes someone to notice.
+
+### Hourly copy to the standby
+
+A handoff only moves the database when someone shuts a node down in an orderly
+way. `deploy/db-sync.sh`, run hourly from `/etc/cron.d/home-library-db-sync`,
+covers the other case: a node that dies outright then costs at most an hour.
+
+Install it on **both** nodes. It exits immediately unless the node holds the
+activity flag, so it follows the database through a handoff rather than naming a
+fixed master, and it never pulls — two diverged SQLite databases cannot be merged
+afterwards.
+
+It writes to `<data dir>/standby/library.db` on the peer, deliberately **not** to
+the peer's own `library.db`: that would drive past the generation interlock, which
+exists precisely to refuse replacing a copy a later handoff produced. Restoring
+from it is a deliberate act, not something the hourly job can do by accident.
+
+Transport is a second key, pinned on the far side to `rrsync -wo <dir>` so it can
+only write and only inside that directory. The failover key is not reused — it is
+pinned to the verb script and has no path to rsync, which is the point of it.
+
+Per node, `/etc/default/home-library-db-sync` holds `PEER=<other node>`. A run
+where nothing has been written since the last one does no work at all; a peer that
+is merely offline logs to the journal and exits 0, while anything else fails
+loudly.
 
 ## HTTPS (for camera scanning)
 

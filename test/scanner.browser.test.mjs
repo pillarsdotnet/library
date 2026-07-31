@@ -190,7 +190,10 @@ test('scanning a duplicate ISBN opens the choice dialog immediately (not only on
   await new Promise((r) => setTimeout(r, 700));
   assert.equal((await (await fetch(`${BASE}/api/meta`)).json()).count, before + 1, 'new copy created');
   assert.equal(await p2.$eval('#dialogTitle', (el) => el.textContent), 'Edit book', 'opened for editing');
-  assert.notEqual(await p2.$eval('#bookForm [name="title"]', (el) => el.value), 'Foskett Original');
+  // The title is edition data, settled by the ISBN, so the second copy shows the
+  // book's title — not the one typed into the form before the duplicate was
+  // detected. Two copies of one ISBN are one book and cannot disagree about it.
+  assert.equal(await p2.$eval('#bookForm [name="title"]', (el) => el.value), 'Foskett Original');
   await p2.close();
   assert.ok(seed.id, 'seed book exists');
 });
@@ -294,7 +297,8 @@ test('duplicate ISBN prompt: the "new" option creates the copy and opens it for 
   await new Promise((r) => setTimeout(r, 500));
   assert.equal(await metaCount(), before + 1, 'the new option creates the copy');
   assert.equal(await page.$eval('#dialogTitle', (el) => el.textContent), 'Edit book', 'opens the new copy for editing');
-  assert.equal(await page.$eval('#bookForm [name="title"]', (el) => el.value), 'Second Copy');
+  // Same ISBN, same book, same title — see the note on the scan-path test above.
+  assert.equal(await page.$eval('#bookForm [name="title"]', (el) => el.value), 'Dup Seed');
   await page.close();
 });
 

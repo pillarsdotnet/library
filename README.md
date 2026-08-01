@@ -78,22 +78,31 @@ All physical dimensions are stored in **millimetres**. Capacity is computed by
 treating each book's *spine thickness* as the width it consumes along the shelf;
 a book fits if its height ≤ shelf height and its width ≤ shelf depth.
 
-### Covers, and why listings never select them
+### Covers are files
 
-A photographed cover is stored inline as a base64 data-URL on the copy, and those
-images are roughly **half the database**. The API never returns them in a
-listing: each becomes a reference to `api/books/:id/cover`, carrying a token so
-the URL changes when the image does — without that, a browser holding a cached
-copy goes on showing the old photo after a new one is saved, which looks exactly
-like the save having failed.
+A photographed cover is a **file** in a `covers/` directory beside the database,
+named after the copy it belongs to. The row holds only that filename and
+`cover_token`, a hash of the bytes.
 
-The token is **stored** (`copies.cover_token`), not hashed from the image on
-read, so a listing can select the token and leave the base64 on disk. Deriving it
-in SQL is not an option: `length()` walks the whole overflow chain to count
-characters and costs as much as fetching the bytes. Queries that return books
-therefore select an explicit column list (`BOOK_SELECT` in `server.js`) rather
-than `b.*` — adding a cover column back to it silently costs about 4× the
-throughput of every listing.
+They used to be base64 data-URLs in the row, which made them about half the
+database — carried by every backup, every failover handoff and every hourly sync.
+Moving them out took the live database from **15.4 MB to 459 KB**.
+
+**A copy of `library.db` on its own is therefore no longer a backup.** Every row
+naming a missing file is a broken picture, so the covers directory has to travel
+with it. Both mechanisms here already do: the handoff moves it through the
+`covers-send`/`covers-recv` verbs, and the hourly sync rsyncs it alongside.
+
+The API returns a cover as a reference to `api/books/:id/cover?v=<token>`, never
+as bytes. The token is what makes the URL change when the image does — without
+it a browser holding a cached copy goes on showing the old photo after a new one
+is saved, which looks exactly like the save having failed. Because a versioned
+URL names one particular image forever, it is served `immutable`.
+
+Queries that return books select an explicit column list (`BOOK_SELECT` in
+`server.js`) rather than `b.*`. That mattered enormously when the images were in
+the row — putting one back cost about 4× the throughput of every listing — and
+it is still how the query stays honest about what it reads.
 
 ### Upgrading from 2.x
 
@@ -471,9 +480,16 @@ running, and the app and address units test it with `ConditionPathExists`, which
 makes systemd **skip** them cleanly. The flag lives in `/run` deliberately: a reboot
 clears it, so every boot has to decide afresh.
 
+Cover images move with the database, through the `covers-send` / `covers-recv`
+verbs — they are files beside it now, and the two are worthless apart: a row
+naming a missing file is a broken picture, and an image nothing refers to is
+landfill.
+
 Before a handoff replaces a database, the old one is kept as a timestamped
 **copy** (`.backup`, so it is consistent even against an open database), ten
-generations deep. These were once hardlinks, which is not a snapshot at all — a
+generations deep. Covers are *not* snapshotted: they are named after the copy
+that owns them and are rarely replaced, so a restored database of any recent
+vintage still finds its images. These were once hardlinks, which is not a snapshot at all — a
 hardlink is another name for the same inode, and SQLite writes in place, so every
 "generation" tracked the live file and the rotation preserved nothing while
 looking exactly like a working backup rotation.
@@ -495,8 +511,10 @@ activity flag, so it follows the database through a handoff rather than naming a
 fixed master, and it never pulls — two diverged SQLite databases cannot be merged
 afterwards.
 
-It writes to `<data dir>/standby/library.db` on the peer, deliberately **not** to
-the peer's own `library.db`: that would drive past the generation interlock, which
+It sends the covers directory in the same run — rsync is the right tool for that
+precisely because almost none of it changes between runs — and writes to
+`<data dir>/standby/` on the peer, deliberately **not** to the peer's own
+`library.db`: that would drive past the generation interlock, which
 exists precisely to refuse replacing a copy a later handoff produced. Restoring
 from it is a deliberate act, not something the hourly job can do by accident.
 

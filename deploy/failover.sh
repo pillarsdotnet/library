@@ -53,10 +53,12 @@ VIP="${VIP:-192.168.144.1}"
 SERVICE="${SERVICE:-home-library}"
 DATA_DIR="${DATA_DIR:-/var/lib/home-library}"
 DB="${DB:-$DATA_DIR/library.db}"
+COVERS_DIR="${COVERS_DIR:-$DATA_DIR/covers}"
 OWNER_FILE="${OWNER_FILE:-$DATA_DIR/OWNER}"
 IMAGE="${IMAGE:-library.local/home-library:latest}"
-# Timestamped hardlinks are free until the DB changes, but each one pins the old
-# pages once it does. Keep a bounded window.
+# How many timestamped snapshots to keep. They are real copies now, so the window
+# costs KEEP × the database — which since covers moved out to files is a few
+# hundred kilobytes each, not the twelve megabytes it used to be.
 KEEP="${KEEP:-10}"
 VIP_DEV="${VIP_DEV:-lo}"
 LOCK="/run/home-library-failover.lock"
@@ -173,11 +175,37 @@ warn_if_mtime_disagrees() {   # $1=src mtime  $2=dst mtime  $3=description
 # Both take mtimes captured by the caller BEFORE stopping/checkpointing anything:
 # a checkpoint rewrites the main file and sets its mtime to now, so measuring after
 # one would make the source look newest every time and the guard would never fire.
+# Cover images are files beside the database and the two are worthless apart, so
+# every movement of one moves the other. Sent as a tar stream through a verb, for
+# the same reason the database is: the peer names the directory, the caller cannot.
+push_covers() {
+  [ -d "$COVERS_DIR" ] || return 0
+  tar -C "$DATA_DIR" -cf - "$(basename "$COVERS_DIR")" | on_peer covers-recv
+}
+pull_covers() {
+  staging="$DATA_DIR/.covers.incoming"
+  rm -rf "$staging"; mkdir -p "$staging"
+  if on_peer covers-send | tar -C "$staging" --no-absolute-names --no-same-owner -xf - \
+     && [ -d "$staging/covers" ]; then
+    find "$staging" -type l -delete
+    rm -rf "$COVERS_DIR.old"
+    if [ -d "$COVERS_DIR" ]; then mv "$COVERS_DIR" "$COVERS_DIR.old"; fi
+    mv "$staging/covers" "$COVERS_DIR"
+    rm -rf "$COVERS_DIR.old"
+  else
+    # A peer with no covers yet is normal; it must not fail the handoff, and the
+    # local set is left exactly as it was rather than being emptied on a guess.
+    log "no covers received from $PEER_NAME — keeping the local set"
+  fi
+  rm -rf "$staging"
+}
+
 push_db() {   # local -> peer; $1=src gen $2=dst gen $3=src mtime $4=dst mtime
   assert_generation_ok "$1" "$2" "push to $PEER_NAME"
   warn_if_mtime_disagrees "$3" "$4" "push to $PEER_NAME"
   snapshot_peer
   on_peer db-recv < "$DB"
+  push_covers
 }
 pull_db() {   # peer -> local; $1=src gen $2=dst gen $3=src mtime $4=dst mtime
   assert_generation_ok "$1" "$2" "pull from $PEER_NAME"
@@ -188,6 +216,7 @@ pull_db() {   # peer -> local; $1=src gen $2=dst gen $3=src mtime $4=dst mtime
   mv -f "$DB.incoming" "$DB"
   rm -f "$DB-wal" "$DB-shm"
   chmod 644 "$DB"
+  pull_covers
 }
 
 # ─── ownership ──────────────────────────────────────────────────────────────────

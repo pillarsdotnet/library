@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { sortTitle } from './sorttitle.js';
 import { canonicalIsbn } from './isbn.js';
-import { coverToken } from './covers.js';
+import { parseDataUrl, writeCover, COVERS_DIR } from './covers.js';
 import { GENRE_SEED } from './genres-seed.js';
 
 const DB_PATH = process.env.DB_PATH || './data/library.db';
@@ -136,15 +136,18 @@ db.exec(`
     due_date        TEXT,
 
     -- A photograph of THIS copy, overriding the edition's stock artwork when
-    -- present. cover_source is the photo as taken, kept beside the cropped
+    -- present. cover_source_file is the photo as taken, kept beside the cropped
     -- cover so the crop can be redone later — on a computer, where dragging
     -- corners is not a fingertip exercise. Cropping is otherwise destructive:
     -- the pixels outside it are gone for good.
-    cover_url       TEXT,
-    cover_source    TEXT,
-    -- Cache-busting tokens for the two images above, stored rather than derived.
-    -- A listing needs the token but not the image; keeping it here is what lets
-    -- the list query leave the base64 on disk. See covers.js.
+    --
+    -- Filenames under the covers directory beside this database, never the image
+    -- bytes: as data-URLs these were about half the file, and every backup,
+    -- handoff and hourly sync carried them. The token is a hash of the bytes, so
+    -- a listing can build a cache-busting URL without opening the image. See
+    -- covers.js.
+    cover_file      TEXT,
+    cover_source_file TEXT,
     cover_token     TEXT,
     cover_source_token TEXT,
 
@@ -394,10 +397,12 @@ if (LEGACY_BOOKS) {
     const insCopy = db.prepare(`
       INSERT INTO copies (id, edition_id, jacket, shelf_id, status, loaned_to,
                           is_library_book, borrowed_from, due_date,
-                          cover_url, cover_source, notes, created_at, updated_at)
+                          cover_file, cover_token, cover_source_file, cover_source_token,
+                          notes, created_at, updated_at)
       VALUES (@id, @edition_id, @jacket, @shelf_id, @status, @loaned_to,
               @is_library_book, @borrowed_from, @due_date,
-              @cover_url, @cover_source, @notes, @created_at, @updated_at)`);
+              @cover_file, @cover_token, @cover_source_file, @cover_source_token,
+              @notes, @created_at, @updated_at)`);
     const getEdition = db.prepare('SELECT * FROM editions WHERE id = ?');
 
     // Only a verifiable ISBN merges copies onto one edition, and only when they
@@ -412,8 +417,14 @@ if (LEGACY_BOOKS) {
       const now = "datetime('now')";
       const canon = canonicalIsbn(r.isbn);
       // A photographed cover is a fact about one copy; a fetched URL is the
-      // edition's artwork. data: means the user shot it themselves.
-      const isPhoto = typeof r.cover_url === 'string' && r.cover_url.startsWith('data:');
+      // edition's artwork. data: means the user shot it themselves — and a
+      // photograph becomes a file here rather than moving from one column of
+      // base64 to another.
+      const inline = parseDataUrl(r.cover_url);
+      const isPhoto = !!inline;
+      const photo = inline ? writeCover(String(r.id), inline.buf, inline.mime) : null;
+      const inlineSrc = parseDataUrl(r.cover_source);
+      const source = inlineSrc ? writeCover(`${r.id}-source`, inlineSrc.buf, inlineSrc.mime) : null;
 
       let editionId = canon ? byIsbn.get(key(canon, r.format)) : undefined;
       if (editionId === undefined) {
@@ -466,8 +477,12 @@ if (LEGACY_BOOKS) {
         is_library_book: r.is_library_book ?? 0,
         borrowed_from: r.library_name ?? null,
         due_date: r.due_date ?? null,
-        cover_url: isPhoto ? r.cover_url : null,
-        cover_source: r.cover_source ?? null,
+        // Straight to a file. The copy keeps its old book id, so the image can be
+        // named before the row exists and the base64 never lands in a column.
+        cover_file: photo?.file ?? null,
+        cover_token: photo?.token ?? null,
+        cover_source_file: source?.file ?? null,
+        cover_source_token: source?.token ?? null,
         notes: r.notes ?? null,
         created_at: r.created_at ?? db.prepare("SELECT datetime('now') AS t").get().t,
         updated_at: r.updated_at ?? db.prepare("SELECT datetime('now') AS t").get().t,
@@ -565,28 +580,70 @@ if (LEGACY_BOOKS) {
   }
 }
 
-// Cover tokens for databases created before they existed, and for rows the split
-// above just wrote. Backfilled once; from then on the write paths maintain them.
+// ─── covers out of the database and onto disk ───────────────────────────────────
+// Images arrived here as base64 data-URLs and were about half the database. They
+// move to files beside it; the row keeps a filename and a hash of the bytes.
+//
+// Ordered so that a crash cannot lose an image: every file is written and its row
+// updated first, and the columns holding the base64 are dropped only once nothing
+// is left to extract. Interrupted halfway, the next startup simply resumes — the
+// rows still carrying base64 are exactly the ones still to do.
 {
   const copyCols = db.prepare('PRAGMA table_info(copies)').all().map((c) => c.name);
-  if (!copyCols.includes('cover_token')) db.exec('ALTER TABLE copies ADD COLUMN cover_token TEXT');
-  if (!copyCols.includes('cover_source_token')) db.exec('ALTER TABLE copies ADD COLUMN cover_source_token TEXT');
+  for (const [col, ddl] of [
+    ['cover_file', 'ALTER TABLE copies ADD COLUMN cover_file TEXT'],
+    ['cover_source_file', 'ALTER TABLE copies ADD COLUMN cover_source_file TEXT'],
+    ['cover_token', 'ALTER TABLE copies ADD COLUMN cover_token TEXT'],
+    ['cover_source_token', 'ALTER TABLE copies ADD COLUMN cover_source_token TEXT'],
+  ]) if (!copyCols.includes(col)) db.exec(ddl);
 
-  const pending = db.prepare(`SELECT id, cover_url, cover_source FROM copies
-    WHERE (cover_url IS NOT NULL AND cover_url <> '' AND cover_token IS NULL)
-       OR (cover_source IS NOT NULL AND cover_source <> '' AND cover_source_token IS NULL)`).all();
-  if (pending.length) {
-    const setTokens = db.prepare('UPDATE copies SET cover_token = @t, cover_source_token = @st WHERE id = @id');
-    const fill = db.transaction(() => {
-      for (const r of pending) {
-        setTokens.run({
-          id: r.id,
-          t: r.cover_url ? coverToken(r.cover_url) : null,
-          st: r.cover_source ? coverToken(r.cover_source) : null,
-        });
-      }
-    });
-    fill();
+  const hasInline = copyCols.includes('cover_url') || copyCols.includes('cover_source');
+  if (hasInline) {
+    const sel = [
+      'id',
+      copyCols.includes('cover_url') ? 'cover_url' : "NULL AS cover_url",
+      copyCols.includes('cover_source') ? 'cover_source' : "NULL AS cover_source",
+    ].join(', ');
+    const rows = db.prepare(`SELECT ${sel} FROM copies
+      WHERE (cover_url IS NOT NULL AND cover_url <> '')
+         OR (cover_source IS NOT NULL AND cover_source <> '')`).all();
+
+    const setFiles = db.prepare(`UPDATE copies SET
+      cover_file = @f, cover_token = @t,
+      cover_source_file = @sf, cover_source_token = @st WHERE id = @id`);
+
+    let extracted = 0, skipped = 0;
+    for (const r of rows) {
+      // Written outside the transaction on purpose: a file written for a row that
+      // is then rolled back is a harmless orphan, whereas a row pointing at a file
+      // that was never written is a broken image.
+      const main = parseDataUrl(r.cover_url);
+      const src = parseDataUrl(r.cover_source);
+      const w = main ? writeCover(String(r.id), main.buf, main.mime) : null;
+      const ws = src ? writeCover(`${r.id}-source`, src.buf, src.mime) : null;
+      // A remote URL in cover_url is not an inline image and does not belong on
+      // this side of the split at all; it is edition artwork and is left alone.
+      if (main && !w) skipped += 1;
+      setFiles.run({
+        id: r.id,
+        f: w?.file ?? null, t: w?.token ?? null,
+        sf: ws?.file ?? null, st: ws?.token ?? null,
+      });
+      if (w || ws) extracted += 1;
+    }
+
+    // The view still names these columns, and SQLite validates every view before
+    // it will drop one. Dropping the view costs nothing — it is derived, and the
+    // block below rebuilds it from the new columns.
+    db.exec('DROP VIEW IF EXISTS books');
+    // Only now that every image is on disk are the base64 columns removed.
+    if (copyCols.includes('cover_url')) db.exec('ALTER TABLE copies DROP COLUMN cover_url');
+    if (copyCols.includes('cover_source')) db.exec('ALTER TABLE copies DROP COLUMN cover_source');
+    // Dropping columns does not return their pages to the filesystem. This is the
+    // one point where reclaiming ~7 MB is worth the rewrite it costs.
+    db.exec('VACUUM');
+    console.log(`📁 moved ${extracted} cover image(s) to ${COVERS_DIR}`
+      + (skipped ? ` (${skipped} of an unsupported type left behind)` : ''));
   }
 }
 
@@ -600,7 +657,7 @@ if (LEGACY_BOOKS) {
 // derived, so dropping one loses nothing, and a stale definition would silently
 // deprive the list query of the columns that keep the images off the read path.
 if (objectKind('books') === 'view'
-    && !db.prepare('PRAGMA table_info(books)').all().some((c) => c.name === 'cover_token')) {
+    && !db.prepare('PRAGMA table_info(books)').all().some((c) => c.name === 'cover_file')) {
   db.exec('DROP VIEW books');
 }
 if (objectKind('books') !== 'view') {
@@ -622,12 +679,12 @@ if (objectKind('books') !== 'view') {
       e.width_mm                        AS width_mm,
       e.thickness_mm                    AS thickness_mm,
       e.source                          AS source,
-      COALESCE(c.cover_url, e.cover_url) AS cover_url,
-      c.cover_source                    AS cover_source,
-      -- The three small columns a listing needs INSTEAD of the two big ones. A
-      -- copy's own photograph is identified by its token; when it has none, the
-      -- edition's stock artwork is a short URL that costs nothing to carry.
+      -- No image bytes here any more: a copy's photograph is a file, named by
+      -- cover_file and versioned by cover_token, and a copy without one falls
+      -- back to the edition's stock artwork, which was always just a URL.
+      c.cover_file                      AS cover_file,
       c.cover_token                     AS cover_token,
+      c.cover_source_file               AS cover_source_file,
       c.cover_source_token              AS cover_source_token,
       e.cover_url                       AS edition_cover_url,
       c.jacket                          AS jacket,

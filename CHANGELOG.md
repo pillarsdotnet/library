@@ -5,6 +5,36 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.0.0] — 2026-07-31
+
+### Changed
+
+- **Cover images are files, not database rows.** They were stored as base64
+  data-URLs and were roughly half the database — so every backup, every failover
+  handoff and every hourly sync carried about 7 MB of image data that SQLite is
+  not the right place for. They now live in a `covers/` directory beside the
+  database; the row keeps a filename and a hash of the bytes.
+
+  On the live library the database went from **15.4 MB to 459 KB** — base64
+  inflates by a third, and `VACUUM` also reclaimed pages the 3.0.0 migration had
+  left dead. The images are 5.3 MB on disk. Serving is now `sendFile` rather than
+  decoding base64 on every request, and the EPUB import writes the resized JPEG
+  straight to disk instead of base64-encoding it into a column.
+
+  **Major, because the data is no longer in one file.** A backup of `library.db`
+  alone is no longer a backup: every row naming a missing image is a broken
+  picture. Copy the covers directory with it. The failover handoff and the hourly
+  sync were both taught to move both — `covers-send`/`covers-recv` verbs for the
+  handoff, and an rsync of the directory for the hourly copy, which is where
+  rsync earns its keep since almost nothing changes between runs.
+
+  The API is unchanged: covers were already returned as `api/books/:id/cover`
+  references rather than bytes.
+
+- `eslint.config.js` matches server-side modules by glob rather than by a list of
+  filenames. `covers.js` was linted without Node globals purely because nobody
+  remembered to add it, and only a stray `process` reference made that visible.
+
 ## [3.2.0] — 2026-07-31
 
 ### Changed

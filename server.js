@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import db from './db.js';
 import { canonicalIsbn } from './isbn.js';
-import { coverToken } from './covers.js';
+import { parseDataUrl, writeCover, coverPath, removeCover, mimeForFile } from './covers.js';
 import { lookupIsbn, RateLimitError } from './lookup.js';
 import { parseEpub } from './epub.js';
 import {
@@ -61,7 +61,7 @@ const BOOK_SELECT = `b.id, b.edition_id, b.isbn, b.isbn13, b.ol_work_id, b.title
   b.publisher, b.published_date, b.page_count, b.format, b.height_mm, b.width_mm,
   b.thickness_mm, b.source, b.jacket, b.shelf_id, b.status, b.loaned_to,
   b.is_library_book, b.library_name, b.due_date, b.notes, b.created_at, b.updated_at,
-  b.cover_token, b.cover_source_token, b.edition_cover_url`;
+  b.cover_file, b.cover_token, b.cover_source_file, b.cover_source_token, b.edition_cover_url`;
 
 // Turn the stored tokens back into the cover URLs the API has always returned.
 // A copy's own photograph is served from its own endpoint, carrying a token
@@ -79,7 +79,9 @@ const coverRef = (b) => {
   b.cover_source = b.cover_source_token
     ? `api/books/${b.id}/cover-source?v=${b.cover_source_token}`
     : null;
+  delete b.cover_file;
   delete b.cover_token;
+  delete b.cover_source_file;
   delete b.cover_source_token;
   delete b.edition_cover_url;
   return b;
@@ -161,23 +163,22 @@ function splitBookData(data) {
   // Renamed on the way in: `library_name` (which public library it came from)
   // would sit confusingly beside the tenant `library_id` that multi-library adds.
   if (data.library_name !== undefined) copy.borrowed_from = data.library_name;
-  // A photograph is a fact about the copy that was photographed; a fetched URL
-  // is the edition's artwork, shared by every copy. Whenever an image is written
-  // its cache-busting token is written with it, so no read ever has to derive one
-  // from the base64 — see covers.js.
+  // A photograph is a fact about the copy that was photographed; a fetched URL is
+  // the edition's artwork, shared by every copy. Images are not returned as
+  // columns: they become files, and the file cannot be named until the copy has
+  // an id, so they are handed back separately for applyImages() to write.
+  const images = {};
   if (data.cover_url !== undefined) {
-    if (typeof data.cover_url === 'string' && data.cover_url.startsWith('data:')) {
-      copy.cover_url = data.cover_url;
-      copy.cover_token = coverToken(data.cover_url);
-    } else {
-      edition.cover_url = data.cover_url;
-    }
+    const parsed = parseDataUrl(data.cover_url);
+    if (parsed) images.cover = parsed;
+    else edition.cover_url = data.cover_url;
   }
   if (data.cover_source !== undefined) {
-    copy.cover_source = data.cover_source;
-    copy.cover_source_token = data.cover_source ? coverToken(data.cover_source) : null;
+    const parsed = parseDataUrl(data.cover_source);
+    if (parsed) images.source = parsed;
+    else images.clearSource = true;   // '' or null means "drop the kept-back original"
   }
-  return { edition, copy };
+  return { edition, copy, images };
 }
 
 // Find the edition an ISBN names, or create it.
@@ -217,6 +218,31 @@ function resolveEdition(editionData, isbnRaw) {
     isbn13: canon,
     isbn_text: isbnRaw ?? null,
   });
+}
+
+// Write a copy's images to disk and point its row at them. Called once the copy
+// has an id, because that id is the filename.
+//
+// The file is written before the row is updated, so the worst an interruption can
+// leave behind is an unreferenced image — which costs disk. The other order would
+// leave a row naming a file that does not exist, which costs the picture.
+function applyImages(copyId, images) {
+  if (!images.cover && !images.source && !images.clearSource) return;
+  const cur = db.prepare('SELECT cover_file, cover_source_file FROM copies WHERE id = ?').get(copyId);
+  const set = {};
+  if (images.cover) {
+    const w = writeCover(String(copyId), images.cover.buf, images.cover.mime, cur?.cover_file);
+    if (w) { set.cover_file = w.file; set.cover_token = w.token; }
+  }
+  if (images.source) {
+    const w = writeCover(`${copyId}-source`, images.source.buf, images.source.mime, cur?.cover_source_file);
+    if (w) { set.cover_source_file = w.file; set.cover_source_token = w.token; }
+  } else if (images.clearSource && cur?.cover_source_file) {
+    removeCover(cur.cover_source_file);
+    set.cover_source_file = null;
+    set.cover_source_token = null;
+  }
+  if (Object.keys(set).length) update('copies', copyId, set);
 }
 
 // Replace an edition's genres with the given list of genre ids (ignores unknown
@@ -348,29 +374,37 @@ router.get('/api/books', (req, res) => {
 
 // Inline (data:) covers are served from their own endpoint instead of being
 // embedded in every list response — they dominated the payload otherwise.
+// A versioned URL names one particular image, so it can be cached hard: a new
+// photo arrives under a new token and therefore a new URL. Bare URLs must stay
+// short-lived, or a saved cover would appear not to have changed.
+function sendCoverFile(res, file, versioned) {
+  const path = coverPath(file);
+  // The row names a file that is not there. That is a real inconsistency — a
+  // restore that brought the database without the covers beside it — and a 404
+  // is the honest answer rather than a broken image with a 200 on it.
+  if (!path) return res.status(404).json({ error: 'Not found' });
+  res.set('Content-Type', mimeForFile(file));
+  res.set('Cache-Control', versioned ? 'public, max-age=31536000, immutable' : 'no-cache');
+  return res.sendFile(path);
+}
+
 router.get('/api/books/:id/cover', (req, res) => {
-  const row = db.prepare('SELECT cover_url FROM books WHERE id = ?').get(req.params.id);
-  if (!row || !row.cover_url) return res.status(404).json({ error: 'Not found' });
-  if (!row.cover_url.startsWith('data:')) return res.redirect(302, row.cover_url);
-  const m = /^data:([^;,]+);base64,(.*)$/s.exec(row.cover_url);
-  if (!m) return res.status(404).json({ error: 'Not an inline image' });
-  res.set('Content-Type', m[1]);
-  // A versioned URL names one particular image, so it can be cached hard: a new
-  // photo arrives under a new URL. Bare URLs must stay short-lived, or a saved
-  // cover would appear not to have changed.
-  res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
-  res.send(Buffer.from(m[2], 'base64'));
+  const row = db.prepare('SELECT cover_file, edition_cover_url FROM books WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  // No photograph of this copy: the edition's stock artwork is somewhere else
+  // entirely, so say where instead of pretending to hold it.
+  if (!row.cover_file) {
+    if (row.edition_cover_url) return res.redirect(302, row.edition_cover_url);
+    return res.status(404).json({ error: 'Not found' });
+  }
+  return sendCoverFile(res, row.cover_file, !!req.query.v);
 });
 
 // The photo a cover was cropped from, for re-cropping it later.
 router.get('/api/books/:id/cover-source', (req, res) => {
-  const row = db.prepare('SELECT cover_source FROM books WHERE id = ?').get(req.params.id);
-  if (!row || !row.cover_source) return res.status(404).json({ error: 'Not found' });
-  const m = /^data:([^;,]+);base64,(.*)$/s.exec(row.cover_source);
-  if (!m) return res.status(404).json({ error: 'Not an inline image' });
-  res.set('Content-Type', m[1]);
-  res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
-  res.send(Buffer.from(m[2], 'base64'));
+  const row = db.prepare('SELECT cover_source_file FROM books WHERE id = ?').get(req.params.id);
+  if (!row || !row.cover_source_file) return res.status(404).json({ error: 'Not found' });
+  return sendCoverFile(res, row.cover_source_file, !!req.query.v);
 });
 
 router.get('/api/books/:id', (req, res) => {
@@ -384,7 +418,7 @@ router.post('/api/books', (req, res) => {
   if (isCoverRef(req.body.cover_source)) delete req.body.cover_source;
   const data = pick(req.body, BOOK_COLS);
   if (!data.title) return res.status(400).json({ error: 'title is required' });
-  const { edition, copy } = splitBookData(data);
+  const { edition, copy, images } = splitBookData(data);
   // One transaction: a copy without its edition, or genres attached to an
   // edition whose copy failed to insert, would both be worse than no book.
   const create = db.transaction(() => {
@@ -394,6 +428,7 @@ router.post('/api/books', (req, res) => {
     return id;
   });
   const id = create();
+  applyImages(id, images);
   res.status(201).json(coverRef(attachGenres([db.prepare(`SELECT ${BOOK_SELECT} FROM books b WHERE b.id = ?`).get(id)])[0]));
 });
 
@@ -404,7 +439,8 @@ router.put('/api/books/:id', (req, res) => {
   if (isCoverRef(req.body.cover_url)) delete req.body.cover_url;
   if (isCoverRef(req.body.cover_source)) delete req.body.cover_source;
   const data = pick(req.body, BOOK_COLS);
-  const { edition, copy } = splitBookData(data);
+  const { edition, copy, images } = splitBookData(data);
+  applyImages(current.id, images);
 
   const save = db.transaction(() => {
     let editionId = current.edition_id;
@@ -442,8 +478,13 @@ router.put('/api/books/:id', (req, res) => {
 // may still reference, and it costs a row to keep the book re-addable without a
 // fresh lookup.
 router.delete('/api/books/:id', (req, res) => {
+  // Read the filenames before the row goes: afterwards there is nothing left to
+  // say which files were this copy's, and they would sit there forever.
+  const files = db.prepare('SELECT cover_file, cover_source_file FROM copies WHERE id = ?').get(req.params.id);
   const info = db.prepare('DELETE FROM copies WHERE id = ?').run(req.params.id);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
+  removeCover(files?.cover_file);
+  removeCover(files?.cover_source_file);
   res.status(204).end();
 });
 
@@ -468,7 +509,7 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
       SELECT s.title FROM series_books sb JOIN series s ON s.id = sb.series
       WHERE sb.edition = e.id ORDER BY sb."order" LIMIT 1
     ) AS series_title,
-    (SELECT c.cover_url FROM copies c WHERE c.edition_id = e.id AND c.cover_url IS NOT NULL LIMIT 1) AS copy_cover
+    (SELECT c.cover_file FROM copies c WHERE c.edition_id = e.id AND c.cover_file IS NOT NULL LIMIT 1) AS copy_cover
     FROM editions e
     -- Any ISBN we hold, not just a verifiable one: an ISBN that fails its check
     -- digit is still worth asking Open Library about, and the answer ("unknown")
@@ -483,6 +524,7 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
     // Only a photograph one of our copies actually carries is ours to offer.
     // The edition's own cover_url is stock artwork, quite possibly Open
     // Library's own, and uploading that back to them proposes nothing.
+    // proposalsFor only asks whether there IS one, so the filename answers it.
     book.cover_url = book.copy_cover;
     let edition = null;
     try { edition = await fetchEdition(book.isbn); } catch { edition = null; }
@@ -543,8 +585,8 @@ router.post('/api/ol-contributions/:id/approve', async (req, res) => {
   // The sendable cover is a photograph one of our copies carries, never the
   // edition's stock artwork — see the scan above.
   const row = db.prepare(`SELECT c.*,
-      (SELECT cp.cover_url FROM copies cp
-        WHERE cp.edition_id = c.edition_id AND cp.cover_url IS NOT NULL LIMIT 1) AS cover_url
+      (SELECT cp.cover_file FROM copies cp
+        WHERE cp.edition_id = c.edition_id AND cp.cover_file IS NOT NULL LIMIT 1) AS cover_file
     FROM ol_contributions c
     WHERE c.id = ? AND c.status IN ('pending', 'failed')`).get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
@@ -571,9 +613,9 @@ router.post('/api/ol-contributions/:id/approve', async (req, res) => {
       return res.json({ ok: true, olid: created, created: done });
     }
     if (row.field === 'cover') {
-      const m = /^data:[^;,]+;base64,(.*)$/s.exec(row.cover_url || '');
-      if (!m) throw new Error('this book no longer has an uploaded cover to send');
-      await sendCover(row.olid, Buffer.from(m[1], 'base64'), cookie);
+      const path = row.cover_file && coverPath(row.cover_file);
+      if (!path) throw new Error('this book no longer has an uploaded cover to send');
+      await sendCover(row.olid, readFileSync(path), cookie);
     } else {
       await sendField(row.olid, row.field, row.value, FIELD_COMMENTS[row.field], cookie);
     }
@@ -976,12 +1018,14 @@ router.post('/api/import/epub', express.raw({ type: () => true, limit: '80mb' })
   }
   if (!meta.title) return res.status(422).json({ error: 'EPUB has no title' });
 
-  let coverUrl = '';
+  let coverJpeg = null;
   if (meta.cover) {
     try {
-      const jpeg = await sharp(meta.cover.data).resize({ width: 500, withoutEnlargement: true })
+      // Straight to a buffer and then to a file: there is no longer any reason to
+      // base64 it, which used to inflate the image by a third on its way into a
+      // column it no longer occupies.
+      coverJpeg = await sharp(meta.cover.data).resize({ width: 500, withoutEnlargement: true })
         .jpeg({ quality: 82 }).toBuffer();
-      coverUrl = `data:image/jpeg;base64,${jpeg.toString('base64')}`;
     } catch { /* unreadable cover image — import without one */ }
   }
 
@@ -991,7 +1035,6 @@ router.post('/api/import/epub', express.raw({ type: () => true, limit: '80mb' })
     isbn: meta.isbn,
     publisher: meta.publisher,
     published_date: meta.published_date,
-    cover_url: coverUrl,
     format: 'ebook',
     status: req.query.status || 'tbr',
     source: 'epub',
@@ -1003,6 +1046,7 @@ router.post('/api/import/epub', express.raw({ type: () => true, limit: '80mb' })
     return insert('copies', { ...copy, edition_id: editionId });
   });
   const id = create();
+  if (coverJpeg) applyImages(id, { cover: { buf: coverJpeg, mime: 'image/jpeg' } });
   // Through coverRef like every other book response: the client just uploaded
   // this file and has no use for its cover echoed back as half a megabyte of
   // base64. It gets the same reference URL the rest of the API returns.

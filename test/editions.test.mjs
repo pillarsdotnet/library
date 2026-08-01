@@ -8,9 +8,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
@@ -237,14 +237,29 @@ test('backfill: a photographed cover stays with its copy, stock artwork goes to 
   const e = after.prepare('SELECT * FROM editions').get();
   assert.equal(e.cover_url, 'https://covers.example/dune.jpg', 'fetched artwork is edition-level');
   const copies = after.prepare('SELECT * FROM copies ORDER BY id').all();
-  assert.equal(copies[0].cover_url, null, 'the copy with no photo of its own has none');
-  assert.equal(copies[1].cover_url, photo, "a photograph belongs to the copy that was photographed");
-  assert.equal(copies[1].cover_source, 'data:image/jpeg;base64,BBBB', 'and so does its uncropped original');
+  assert.equal(copies[0].cover_file, null, 'the copy with no photo of its own has none');
+
+  // A photograph belongs to the copy that was photographed — and it is a file
+  // now, not base64 in a column, so the bytes have to be on disk to count.
+  assert.equal(copies[1].cover_file, `${copies[1].id}.jpg`);
+  const coversDir = join(dirname(dbPath), 'covers');
+  assert.deepEqual(readFileSync(join(coversDir, copies[1].cover_file)),
+    Buffer.from('AAAA', 'base64'), 'the cropped cover reached the disk intact');
+  assert.equal(copies[1].cover_source_file, `${copies[1].id}-source.jpg`);
+  assert.deepEqual(readFileSync(join(coversDir, copies[1].cover_source_file)),
+    Buffer.from('BBBB', 'base64'), 'and so did its uncropped original');
+  assert.ok(copies[1].cover_token, 'with a token to version its URL');
+
+  // Nothing base64 is left behind in the database.
+  const cols = after.prepare("PRAGMA table_info(copies)").all().map((c) => c.name);
+  assert.ok(!cols.includes('cover_url') && !cols.includes('cover_source'),
+    'the columns that held the images are gone');
 
   // Through the view, a copy's own photo wins over the edition's artwork.
-  const view = after.prepare('SELECT id, cover_url FROM books ORDER BY id').all();
-  assert.equal(view[0].cover_url, 'https://covers.example/dune.jpg');
-  assert.equal(view[1].cover_url, photo);
+  const view = after.prepare('SELECT id, cover_file, edition_cover_url FROM books ORDER BY id').all();
+  assert.equal(view[0].cover_file, null);
+  assert.equal(view[0].edition_cover_url, 'https://covers.example/dune.jpg');
+  assert.equal(view[1].cover_file, `${copies[1].id}.jpg`);
   after.close();
   rmSync(dir, { recursive: true, force: true });
 });

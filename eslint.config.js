@@ -11,8 +11,12 @@ export default [
   { ignores: ['node_modules/**', 'data/**'] },
   js.configs.recommended,
   {
-    // Server-side: Node ESM.
-    files: ['server.js', 'db.js', 'lookup.js', 'epub.js', 'sorttitle.js', 'openlibrary.js', 'eslint.config.js'],
+    // Server-side: Node ESM. A glob rather than a list of names — `covers.js`
+    // was linted without Node globals purely because nobody remembered to add
+    // it, and only a `process` reference made that visible. `*.js` matches the
+    // repository root only, so the browser and test configs below still win for
+    // public/ and test/.
+    files: ['*.js'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',

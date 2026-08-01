@@ -36,6 +36,7 @@ PEER_PORT="${PEER_PORT:-65432}"
 KEY="${KEY:-/root/id_homelibrary_sync}"
 DATA_DIR="${DATA_DIR:-/var/lib/home-library}"
 DB="${DB:-$DATA_DIR/library.db}"
+COVERS_DIR="${COVERS_DIR:-$DATA_DIR/covers}"
 ACTIVE_FLAG="${ACTIVE_FLAG:-/run/home-library-active}"
 STATE_DIR="${STATE_DIR:-$DATA_DIR/.sync}"
 LOCK=/run/home-library-db-sync.lock
@@ -98,9 +99,19 @@ sqlite3 "$DB" ".backup '$SNAP'"
 # Destination is relative: rrsync on the far side confines it to the directory
 # named in authorized_keys, so this cannot address anything else on that host.
 # Past this point a failure is a real one and is allowed to be noisy.
-rsync -a --checksum \
-  -e "ssh -i $KEY -p $PEER_PORT -o BatchMode=yes -o ConnectTimeout=10" \
-  "$SNAP" "root@$PEER:library.db"
+RSH="ssh -i $KEY -p $PEER_PORT -o BatchMode=yes -o ConnectTimeout=10"
+rsync -a --checksum -e "$RSH" "$SNAP" "root@$PEER:library.db"
+
+# Cover images live beside the database as files and are useless without it —
+# and it is useless without them, since every row naming a missing file is a
+# broken picture. They travel in the same run, and --delete keeps the copy a
+# copy rather than an ever-growing pile of images no row refers to any more.
+# This is where rsync earns its place: covers are almost entirely unchanged
+# between runs, so it sends the handful that are new.
+if [ -d "$COVERS_DIR" ]; then
+  rsync -a --delete -e "$RSH" "$COVERS_DIR/" "root@$PEER:covers/"
+fi
 
 printf '%s' "$now" > "$STATE_DIR/last-synced"
-log "synced $(stat -c %s "$SNAP") bytes to $PEER:$DATA_DIR/standby/library.db"
+log "synced $(stat -c %s "$SNAP") bytes + $(find "$COVERS_DIR" -type f 2>/dev/null | wc -l) cover file(s) to $PEER"
+

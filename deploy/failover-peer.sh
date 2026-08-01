@@ -20,6 +20,7 @@ set -eu
 SERVICE=home-library
 DATA_DIR=/var/lib/home-library
 DB=$DATA_DIR/library.db
+COVERS_DIR=$DATA_DIR/covers
 OWNER_FILE=$DATA_DIR/OWNER
 IMAGE=library.local/home-library:latest
 HEALTH_URL=http://127.0.0.1:30800/library/
@@ -102,6 +103,37 @@ case "$verb" in
     ;;
 
   db-send)    [ -f "$DB" ] || deny "no database here"; cat "$DB" ;;
+
+  # Cover images are files beside the database now, and the two are worthless
+  # apart: a row naming a missing file is a broken picture, and an image nothing
+  # refers to is landfill. So a handoff has to move both, and these two verbs are
+  # db-send/db-recv for a directory. Still no path from the client — the directory
+  # is fixed here, exactly like $DB.
+  covers-send)
+    [ -d "$COVERS_DIR" ] || exit 0
+    tar -C "$DATA_DIR" -cf - "$(basename "$COVERS_DIR")"
+    ;;
+
+  # Unpacked into a staging directory and swapped in, so an interrupted transfer
+  # cannot leave a half-populated covers directory in place. Paths inside the
+  # archive are content, not arguments, but they still reach a filesystem: extract
+  # refuses absolute names, and symlinks are dropped rather than followed to
+  # somewhere outside the staging area.
+  covers-recv)
+    staging=$DATA_DIR/.covers.incoming
+    rm -rf "$staging"
+    mkdir -p "$staging"
+    tar -C "$staging" --no-absolute-names --no-same-owner -xf -
+    if [ ! -d "$staging/covers" ]; then
+      rm -rf "$staging"
+      deny "no covers directory in the archive"
+    fi
+    find "$staging" -type l -delete
+    rm -rf "$COVERS_DIR.old"
+    if [ -d "$COVERS_DIR" ]; then mv "$COVERS_DIR" "$COVERS_DIR.old"; fi
+    mv "$staging/covers" "$COVERS_DIR"
+    rm -rf "$staging" "$COVERS_DIR.old"
+    ;;
 
   # Stale -wal/-shm beside a replaced database is not untidiness: SQLite can apply
   # a WAL belonging to the previous file. Clear both on the swap.

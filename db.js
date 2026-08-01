@@ -642,6 +642,12 @@ if (LEGACY_BOOKS) {
     // Dropping columns does not return their pages to the filesystem. This is the
     // one point where reclaiming ~7 MB is worth the rewrite it costs.
     db.exec('VACUUM');
+    // And in WAL mode the VACUUM lands in the write-ahead log, so the database
+    // file itself is not truncated while anything still holds it open. Without
+    // this the app starts, migrates, and goes on running against a 15 MB file
+    // whose contents are 450 KB — the reclaim only appearing whenever the
+    // process happens to exit. Checkpointing here makes it happen now.
+    db.pragma('wal_checkpoint(TRUNCATE)');
     console.log(`📁 moved ${extracted} cover image(s) to ${COVERS_DIR}`
       + (skipped ? ` (${skipped} of an unsupported type left behind)` : ''));
   }

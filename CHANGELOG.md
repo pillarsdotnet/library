@@ -5,6 +5,20 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.0.1] — 2026-08-01
+
+### Fixed
+
+- The cover migration's `VACUUM` reclaimed nothing visible while the app was
+  running. In WAL mode the rewrite lands in the write-ahead log, so the database
+  file is not truncated until something checkpoints it — which, for a
+  long-running server, is whenever the process next happens to exit. On the live
+  node that left a 15 MB file whose contents were 450 KB, plus a 7.9 MB WAL. The
+  migration now checkpoints immediately after the `VACUUM`.
+
+  Locally this was invisible: a migration script exits, and closing the last
+  connection checkpoints on the way out.
+
 ## [4.0.0] — 2026-07-31
 
 ### Changed

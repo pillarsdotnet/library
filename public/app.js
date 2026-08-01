@@ -1135,8 +1135,7 @@ const META = { rooms: [], bookcases: [] };
 
 async function loadMeta() {
   const meta = await api('/meta');
-  $('#count').textContent = `${meta.count} book${meta.count === 1 ? '' : 's'}` +
-    (meta.unshelved ? ` · ${meta.unshelved} unshelved` : '');
+  $('#count').textContent = `${meta.count} book${meta.count === 1 ? '' : 's'}`;
   Object.assign(META, { rooms: meta.rooms, bookcases: meta.bookcases });
   fillSelect('filterRoom', meta.rooms, 'All rooms');
   fillSelect('filterBookcase', meta.bookcases, 'All bookcases');

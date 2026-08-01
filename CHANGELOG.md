@@ -5,6 +5,19 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.0.2] — 2026-08-01
+
+### Changed
+
+- The header takes two lines on a phone instead of three. The book count moved
+  up beside the version, on the title line, and **+ Add book** joined **mm** and
+  **↑ Give back** on the row below. It also stopped being a `primary` button:
+  accent on an accent-coloured header paints no chip at all, so it read as a
+  stray line of text rather than something to tap.
+- The header no longer reports how many books are unshelved. It was a running
+  count of a condition nobody was acting on, sat in the one place every screen
+  shows; the shelf filter answers the question on demand.
+
 ## [4.0.1] — 2026-08-01
 
 ### Fixed

@@ -1371,3 +1371,54 @@ test('a saved cover keeps its photo and can be re-cropped from it later', { skip
     rmSync(file, { force: true });
   }
 });
+
+// The phone header spent three lines: title, then "667 books · 3 unshelved"
+// beside two buttons, then "+ Add book" alone below them — that last one styled
+// `primary`, which paints accent-on-accent and so read as a stray line of text
+// rather than a button. The count belongs on the title line; the three actions
+// belong on one row of their own.
+test('the phone header is two lines: title with the count, then one row of buttons', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.setViewport({ width: 412, height: 870, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(() => document.querySelector('#count').textContent.trim().length > 0);
+
+  const header = await page.evaluate(() => {
+    // The count and the version are different sizes on a shared baseline, so
+    // "same line" is a vertical overlap, not equal tops.
+    const box = (sel) => document.querySelector(sel).getBoundingClientRect();
+    const count = box('#count');
+    const version = box('h1 .version');
+    return {
+      text: document.querySelector('#count').textContent.trim(),
+      countInTitle: !!document.querySelector('h1 #count'),
+      countSharesVersionLine: count.top < version.bottom && version.top < count.bottom,
+      countAfterVersion: count.left >= version.right,
+      countBottom: count.bottom,
+      buttons: ['#unitToggle', '#contributeBtn', '#addBtn']
+        .map((s) => ({ id: s, top: Math.round(box(s).top), bottom: Math.round(box(s).bottom) })),
+      addBtnAccent: getComputedStyle(document.querySelector('#addBtn')).backgroundColor
+        === getComputedStyle(document.querySelector('header')).backgroundColor,
+      // The row stays right-aligned even though it now wraps onto its own line.
+      rightGap: Math.round(box('header').right - box('#addBtn').right),
+      overflows: document.documentElement.scrollWidth > window.innerWidth,
+    };
+  });
+
+  assert.match(header.text, /^\d+ books?$/, `count is books alone (got: ${header.text})`);
+  assert.ok(header.countInTitle, 'the count sits inside the title');
+  assert.ok(header.countSharesVersionLine, 'the count shares the version line');
+  assert.ok(header.countAfterVersion, 'the count sits to the right of the version');
+  // Buttons differ in height, so a shared row is overlapping spans, not equal tops.
+  const rowTop = Math.max(...header.buttons.map((b) => b.top));
+  const rowBottom = Math.min(...header.buttons.map((b) => b.bottom));
+  assert.ok(
+    rowTop < rowBottom,
+    `all three header buttons share a line (got: ${header.buttons.map((b) => `${b.id} ${b.top}-${b.bottom}`).join(', ')})`,
+  );
+  assert.ok(rowTop >= header.countBottom, 'the buttons are below the title, not beside it');
+  assert.equal(header.addBtnAccent, false, 'Add book is a visible chip, not accent-on-accent');
+  assert.equal(header.rightGap, 16, `the button row keeps the right edge (gap: ${header.rightGap}px)`);
+  assert.equal(header.overflows, false, 'the header does not scroll the document sideways');
+  await page.close();
+});

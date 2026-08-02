@@ -14,6 +14,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3211;
 const BASE = `http://127.0.0.1:${PORT}`;
 const DB_PATH = `/tmp/home-library-copies-${process.pid}.db`;
+// Its own covers directory: they default to one beside the database, so every
+// test database in /tmp would otherwise share /tmp/covers and overwrite each
+// other's files — copy ids restart at 1 in each. See cover.test.mjs.
+const COVERS_DIR = DB_PATH.replace(/\.db$/, '-covers');
 
 let server;
 
@@ -29,7 +33,7 @@ const api = async (method, path, body) => {
 test.before(async () => {
   server = spawn('node', ['server.js'], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), DB_PATH },
+    env: { ...process.env, PORT: String(PORT), DB_PATH, COVERS_DIR },
     stdio: 'ignore',
   });
   const deadline = Date.now() + 20000;
@@ -43,6 +47,7 @@ test.before(async () => {
 test.after(() => {
   server?.kill();
   for (const suffix of ['', '-wal', '-shm']) rmSync(DB_PATH + suffix, { force: true });
+  rmSync(COVERS_DIR, { recursive: true, force: true });
 });
 
 test('two copies of one book, entered as ISBN-10 and ISBN-13, share an edition', async () => {

@@ -20,6 +20,10 @@ const OL_PORT = 3210;
 const GB_PORT = 3213;
 const BASE = `http://127.0.0.1:${PORT}/library`;
 const DB_PATH = `/tmp/home-library-lookupcache-${process.pid}.db`;
+// Its own covers directory: they default to one beside the database, so every
+// test database in /tmp would otherwise share /tmp/covers and overwrite each
+// other's files — copy ids restart at 1 in each. See cover.test.mjs.
+const COVERS_DIR = DB_PATH.replace(/\.db$/, '-covers');
 
 let server, olServer, gbServer;
 let olHits = 0;
@@ -66,6 +70,7 @@ test.before(async () => {
       PORT: String(PORT),
       BASE_PATH: '/library',
       DB_PATH,
+      COVERS_DIR,
       OPENLIBRARY_BASE: `http://127.0.0.1:${OL_PORT}`,
       GOOGLE_BOOKS_BASE: `http://127.0.0.1:${GB_PORT}`,
       BARNESNOBLE_BASE: `http://127.0.0.1:${OL_PORT}`,   // kept off the internet; returns nothing useful
@@ -85,6 +90,7 @@ test.after(async () => {
   if (olServer) await new Promise((r) => olServer.close(r));
   if (gbServer) await new Promise((r) => gbServer.close(r));
   for (const suffix of ['', '-shm', '-wal']) rmSync(DB_PATH + suffix, { force: true });
+  rmSync(COVERS_DIR, { recursive: true, force: true });
 });
 
 const look = (isbn, qs = '') => fetch(`${BASE}/api/lookup/${isbn}${qs}`);

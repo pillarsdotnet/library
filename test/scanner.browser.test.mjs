@@ -18,6 +18,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3199;
 const BASE = `http://127.0.0.1:${PORT}/library`;
 const DB_PATH = `/tmp/home-library-test-${process.pid}.db`;
+// Its own covers directory: they default to one beside the database, so every
+// test database in /tmp would otherwise share /tmp/covers and overwrite each
+// other's files — copy ids restart at 1 in each. See cover.test.mjs.
+const COVERS_DIR = DB_PATH.replace(/\.db$/, '-covers');
 
 function findChrome() {
   const candidates = [
@@ -45,7 +49,7 @@ test.before(async () => {
 
   server = spawn('node', ['server.js'], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), BASE_PATH: '/library', DB_PATH },
+    env: { ...process.env, PORT: String(PORT), BASE_PATH: '/library', DB_PATH, COVERS_DIR },
     stdio: 'ignore',
   });
   const deadline = Date.now() + 20000;
@@ -70,6 +74,7 @@ test.after(async () => {
   if (browser) await browser.close();
   if (server) server.kill('SIGKILL');
   try { rmSync(DB_PATH, { force: true }); rmSync(`${DB_PATH}-shm`, { force: true }); rmSync(`${DB_PATH}-wal`, { force: true }); } catch { /* ignore */ }
+  rmSync(COVERS_DIR, { recursive: true, force: true });
 });
 
 // Open the Add-book dialog, tap Scan, and report what happened.

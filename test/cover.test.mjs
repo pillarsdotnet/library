@@ -14,6 +14,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3196;
 const BASE = `http://127.0.0.1:${PORT}/library`;
 const DB_PATH = `/tmp/home-library-cover-${process.pid}.db`;
+// Covers default to a `covers/` directory beside the database, so every test
+// database sitting in /tmp shares /tmp/covers — and a cover file is named after
+// its copy's id, which restarts at 1 in every fresh database. `node --test` runs
+// files in parallel, so this test's book 1 and another file's book 1 were the
+// same path: contribute.test.mjs stores `data:image/jpeg;base64,AAAA`, and this
+// test read those three NUL bytes back instead of its own image. Isolated per
+// file, not just per test, since the collision is between files.
+const COVERS_DIR = DB_PATH.replace(/\.db$/, '-covers');
 let server;
 
 const api = async (path, opts) => {
@@ -29,7 +37,7 @@ const dataUrl = (marker) => `data:image/jpeg;base64,${Buffer.from(`fake-jpeg-${m
 test.before(async () => {
   server = spawn('node', ['server.js'], {
     cwd: new URL('..', import.meta.url).pathname,
-    env: { ...process.env, PORT: String(PORT), BASE_PATH: '/library', DB_PATH },
+    env: { ...process.env, PORT: String(PORT), BASE_PATH: '/library', DB_PATH, COVERS_DIR },
     stdio: 'ignore',
   });
   const deadline = Date.now() + 15000;
@@ -43,6 +51,7 @@ test.before(async () => {
 test.after(() => {
   if (server) server.kill('SIGKILL');
   for (const ext of ['', '-shm', '-wal']) { try { rmSync(DB_PATH + ext, { force: true }); } catch { /* ignore */ } }
+  rmSync(COVERS_DIR, { recursive: true, force: true });
 });
 
 test('replacing a cover changes its URL, so the new photo is the one shown', async () => {

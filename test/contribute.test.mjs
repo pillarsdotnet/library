@@ -16,6 +16,10 @@ const PORT = 3207;
 const OL_PORT = 3208;
 const BASE = `http://127.0.0.1:${PORT}`;
 const DB_PATH = `/tmp/home-library-contrib-${process.pid}.db`;
+// Its own covers directory: they default to one beside the database, so every
+// test database in /tmp would otherwise share /tmp/covers and overwrite each
+// other's files — copy ids restart at 1 in each. See cover.test.mjs.
+const COVERS_DIR = DB_PATH.replace(/\.db$/, '-covers');
 
 let server, olServer;
 const olRequests = [];
@@ -48,6 +52,7 @@ test.before(async () => {
       ...process.env,
       PORT: String(PORT),
       DB_PATH,
+      COVERS_DIR,
       OPENLIBRARY_BASE: `http://127.0.0.1:${OL_PORT}`,
       OPENLIBRARY_ACCESS_KEY: '',
       OPENLIBRARY_SECRET_KEY: '',
@@ -66,6 +71,7 @@ test.after(async () => {
   if (server) server.kill('SIGKILL');
   if (olServer) await new Promise((r) => olServer.close(r));
   for (const suffix of ['', '-shm', '-wal']) rmSync(DB_PATH + suffix, { force: true });
+  rmSync(COVERS_DIR, { recursive: true, force: true });
 });
 
 // Restart the app with extra environment, for the switches that are read there.
@@ -78,6 +84,7 @@ async function restartServer(extraEnv) {
       ...process.env,
       PORT: String(PORT),
       DB_PATH,
+      COVERS_DIR,
       OPENLIBRARY_BASE: `http://127.0.0.1:${OL_PORT}`,
       OPENLIBRARY_ACCESS_KEY: '',
       OPENLIBRARY_SECRET_KEY: '',

@@ -3,7 +3,7 @@
 // and evaluate them in isolation.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -87,6 +87,29 @@ test('the current version has a CHANGELOG entry', () => {
   const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
   const heading = new RegExp(`^##\\s*\\[${version.replace(/\./g, '\\.')}\\]`, 'm');
   assert.match(changelog, heading, `CHANGELOG.md has no "## [${version}]" section — add one before releasing`);
+});
+
+// Cover files are named after the copy they belong to, and ids restart at 1 in
+// every fresh database — so two test servers sharing a covers directory write to
+// the same paths. They did: covers default to a directory beside the database,
+// every test database lives in /tmp, and `node --test` runs files in parallel, so
+// one file's book 1 overwrote another's and CI failed on whichever lost the race.
+// The isolation is per-file and easy to leave out of the next test that spawns a
+// server, so it is checked here rather than left to memory.
+test('every test that starts a server gives it its own covers directory', () => {
+  const dir = dirname(fileURLToPath(import.meta.url));
+  for (const name of readdirSync(dir).filter((f) => f.endsWith('.test.mjs'))) {
+    const src = readFileSync(join(dir, name), 'utf8');
+    // Each spawn's own env block, from the call to the `stdio` that closes it.
+    for (const m of src.matchAll(/spawn\('node', \['server\.js'\][\s\S]*?stdio:/g)) {
+      const line = src.slice(0, m.index).split('\n').length;
+      assert.match(
+        m[0],
+        /COVERS_DIR/,
+        `${name}:${line} starts a server without COVERS_DIR — it would share /tmp/covers with the other test files`,
+      );
+    }
+  }
 });
 
 test('isOverdue treats only strictly earlier dates as late', () => {

@@ -36,6 +36,17 @@ export default [
     rules: { 'no-unused-vars': noUnused },
   },
   {
+    // Agent tooling: the run skill's driver. Same shape as the test suite — Node
+    // ESM that also passes callbacks to puppeteer, which runs them in the page.
+    files: ['.claude/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: { ...globals.node, ...globals.browser },
+    },
+    rules: { 'no-unused-vars': noUnused },
+  },
+  {
     // Browser: classic script, plus globals from the vendored scanner library.
     files: ['public/**/*.js'],
     languageOptions: {

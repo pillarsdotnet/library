@@ -281,6 +281,15 @@ db.exec(LEGACY_BOOKS ? `
 
 // ─── legacy migrations, run only against a pre-split `books` table ──────────────
 // These all predate the edition/copy split and operate on the flat table. Once
+// When each edition was last compared against Open Library. Without it the
+// sweep can only order by what changed recently, so it re-reads the same 25
+// books however many times it is run — measured on the live database, 626 of
+// 680 editions had never been looked at once. Ordering by "least recently
+// checked" makes repeated sweeps walk the whole library instead.
+if (!db.prepare('PRAGMA table_info(editions)').all().map((c) => c.name).includes('ol_checked_at')) {
+  db.exec('ALTER TABLE editions ADD COLUMN ol_checked_at TEXT');
+}
+
 // the split has happened `books` is a view and none of them apply.
 if (LEGACY_BOOKS) {
   // Migrations for databases created before a column existed. ALTER TABLE ADD

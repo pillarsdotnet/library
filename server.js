@@ -557,13 +557,18 @@ const SCAN_BOOKS = `
   WHERE COALESCE(e.isbn13, e.isbn_text) IS NOT NULL AND COALESCE(e.isbn13, e.isbn_text) <> ''
     AND (0 = @coversOnly OR EXISTS (SELECT 1 FROM copies c2 WHERE c2.edition_id = e.id AND c2.cover_file IS NOT NULL))
     AND (@onlyEdition IS NULL OR e.id = @onlyEdition)
-  ORDER BY e.updated_at DESC LIMIT @limit`;
+  -- Least recently checked first, never-checked before that. Ordering by
+  -- updated_at meant every sweep re-read the same 25 books and the rest of the
+  -- library was never reached at all.
+  ORDER BY e.ol_checked_at IS NOT NULL, e.ol_checked_at, e.updated_at DESC
+  LIMIT @limit`;
 
 // One book against Open Library: retire what is no longer a gap, queue what is.
 // Shared by the sweep and by the single-row re-check, so that "this row is done"
 // and "everything is up to date" can never disagree about what a gap is.
 async function reviewAgainstOpenLibrary(book, counts) {
   const already = db.prepare('SELECT 1 FROM ol_contributions WHERE edition_id = ? AND field = ?');
+  const markChecked = db.prepare("UPDATE editions SET ol_checked_at = datetime('now') WHERE id = ?");
   // A proposal is a claim about what Open Library was missing when we looked.
   // Someone else filling that gap in the meantime is the good outcome, but the
   // row does not know it: the queue is INSERT OR IGNORE and nothing ever closed
@@ -584,6 +589,10 @@ async function reviewAgainstOpenLibrary(book, counts) {
     let edition = null;
     try { edition = await fetchEdition(book.isbn); } catch { edition = null; }
     counts.scanned += 1;
+    // Stamped whatever the answer was. A book Open Library has never heard of
+    // has still been looked at, and re-asking about it ahead of a book nobody
+    // has ever checked is exactly the loop this replaces.
+    markChecked.run(book.edition_id);
     if (!edition) {
       counts.unknown += 1;
       // Open Library has no edition for this ISBN. Adding one is creating a
@@ -649,7 +658,16 @@ router.post('/api/ol-contributions/:id/recheck', async (req, res) => {
 });
 
 router.get('/api/ol-contributions', (req, res) => {
-  const status = req.query.status || 'pending';
+  // Both states are waiting for a person: `failed` is a proposal that was tried
+  // and did not go through, which the approve handler deliberately keeps rather
+  // than swallowing. Listing only `pending` meant nine of those were invisible
+  // and unreachable — including six covers from before Open Library stopped
+  // taking them from a program.
+  const status = req.query.status || 'pending,failed';
+  const wanted = String(status).split(',').map((s2) => s2.trim()).filter(Boolean).slice(0, 8);
+  // `IN ()` is a syntax error, and an empty filter most plainly means "the
+  // default", not "nothing".
+  if (!wanted.length) wanted.push('pending', 'failed');
   // Joined to editions, not to the books view: a book owned in duplicate would
   // otherwise list the same proposal once per copy.
   const rows = db.prepare(`
@@ -660,7 +678,8 @@ router.get('/api/ol-contributions', (req, res) => {
       (SELECT cp.id FROM copies cp
         WHERE cp.edition_id = c.edition_id AND cp.cover_file IS NOT NULL LIMIT 1) AS copy_id
     FROM ol_contributions c JOIN editions e ON e.id = c.edition_id
-    WHERE c.status = ? ORDER BY e.title, c.field`).all(status);
+    WHERE c.status IN (${wanted.map(() => '?').join(',')})
+    ORDER BY e.title, c.field`).all(...wanted);
   res.json(rows.map((r) => ({ ...r, label: FIELD_LABELS[r.field] || r.field })));
 });
 

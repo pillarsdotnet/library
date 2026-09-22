@@ -212,7 +212,9 @@ test('an unknown ISBN is queued for import only when importing is switched on', 
 // ─── proposals that answer themselves, and the one that runs inwards ─────────
 
 const dataUrl = (marker) => `data:image/jpeg;base64,${Buffer.from(`fake-jpeg-${marker}`).toString('base64')}`;
-const queue = async (status = 'pending') => (await (await fetch(`${BASE}/api/ol-contributions?status=${status}`)).json());
+// Defaults to what the app itself lists: everything still waiting for a
+// person, which is `pending` and `failed` alike.
+const queue = async (status = 'pending,failed') => (await (await fetch(`${BASE}/api/ol-contributions?status=${status}`)).json());
 
 // A proposal is a claim about what Open Library was missing when we looked.
 // Somebody else filling the gap is the good outcome, and the row has to notice:
@@ -310,4 +312,54 @@ test('a cover row can be re-checked after a by-hand upload, and only closes if i
   assert.ok(adopt, 'the adoption is proposed by the same re-check');
   assert.equal(adopt.value, 'https://covers.openlibrary.org/b/id/4242-L.jpg');
   stubRecord = { ...stubRecord, covers: [999] };
+});
+
+// A failure is kept rather than swallowed "so it can be retried or declined" —
+// and was then never listed, because the queue only ever asked for `pending`.
+// Nine rows were invisible on the live database, six of them covers from before
+// Open Library stopped taking them from a program.
+test('a proposal that failed is still waiting for a decision, not hidden', async () => {
+  const made = await (await post('/api/books', {
+    title: 'Failed And Forgotten', isbn: '9780000000040',
+    height_mm: 210, width_mm: 140, thickness_mm: 20,
+  })).json();
+  await post('/api/ol-contributions/scan', { scope: 'covers', limit: 100 });
+  await post('/api/ol-contributions/scan');
+  const row = (await queue()).find((r) => r.edition_id === made.edition_id);
+  assert.ok(row, 'proposed');
+
+  // A real failure, not a refusal: with credentials configured the send is
+  // attempted, and the stub has no login endpoint, so it fails inside the
+  // handler and the row is marked rather than lost. (No credentials at all
+  // returns 503 before anything is tried and leaves the row pending, which is
+  // why that is not the case under test here.)
+  await restartServer({ OPENLIBRARY_ACCESS_KEY: 'k', OPENLIBRARY_SECRET_KEY: 's' });
+  assert.equal((await post(`/api/ol-contributions/${row.id}/approve`)).status, 502);
+
+  const listed = (await queue()).find((r) => r.id === row.id);
+  assert.ok(listed, 'a failed row is still listed by default');
+  assert.equal(listed.status, 'failed');
+  assert.match(listed.error, /login failed/, 'and carries the reason it failed');
+
+  // Asking for one state explicitly still narrows it.
+  assert.equal((await queue('pending')).some((r) => r.id === row.id), false);
+  await restartServer({});   // back to an unconfigured account for what follows
+});
+
+// Ordering by updated_at meant every sweep re-read the same handful of books:
+// 626 of 680 editions on the live database had never been looked at once.
+test('repeated sweeps walk the library instead of re-reading the same books', async () => {
+  const titles = [];
+  for (let i = 0; i < 4; i += 1) {
+    const b = await (await post('/api/books', { title: `Sweep Me ${i}`, isbn: `978000000005${i}` })).json();
+    titles.push(b.edition_id);
+  }
+  const seen = new Set();
+  for (let i = 0; i < 4; i += 1) {
+    await post('/api/ol-contributions/scan', { limit: 2 });
+    const checked = await (await fetch(`${BASE}/api/ol-contributions?status=pending,failed,satisfied,sent,applied,declined`)).json();
+    for (const r of checked) seen.add(r.edition_id);
+  }
+  // Four two-book sweeps must reach more than the two most recently touched.
+  assert.ok(seen.size > 2, `sweeps reached ${seen.size} editions, not just the same two`);
 });

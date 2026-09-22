@@ -467,9 +467,14 @@ artwork. That is the only approval that destroys anything — and the only one
 that needs no Open Library account, since it sends nothing — so it confirms
 first. **Skip**/**Keep mine** leaves the photograph alone.
 
-**⟳ Check my photos** scans the editions carrying a photograph, whenever they
-were catalogued. The ordinary **Look for gaps** sweep is ordered by what changed
-most recently and will never reach an older book.
+**⟳ Look for gaps** takes the editions least recently compared against Open
+Library, so clicking it repeatedly walks the whole library 25 books at a time
+rather than re-reading the same ones. **⟳ Check my photos** narrows the same
+sweep to the editions carrying a photograph, whenever they were catalogued.
+
+The queue lists everything still waiting for a person — proposals not yet acted
+on, and ones whose send failed, which carry the reason. `?status=` on
+`/api/ol-contributions` narrows it to any set of states.
 
 Approving one runs it **twice**: first with `?preview=true`, which parses,
 validates and runs Open Library's own duplicate matching without saving. If the

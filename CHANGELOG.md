@@ -5,6 +5,25 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.2.1] — 2026-09-22
+
+### Fixed
+
+- **A proposal that failed was invisible.** The approve handler keeps a failure
+  "so it can be retried or declined", but the queue only ever asked Open Library
+  for `pending` rows, so a failed one could never be seen or acted on. Nine rows
+  were stranded on the live database — six of them covers from before Open
+  Library stopped taking them from a program. The queue now lists everything
+  still waiting for a person, `pending` and `failed` alike, with the reason it
+  failed; `?status=` still narrows it.
+- **Repeated sweeps re-read the same books.** "Look for gaps" ordered editions
+  by `updated_at`, so once the most recently touched 25 were done, every further
+  click re-examined those same 25 and reported nothing — while 626 of 680
+  editions had never been looked at once. Editions now record when they were
+  last compared against Open Library (`editions.ol_checked_at`) and the sweep
+  takes the least recently checked first, so clicking it repeatedly walks the
+  whole library.
+
 ## [4.2.0] — 2026-09-22
 
 ### Added

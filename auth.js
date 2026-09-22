@@ -37,7 +37,42 @@ const SESSION_COOKIE = 'hl_session';
 const FLOW_COOKIE = 'hl_oauth';
 const FLOW_TTL_MS = 10 * 60 * 1000;          // long enough to type a password
 
-const sessionTtlMs = () => Math.max(Number(process.env.SESSION_TTL_DAYS ?? 30), 1) * 24 * 3600 * 1000;
+// How long a session survives *without being used*. It is an idle window, not a
+// lifetime: every request that arrives inside it pushes the expiry out again
+// (see sessionNeedsRefresh), so somebody who opens the library most weeks is
+// never asked to sign in again, and somebody who stops using it is signed out
+// ten days later.
+const DEFAULT_IDLE_DAYS = 10;
+
+// A day count that cannot quietly become "forever". `Number('10d')` is NaN, and
+// NaN survives every comparison an expiry check makes — `NaN < Date.now()` is
+// false — so a typo in this variable used to mint sessions that never expired,
+// silently and in the direction of less security. Anything that is not a finite
+// number is the default instead, and the floor is one day.
+function idleDays(raw, fallback = DEFAULT_IDLE_DAYS) {
+  const text = String(raw ?? '').trim();
+  if (!text) return fallback;
+  const n = Number(text);
+  return Number.isFinite(n) ? Math.max(n, 1) : fallback;
+}
+
+export function sessionIdleDays() {
+  return idleDays(process.env.SESSION_IDLE_DAYS);
+}
+
+const sessionIdleMs = () => sessionIdleDays() * 24 * 3600 * 1000;
+
+/**
+ * Is this session close enough to expiry to be worth re-issuing?
+ *
+ * Re-issuing on every request would put a Set-Cookie on every stylesheet and
+ * every cover image for no gain. Refreshing only once the session is past its
+ * half-life costs at most one extra header every five days per browser, and
+ * still leaves anyone who visits inside the window permanently signed in.
+ */
+export function sessionNeedsRefresh(session, now = Date.now(), windowMs = sessionIdleMs()) {
+  return !!session && typeof session.exp === 'number' && (session.exp - now) < windowMs / 2;
+}
 
 export function authConfigured() {
   return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
@@ -154,7 +189,10 @@ export function parseCookies(header) {
 }
 
 export function sessionFor(email) {
-  return sign({ email: String(email).toLowerCase(), exp: Date.now() + sessionTtlMs() });
+  const now = Date.now();
+  // `iat` is not read by anything today. It is what an absolute cap on top of
+  // the idle window would be written against, so it costs nothing to record.
+  return sign({ email: String(email).toLowerCase(), iat: now, exp: now + sessionIdleMs() });
 }
 
 export function sessionFromRequest(req) {
@@ -298,7 +336,7 @@ export function mountAuth(router, base = '', doFetch = globalThis.fetch) {
       return res.status(403).type('text').send(`${claims.email} is not on this library's list.`);
     }
 
-    res.cookie(SESSION_COOKIE, sessionFor(claims.email), cookieOptions(req, sessionTtlMs()));
+    res.cookie(SESSION_COOKIE, sessionFor(claims.email), cookieOptions(req, sessionIdleMs()));
     res.redirect(safeReturnPath(flow.to, base));
   });
 
@@ -325,6 +363,12 @@ export function requireAuth(base = '') {
     const session = sessionFromRequest(req);
     if (session && emailAllowed(session.email)) {
       req.user = { email: session.email };
+      // Using the library is what keeps you signed in. The expiry is carried in
+      // the cookie rather than in any server-side store, so pushing it out means
+      // handing back a freshly signed one.
+      if (sessionNeedsRefresh(session)) {
+        res.cookie(SESSION_COOKIE, sessionFor(session.email), cookieOptions(req, sessionIdleMs()));
+      }
       return next();
     }
     // Only a browser *navigating* is sent to Google. `req.accepts` is no use

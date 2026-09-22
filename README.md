@@ -190,7 +190,7 @@ Environment variables:
 | `GOOGLE_CLIENT_SECRET` | _(none)_ | Paired with the client id |
 | `AUTH_ALLOWED_FILE` | `<DB dir>/allowed-emails.txt` | Addresses permitted to sign in; absent or empty means all |
 | `SESSION_SECRET` | _(new each boot)_ | Signs session cookies; set it so a restart does not sign everyone out |
-| `SESSION_TTL_DAYS` | `30` | How long a signed-in session lasts (floored at 1 day) |
+| `SESSION_IDLE_DAYS` | `10` | Sign-in expires after this long **without a visit**; every visit pushes it out (floored at 1 day) |
 | `OAUTH_REDIRECT_URI` | _(from the request)_ | Override when the public URL is not what the app sees |
 | `PUBLIC_ORIGIN` | _(from the request)_ | Scheme and host to build the redirect URI from |
 | `TRUST_PROXY` | _(off)_ | `true` behind nginx, so `X-Forwarded-Proto` decides the Secure cookie flag |
@@ -233,6 +233,21 @@ With those set, every other page and API route needs a signed-in address. A
 browser is redirected to Google; anything else gets `401` and the sign-in URL,
 so a `fetch` reports "sign in required" rather than trying to parse Google's
 login page as JSON. Sign out at `/auth/logout`; `/auth/me` says who is signed in.
+
+#### How long a sign-in lasts
+
+The timeout is an **idle** one, not a lifetime: ten days without a visit, and
+every visit pushes the expiry back out to ten days. So anyone who opens the
+library even occasionally is never asked to sign in again, and an account that
+stops being used is signed out ten days later. The cookie is only re-issued once
+a session is past its half-life, so ordinary browsing does not put a `Set-Cookie`
+on every stylesheet.
+
+A session also ends early when the address leaves `allowed-emails.txt`, at
+`/auth/logout`, or if `SESSION_SECRET` changes — which is why the two nodes must
+share one, or a failover would look like a mass sign-out. Nothing on Google's
+side expires it: no refresh token is ever requested, and the `id_token` is read
+once and discarded.
 
 #### Who is allowed in
 

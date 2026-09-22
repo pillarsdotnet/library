@@ -5,6 +5,29 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.0.5] — 2026-09-22
+
+### Changed
+
+- **A sign-in now slides instead of expiring on a fixed date.** It was an
+  absolute 30 days from signing in, so somebody who used the library daily was
+  still bounced to Google on the thirtieth day. It is now ten days of *not*
+  visiting, and any visit pushes that back out — so a regular visitor never
+  signs in again, and an account that goes quiet is signed out ten days later.
+  The cookie is re-issued only once a session is past its half-life, so browsing
+  does not put a `Set-Cookie` on every asset.
+- `SESSION_TTL_DAYS` is now `SESSION_IDLE_DAYS`, because it no longer means a
+  lifetime. The old name is not read; the startup banner says so if it is set,
+  rather than silently ignoring it.
+
+### Fixed
+
+- **A non-numeric session timeout minted sessions that never expired.**
+  `SESSION_TTL_DAYS=10d` parsed to `NaN`, and `NaN < Date.now()` is false, so
+  every expiry check accepted such a session for ever — a typo that failed
+  silently and in the direction of less security. Anything that is not a finite
+  number now falls back to the default, floored at one day.
+
 ## [4.0.4] — 2026-09-22
 
 ### Fixed

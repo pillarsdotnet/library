@@ -7,7 +7,7 @@ import db from './db.js';
 import { canonicalIsbn } from './isbn.js';
 import { parseDataUrl, writeCover, coverPath, removeCover, mimeForFile } from './covers.js';
 import { lookupIsbn, RateLimitError } from './lookup.js';
-import { authConfigured, allowlistPath, readAllowlist, mountAuth, requireAuth, sessionSecretIsEphemeral } from './auth.js';
+import { authConfigured, allowlistPath, readAllowlist, mountAuth, requireAuth, sessionSecretIsEphemeral, sessionIdleDays } from './auth.js';
 import { parseEpub } from './epub.js';
 import {
   fetchEdition, proposalsFor, login, sendField, sendCover,
@@ -1109,6 +1109,13 @@ app.listen(PORT, () => {
     console.log(list.entries.length
       ? `   sign-in required; ${list.entries.length} address(es) allowed by ${list.path}`
       : `   sign-in required; every Google account is allowed (${list.present ? 'empty' : 'no'} ${allowlistPath()})`);
+    console.log(`   sessions idle out after ${sessionIdleDays()} day(s) of no visits, and slide forward on every visit`);
+    // Renamed when the timeout became a sliding one. Say so rather than ignore
+    // it: a variable that stopped being read is exactly the kind of change that
+    // silently lengthens a session nobody meant to lengthen.
+    if (process.env.SESSION_TTL_DAYS) {
+      console.log('   SESSION_TTL_DAYS is no longer read — the timeout now slides; use SESSION_IDLE_DAYS');
+    }
     if (sessionSecretIsEphemeral()) {
       console.log('   SESSION_SECRET unset — sessions are signed with a new key each boot, so a restart signs everyone out');
     }

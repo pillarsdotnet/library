@@ -16,7 +16,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { emailAllowed, readAllowlist, parseCookies } from '../auth.js';
+import { emailAllowed, readAllowlist, parseCookies, sessionFor, sessionIdleDays, sessionNeedsRefresh } from '../auth.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3217;
@@ -29,6 +29,10 @@ const TMP = mkdtempSync(join(tmpdir(), 'home-library-auth-'));
 const ALLOWED = join(TMP, 'allowed-emails.txt');
 
 const CLIENT_ID = 'test-client-id.apps.googleusercontent.com';
+// Same secret the server is started with, so this process can mint a session
+// the server will accept — which is how the sliding window is tested without
+// waiting five days for one to age.
+process.env.SESSION_SECRET = 'test-session-secret';
 
 let server, google;
 // What the stub's token endpoint will claim the signed-in person is.
@@ -266,6 +270,67 @@ test('the health probe answers without an account', async () => {
     const gated = await fetch(BASE + path, { redirect: 'manual' });
     assert.notEqual(gated.status, 200, `${path} is still behind the gate`);
   }
+});
+
+// ─── how long a session lasts ───────────────────────────────────────────────
+
+test('a day count that is not a number falls back rather than never expiring', () => {
+  const saved = process.env.SESSION_IDLE_DAYS;
+  try {
+    for (const [set, want] of [[undefined, 10], ['', 10], ['  ', 10], ['7', 7], ['0', 1], ['-3', 1],
+                               ['10d', 10], ['thirty', 10], ['NaN', 10]]) {
+      if (set === undefined) delete process.env.SESSION_IDLE_DAYS;
+      else process.env.SESSION_IDLE_DAYS = set;
+      assert.equal(sessionIdleDays(), want, `SESSION_IDLE_DAYS=${JSON.stringify(set)}`);
+    }
+    // The bug this guards: Number('10d') is NaN, and NaN < Date.now() is false,
+    // so an unguarded expiry check accepts such a session for ever.
+    delete process.env.SESSION_IDLE_DAYS;
+    const exp = JSON.parse(Buffer.from(sessionFor('owner@gmail.com').split('.')[0], 'base64url'));
+    assert.ok(Number.isFinite(exp.exp), 'the expiry stamped into a session is a real number');
+  } finally {
+    if (saved === undefined) delete process.env.SESSION_IDLE_DAYS;
+    else process.env.SESSION_IDLE_DAYS = saved;
+  }
+});
+
+test('a session is refreshed only once it is past its half-life', () => {
+  const now = Date.UTC(2026, 0, 1);
+  const day = 24 * 3600 * 1000;
+  const at = (daysLeft) => sessionNeedsRefresh({ exp: now + daysLeft * day }, now, 10 * day);
+  assert.equal(at(10), false, 'just issued: nothing to do');
+  assert.equal(at(6), false, 'four days in: still more than half left');
+  assert.equal(at(4), true, 'six days in: past the half-life, push it out');
+  assert.equal(at(0.5), true);
+  assert.equal(sessionNeedsRefresh(null, now, 10 * day), false);
+});
+
+test('visiting slides the window, so a regular visitor never signs in again', async () => {
+  // A valid session with only a day left on it: minted here with a one-day
+  // window, handed to a server running the default ten-day one, which therefore
+  // sees it as well past its half-life.
+  process.env.SESSION_IDLE_DAYS = '1';
+  const nearlyExpired = `hl_session=${sessionFor('owner@gmail.com')}`;
+  delete process.env.SESSION_IDLE_DAYS;
+
+  const used = await fetch(`${BASE}/api/books`, { headers: { Cookie: nearlyExpired } });
+  assert.equal(used.status, 200, 'it still works');
+  const reissued = sessionFrom(used.headers.getSetCookie?.() ?? []);
+  assert.ok(reissued, 'and the visit hands back a fresh cookie');
+  assert.notEqual(reissued, nearlyExpired, 'a new one, not the same one echoed back');
+
+  // The refreshed cookie is good for the full window again.
+  const payload = JSON.parse(Buffer.from(reissued.split('=')[1].split('.')[0], 'base64url'));
+  const daysLeft = (payload.exp - Date.now()) / (24 * 3600 * 1000);
+  assert.ok(daysLeft > 9.9 && daysLeft <= 10, `pushed out to the full window, got ${daysLeft}`);
+
+  // A session nowhere near expiry is left alone, so ordinary browsing does not
+  // put a Set-Cookie on every asset.
+  const fresh = sessionFrom((await signIn()).setCookies);
+  const again = await fetch(`${BASE}/api/books`, { headers: { Cookie: fresh } });
+  assert.equal(again.status, 200);
+  assert.equal(sessionFrom(again.headers.getSetCookie?.() ?? []), undefined,
+    'a fresh session is not re-issued on every request');
 });
 
 test('cookie parsing survives the shapes a browser actually sends', () => {

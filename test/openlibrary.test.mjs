@@ -291,3 +291,47 @@ test('preview mode asks Open Library not to save', async () => {
     assert.match(urls[1], /\/api\/import$/, 'the real one does not');
   } finally { delete process.env.OPENLIBRARY_ALLOW_IMPORT; }
 });
+
+// Open Library's front end answers some requests itself, and a bare status code
+// then reads as though the catalogue disagreed with us when it never saw the
+// edit. Measured against the live site: a PUT whose body contains a quote
+// followed by "--" — the SQL comment signature, and how a MARC description ends
+// before its source attribution — is refused with nginx's own 403 page.
+test('a refusal from the front door is reported as one, and carries what it said', async () => {
+  const record = {
+    key: '/books/OL1M', type: { key: '/type/edition' },
+    description: { type: '/type/text', value: 'A novel about the way"--' },
+  };
+  const nginx403 = '<html><head><title>403 Forbidden</title></head>'
+    + '<body><center><h1>403 Forbidden</h1></center><hr><center>nginx/1.30.5</center></body></html>';
+
+  const fetchWith = (status, body) => async (url, opts) => (opts?.method === 'PUT'
+    ? { ok: false, status, text: async () => body }
+    : { ok: true, json: async () => record });
+
+  const blocked = await sendField('OL1M', 'physical_dimensions', '20 x 13 x 2 centimeters', 'c', 'session=x',
+    fetchWith(403, nginx403)).then(() => null, (e) => e);
+  assert.match(blocked.message, /front end refused this record/, 'names the cause, not the number');
+  assert.match(blocked.message, /"--"/, 'and says what in the record trips it');
+  assert.equal(blocked.status, 403, 'the status is kept for the log');
+  assert.match(blocked.detail, /nginx/, 'along with what came back');
+
+  // The same status without that signature is still attributed to the front
+  // door, but not blamed on a record that did not cause it.
+  const plain = { ...record, description: { type: '/type/text', value: 'An ordinary summary.' } };
+  const other = await sendField('OL1M', 'physical_dimensions', '20 x 13 x 2 centimeters', 'c', 'session=x',
+    async (url, opts) => (opts?.method === 'PUT'
+      ? { ok: false, status: 403, text: async () => nginx403 }
+      : { ok: true, json: async () => plain })).then(() => null, (e) => e);
+  assert.match(other.message, /front end refused this edit \(403\)/);
+  assert.doesNotMatch(other.message, /"--"/);
+
+  // And a refusal from the catalogue itself still reads as one.
+  const app = await sendField('OL1M', 'physical_dimensions', '20 x 13 x 2 centimeters', 'c', 'session=x',
+    async (url, opts) => (opts?.method === 'PUT'
+      ? { ok: false, status: 400, text: async () => '{"error":"bad_data"}' }
+      : { ok: true, json: async () => plain })).then(() => null, (e) => e);
+  assert.match(app.message, /rejected the edit \(400\)/);
+  assert.equal(app.status, 400);
+  assert.match(app.detail, /bad_data/);
+});

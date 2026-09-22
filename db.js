@@ -259,6 +259,24 @@ db.exec(LEGACY_BOOKS ? `
   -- Nothing here has been sent: a row is a suggestion waiting for a human, and
   -- only ever suggests filling a blank (see openlibrary.js). Rows are kept
   -- after sending so the same gap is not offered twice.
+  -- Every send that did not go through, kept as what the other end actually
+  -- said rather than as a status code. A contribution row holds only its most
+  -- recent error, so the pattern across attempts — which statuses, from the
+  -- catalogue or from the front end in front of it, on which fields — is not
+  -- visible anywhere else. That pattern is how a 403 that resolves on a retry
+  -- was told apart from one that never will.
+  CREATE TABLE IF NOT EXISTS ol_send_attempts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    contribution_id INTEGER REFERENCES ol_contributions(id) ON DELETE CASCADE,
+    olid        TEXT,
+    field       TEXT,
+    status      INTEGER,    -- HTTP status, or NULL when no reply arrived at all
+    detail      TEXT,       -- the first 500 characters of what came back
+    message     TEXT,       -- what the reviewer was told
+    at          TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_ol_send_attempts_at ON ol_send_attempts(at);
+
   CREATE TABLE IF NOT EXISTS ol_contributions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     edition_id  INTEGER NOT NULL REFERENCES editions(id) ON DELETE CASCADE,

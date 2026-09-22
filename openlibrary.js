@@ -323,13 +323,44 @@ export async function sendField(olid, field, value, comment, cookie, doFetch = g
   const body = spec.apply
     ? { ...spec.apply(record, value), _comment: comment }
     : { ...record, [field]: field === 'number_of_pages' ? Number(value) : value, _comment: comment };
+  const payload = JSON.stringify(body);
   const put = await doFetch(`${OL}${path}.json`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify(body),
+    body: payload,
   });
-  if (!put.ok) throw new Error(`Open Library rejected the edit (${put.status})`);
+  if (!put.ok) throw await sendFailure(put, payload);
   return true;
+}
+
+// Open Library's front end answers some requests itself, and a bare status code
+// then reads as though the catalogue disagreed with us when it never saw the
+// edit at all. What the reply actually said is worth keeping: the caller records
+// it, and the message names the cause where it can be identified.
+//
+// The one identified so far, measured 2026-09-22: a PUT whose body contains a
+// quote followed by `--` is refused with nginx's own 403 page. That is the SQL
+// comment injection signature, and a MARC-derived description routinely ends
+// with `"--` before its source attribution. Since the API takes the whole
+// record on a PUT, one blank field on such a record cannot be filled by anyone
+// — the description we are handing back unchanged is what trips the filter.
+export const SQL_COMMENT_SIGNATURE = /['"]\s*--/;
+
+export async function sendFailure(res, payload = '') {
+  const body = await res.text().catch(() => '');
+  const fromTheFrontDoor = /<title>\s*\d{3}[^<]*<\/title>|<center>\s*nginx/i.test(body);
+  let message = `Open Library rejected the edit (${res.status})`;
+  if (res.status === 403 && fromTheFrontDoor && SQL_COMMENT_SIGNATURE.test(payload)) {
+    message = 'Open Library\'s front end refused this record before the catalogue saw it: '
+      + 'the record\'s own text contains a quote followed by "--", which its filter reads as an attack. '
+      + 'An edit to this record cannot be sent by anyone until they fix that.';
+  } else if (fromTheFrontDoor) {
+    message = `Open Library's front end refused this edit (${res.status}) before the catalogue saw it.`;
+  }
+  const err = new Error(message);
+  err.status = res.status;
+  err.detail = body.replace(/\s+/g, ' ').trim().slice(0, 500);
+  return err;
 }
 
 // Covers go through a separate multipart endpoint, not the JSON record.
@@ -360,8 +391,11 @@ export async function sendCover(olid, imageBuffer, cookie, doFetch = globalThis.
   // and nothing to fix on this side. Say that, rather than a bare status code
   // that reads like a bug in this app.
   if (r.status === 405) {
-    throw new Error('Open Library is not accepting cover uploads from programs at present '
+    const err = new Error('Open Library is not accepting cover uploads from programs at present '
       + '(its front end answers 405). Every other contribution still goes through.');
+    err.status = 405;
+    err.detail = 'nginx: method not allowed';
+    throw err;
   }
   const location = r.headers.get('location') || '';
   if (/verify_human|\/account\/login/.test(location)) {

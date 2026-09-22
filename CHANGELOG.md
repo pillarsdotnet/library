@@ -5,6 +5,29 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.3.0] — 2026-09-22
+
+### Added
+
+- **Every refused send is now logged with what the other end actually said.**
+  A contribution row keeps only its most recent error, so a `403` that resolves
+  on a retry and one that never will read identically in the queue — the
+  difference was only ever in the reply body, which was thrown away.
+  `ol_send_attempts` keeps the status, the first 500 characters of the response
+  and the message the reviewer saw, and `GET /api/ol-contributions/attempts`
+  groups them by status and by field.
+
+### Fixed
+
+- **A refusal from Open Library's front door no longer reads as the catalogue
+  disagreeing with us.** Some requests are answered by the nginx in front of
+  Open Library and never reach it at all; the message now says so. One cause is
+  identified by name: a `PUT` whose body contains a quote followed by `--` is
+  refused with a bare `403`. That is the SQL comment injection signature, and a
+  MARC-derived description routinely ends `"--` before its source attribution —
+  so a record carrying one cannot have *any* blank field filled through the API,
+  by us or by anyone, because the whole record goes back on every `PUT`.
+
 ## [4.2.1] — 2026-09-22
 
 ### Fixed

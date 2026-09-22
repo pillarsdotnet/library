@@ -683,6 +683,23 @@ router.get('/api/ol-contributions', (req, res) => {
   res.json(rows.map((r) => ({ ...r, label: FIELD_LABELS[r.field] || r.field })));
 });
 
+// What has been refused, and by whom. Grouped by status so a run of one code
+// stands out from a scatter, and listed newest first so a retry can be compared
+// with what it is retrying.
+router.get('/api/ol-contributions/attempts', (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 500);
+  res.json({
+    byStatus: db.prepare(`SELECT status, COUNT(*) AS n, MAX(at) AS last
+                          FROM ol_send_attempts GROUP BY status ORDER BY n DESC`).all(),
+    byField: db.prepare(`SELECT field, status, COUNT(*) AS n
+                         FROM ol_send_attempts GROUP BY field, status ORDER BY n DESC`).all(),
+    recent: db.prepare(`SELECT a.*, e.title FROM ol_send_attempts a
+                        LEFT JOIN ol_contributions c ON c.id = a.contribution_id
+                        LEFT JOIN editions e ON e.id = c.edition_id
+                        ORDER BY a.id DESC LIMIT ?`).all(limit),
+  });
+});
+
 router.get('/api/ol-contributions/status', (_req, res) => {
   const counts = db.prepare('SELECT status, COUNT(*) AS n FROM ol_contributions GROUP BY status').all();
   res.json({
@@ -778,6 +795,13 @@ router.post('/api/ol-contributions/:id/approve', async (req, res) => {
                 reviewed_at = datetime('now') WHERE id = ?`).run(row.id);
     res.json({ ok: true, olid: row.olid });
   } catch (e) {
+    // The row keeps the latest error; the log keeps every attempt, with what the
+    // other end actually said. A status code alone cannot tell a 403 that
+    // resolves on a retry from one that never will — both read the same in the
+    // queue, and the difference only showed up in the reply body.
+    db.prepare(`INSERT INTO ol_send_attempts (contribution_id, olid, field, status, detail, message)
+                VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(row.id, row.olid, row.field, e.status ?? null, e.detail ?? null, e.message);
     db.prepare(`UPDATE ol_contributions SET status = 'failed', error = ?,
                 reviewed_at = datetime('now') WHERE id = ?`).run(e.message, row.id);
     res.status(502).json({ error: e.message });

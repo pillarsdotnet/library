@@ -318,7 +318,30 @@ export async function sendCover(olid, imageBuffer, cookie, doFetch = globalThis.
     body: form,
     redirect: 'manual',
   });
-  // The endpoint redirects to the book page on success.
+  // Covers are the one contribution that goes through a *browser form* rather
+  // than the JSON API, and Open Library now gates those behind a human
+  // verification challenge. Measured 2026-09-22 against the live site:
+  //
+  //   authenticated PUT  /books/OL…M.json        → reaches the handler
+  //   authenticated POST /books/OL…M/add-cover   → 405 from their nginx
+  //   anonymous     POST /books/OL…M/add-cover   → 303 to /verify_human
+  //
+  // The 405 comes from their front end, before any routing — a nonexistent
+  // OLID gets it too, where the handler itself would answer 404. No Referer,
+  // Origin or User-Agent changes it, and it is the form encoding plus a session
+  // cookie that triggers it: the same request with a JSON body is let through.
+  // A bot account cannot pass a human challenge, so there is nothing to retry
+  // and nothing to fix on this side. Say that, rather than a bare status code
+  // that reads like a bug in this app.
+  if (r.status === 405) {
+    throw new Error('Open Library is not accepting cover uploads from programs at present '
+      + '(its front end answers 405). Every other contribution still goes through.');
+  }
+  const location = r.headers.get('location') || '';
+  if (/verify_human|\/account\/login/.test(location)) {
+    throw new Error('Open Library asked for human verification instead of accepting the cover');
+  }
+  // Otherwise the endpoint redirects to the book page on success.
   if (!r.ok && r.status !== 302 && r.status !== 303) {
     throw new Error(`Open Library rejected the cover (${r.status})`);
   }

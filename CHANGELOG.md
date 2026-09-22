@@ -5,6 +5,24 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.0.6] — 2026-09-22
+
+### Fixed
+
+- **"Open Library rejected the cover (405)" now says what actually happened.**
+  Covers are the one contribution that goes through a browser *form* rather than
+  the JSON API, and Open Library has put those behind a human-verification
+  challenge that a bot account cannot pass. Measured against the live site: an
+  authenticated `PUT` of a record reaches the handler, an authenticated
+  multipart `POST` to `add-cover` gets `405` from their front end — before
+  routing, since a nonexistent OLID gets it too — and an anonymous one is sent
+  to `/verify_human`. Nothing here is retryable and nothing is misconfigured, so
+  the message says so instead of echoing a status code that reads like a bug in
+  this app. **Every other contribution is unaffected.**
+- A cover POST that is redirected to the verification or login page is no longer
+  counted as a success. Any `302`/`303` used to mean "sent", which would have
+  marked a contribution delivered that Open Library never took.
+
 ## [4.0.5] — 2026-09-22
 
 ### Changed

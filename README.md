@@ -440,6 +440,13 @@ edition leaves one mark however it was entered. A book whose ISBN fails its
 check digit is not offered for import at all — an unverifiable identifier is not
 one to found a new public record on.
 
+> **Cover images cannot currently be contributed.** Open Library accepts covers
+> only through a browser form, and has put its forms behind a human-verification
+> challenge; an authenticated upload from a program gets `405` from their front
+> end (measured 2026-09-22). Cover proposals are still queued, and approving one
+> now explains this rather than reporting a status code. Every other field goes
+> through the JSON API and is unaffected.
+
 Approving one runs it **twice**: first with `?preview=true`, which parses,
 validates and runs Open Library's own duplicate matching without saving. If the
 preview reports the book already matched an existing edition, nothing is

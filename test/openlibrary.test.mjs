@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   proposalsFor, fetchEdition, sendField, FIELD_COMMENTS,
-  importAllowed, importPayload, sendImport, sourcePrefix,
+  importAllowed, importPayload, sendImport, sourcePrefix, sendCover,
 } from '../openlibrary.js';
 
 const BOOK = {
@@ -239,6 +239,31 @@ test('the source prefix defaults, and the environment overrides it', () => {
     if (saved === undefined) delete process.env.OPENLIBRARY_SOURCE_PREFIX;
     else process.env.OPENLIBRARY_SOURCE_PREFIX = saved;
   }
+});
+
+// Open Library gates its browser forms behind a human-verification challenge,
+// which a bot account cannot pass. The status code alone reads like a bug in
+// this app, so neither refusal is allowed to surface as a bare number.
+test('a cover Open Library will not take from a program says so', async () => {
+  const stub = (status, location) => async () => ({
+    ok: false, status, headers: { get: (h) => (h.toLowerCase() === 'location' ? location : null) },
+  });
+
+  await assert.rejects(
+    () => sendCover('OL1M', Buffer.from([0xff, 0xd8]), 'session=x', stub(405, null)),
+    /not accepting cover uploads from programs/,
+    'a 405 from their front end is explained, not echoed',
+  );
+  await assert.rejects(
+    () => sendCover('OL1M', Buffer.from([0xff, 0xd8]), 'session=x', stub(303, 'https://openlibrary.org/verify_human?next=/books/OL1M/add-cover')),
+    /human verification/,
+    'a redirect to the challenge page is a failure, not a success',
+  );
+  // A redirect back to the book page is what success actually looks like.
+  assert.equal(
+    await sendCover('OL1M', Buffer.from([0xff, 0xd8]), 'session=x', stub(303, 'https://openlibrary.org/books/OL1M')),
+    true,
+  );
 });
 
 test('a refused import surfaces Open Library\'s own reason', async () => {

@@ -1802,14 +1802,45 @@ async function renderContributions() {
       </div>
       <div class="contrib-field">
         <span class="badge">${esc(r.label)}</span>
-        <span class="contrib-value">${r.field === 'cover' ? 'your cover photo' : esc(r.value)}</span>
+        ${contribValue(r)}
         ${r.error ? `<span class="msg err">${esc(r.error)}</span>` : ''}
       </div>
-      <div class="contrib-actions">
-        <button type="button" class="primary" data-act="approve" ${status.configured ? '' : 'disabled'}>Send</button>
-        <button type="button" data-act="decline">Skip</button>
-      </div>
+      <div class="contrib-actions">${contribActions(r, status)}</div>
     </div>`).join('');
+}
+
+// What the row is about. A cover is a picture, so show the picture: for the
+// adopt row in particular, the choice is between two images and nobody should
+// have to take our word for which is better before one of them is deleted.
+function contribValue(r) {
+  if (r.field === 'cover_from_ol') {
+    return `<span class="contrib-compare">
+      ${r.copy_id ? `<figure><img src="api/books/${r.copy_id}/cover" alt="Your photograph"><figcaption>yours</figcaption></figure>` : ''}
+      <figure><img src="${esc(r.value)}" alt="Open Library's cover" loading="lazy"><figcaption>theirs</figcaption></figure>
+    </span>`;
+  }
+  if (r.field === 'cover') return '<span class="contrib-value">your cover photo</span>';
+  return `<span class="contrib-value">${esc(r.value)}</span>`;
+}
+
+// Covers cannot be sent from here: Open Library takes them only through its own
+// form, which refuses a program (see the README). So the cover row hands over
+// the two things needed to do it by hand — the image, and the right page —
+// rather than offering a button that can only fail.
+function contribActions(r, status) {
+  if (r.field === 'cover_from_ol') {
+    return `<button type="button" data-act="approve">Use theirs</button>
+            <button type="button" data-act="decline">Keep mine</button>`;
+  }
+  if (r.field === 'cover') {
+    const file = `${r.title.replace(/[^\w]+/g, '-').replace(/^-|-$/g, '')}-${r.olid}.jpg`;
+    return `${r.copy_id ? `<a class="btn" download="${esc(file)}" href="api/books/${r.copy_id}/cover">↓ Image</a>` : ''}
+            <a class="btn" target="_blank" rel="noopener"
+               href="https://openlibrary.org/books/${encodeURIComponent(r.olid)}/add-cover">Upload on Open Library ↗</a>
+            <button type="button" data-act="decline">Skip</button>`;
+  }
+  return `<button type="button" class="primary" data-act="approve" ${status.configured ? '' : 'disabled'}>Send</button>
+          <button type="button" data-act="decline">Skip</button>`;
 }
 
 $('#contributeList').addEventListener('click', async (e) => {
@@ -1817,6 +1848,10 @@ $('#contributeList').addEventListener('click', async (e) => {
   if (!btn) return;
   const row = btn.closest('.contrib');
   const id = row.dataset.id;
+  if (btn.dataset.act === 'approve' && row.querySelector('.contrib-compare')
+      && !confirm('Use Open Library\u2019s cover and delete your photograph of this copy?\n\nThe uncropped original goes too, and neither can be recovered.')) {
+    return;
+  }
   btn.disabled = true;
   try {
     await api(`/ol-contributions/${id}/${btn.dataset.act}`, { method: 'POST' });
@@ -1826,16 +1861,18 @@ $('#contributeList').addEventListener('click', async (e) => {
   await renderContributions();
 });
 
-$('#contributeScanBtn').addEventListener('click', async () => {
-  const btn = $('#contributeScanBtn');
+async function runScan(btn, body) {
   const was = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Looking…';
   try {
     // One request per book, so this is a button and not something that fires on
     // every save. Open Library is a volunteer-run service; we are a guest here.
-    const { scanned, queued } = await api('/ol-contributions/scan', { method: 'POST' });
-    $('#contributeSummary').textContent = `Checked ${scanned} book${scanned === 1 ? '' : 's'}, found ${queued} gap${queued === 1 ? '' : 's'}.`;
+    const { scanned, queued, satisfied } = await api('/ol-contributions/scan',
+      { method: 'POST', headers: json(), body: JSON.stringify(body) });
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    $('#contributeSummary').textContent = `Checked ${plural(scanned, 'book')}, found ${plural(queued, 'gap')}`
+      + (satisfied ? `, closed ${plural(satisfied, 'proposal')} already answered.` : '.');
     await renderContributions();
   } catch (err) {
     alert('Could not check Open Library: ' + err.message);
@@ -1843,7 +1880,12 @@ $('#contributeScanBtn').addEventListener('click', async () => {
     btn.disabled = false;
     btn.textContent = was;
   }
-});
+}
+
+$('#contributeScanBtn').addEventListener('click', () => runScan($('#contributeScanBtn'), {}));
+// The books carrying a photograph, whenever they were catalogued: the default
+// sweep is ordered by what changed recently and never reaches the rest.
+$('#contributeScanCoversBtn').addEventListener('click', () => runScan($('#contributeScanCoversBtn'), { scope: 'covers', limit: 100 }));
 
 $('#contributeBtn').addEventListener('click', () => openContribute().catch((e) => alert(e.message)));
 $('#closeContributeDialog').addEventListener('click', () => contributeDialog.close());

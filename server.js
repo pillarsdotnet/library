@@ -11,7 +11,7 @@ import { authConfigured, allowlistPath, readAllowlist, mountAuth, requireAuth, s
 import { parseEpub } from './epub.js';
 import {
   fetchEdition, proposalsFor, login, sendField, sendCover,
-  haveCredentials, FIELD_LABELS, FIELD_COMMENTS,
+  haveCredentials, FIELD_LABELS, FIELD_COMMENTS, ADOPT_COVER,
   importAllowed, importPayload, sendImport,
 } from './openlibrary.js';
 
@@ -536,6 +536,11 @@ router.delete('/api/books/:id', (req, res) => {
 // deliberately a button rather than something that runs on every save.
 router.post('/api/ol-contributions/scan', async (req, res) => {
   const limit = Math.min(Number(req.body?.limit) || 25, 100);
+  // The default sweep is "whatever I touched most recently", which never
+  // reaches a book catalogued a year ago. `scope: 'covers'` walks the editions
+  // carrying a photograph instead — the only ones either cover proposal can
+  // apply to, and a far smaller set than the whole library.
+  const coversOnly = req.body?.scope === 'covers';
   // The series tag names a series, not a position, so one title per book is all
   // that is ever sent — the lowest-ordered one when a book sits in several.
   // Over editions, not copies: the proposal edits Open Library's record for an
@@ -551,11 +556,21 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
     -- digit is still worth asking Open Library about, and the answer ("unknown")
     -- is more useful than silently skipping the book.
     WHERE COALESCE(e.isbn13, e.isbn_text) IS NOT NULL AND COALESCE(e.isbn13, e.isbn_text) <> ''
-    ORDER BY e.updated_at DESC LIMIT ?`).all(limit);
+      AND (0 = ? OR EXISTS (SELECT 1 FROM copies c2 WHERE c2.edition_id = e.id AND c2.cover_file IS NOT NULL))
+    ORDER BY e.updated_at DESC LIMIT ?`).all(coversOnly ? 1 : 0, limit);
   const already = db.prepare('SELECT 1 FROM ol_contributions WHERE edition_id = ? AND field = ?');
+  // A proposal is a claim about what Open Library was missing when we looked.
+  // Someone else filling that gap in the meantime is the good outcome, but the
+  // row does not know it: the queue is INSERT OR IGNORE and nothing ever closed
+  // one. Three cover rows sat as `failed` for books Open Library has since
+  // acquired covers for. A field that is no longer a gap closes itself now.
+  const openRows = db.prepare(`SELECT id, field FROM ol_contributions
+                               WHERE edition_id = ? AND status IN ('pending', 'failed')`);
+  const retire = db.prepare(`UPDATE ol_contributions SET status = 'satisfied', error = NULL,
+                             reviewed_at = datetime('now') WHERE id = ?`);
   const add = db.prepare(`INSERT OR IGNORE INTO ol_contributions (edition_id, olid, field, value)
                           VALUES (?, ?, ?, ?)`);
-  let scanned = 0, queued = 0, unknown = 0;
+  let scanned = 0, queued = 0, unknown = 0, satisfied = 0;
   for (const book of books) {
     // Only a photograph one of our copies actually carries is ours to offer.
     // The edition's own cover_url is stock artwork, quite possibly Open
@@ -576,7 +591,16 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
       }
       continue;
     }
-    for (const p of proposalsFor(book, edition.record, edition.work)) {
+    const proposals = proposalsFor(book, edition.record, edition.work);
+    const stillAGap = new Set(proposals.map((p) => p.field));
+    // Anything open that this look did not re-propose has been answered: the
+    // field was filled by somebody else, or the book we offered to import now
+    // exists. Closed as `satisfied`, which also stops it being re-proposed,
+    // since `already` counts a row in any state.
+    for (const open of openRows.all(book.edition_id)) {
+      if (!stillAGap.has(open.field)) { retire.run(open.id); satisfied += 1; }
+    }
+    for (const p of proposals) {
       if (already.get(book.edition_id, p.field)) continue;
       // Each proposal records the record it would edit: the series tag belongs
       // to the work, everything else to the edition.
@@ -584,7 +608,7 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
       queued += 1;
     }
   }
-  res.json({ scanned, queued, unknown });
+  res.json({ scanned, queued, unknown, satisfied });
 });
 
 router.get('/api/ol-contributions', (req, res) => {
@@ -592,7 +616,12 @@ router.get('/api/ol-contributions', (req, res) => {
   // Joined to editions, not to the books view: a book owned in duplicate would
   // otherwise list the same proposal once per copy.
   const rows = db.prepare(`
-    SELECT c.*, e.title, e.authors, COALESCE(e.isbn13, e.isbn_text) AS isbn
+    SELECT c.*, e.title, e.authors, COALESCE(e.isbn13, e.isbn_text) AS isbn,
+      -- Which copy's photograph this row is about: the cover row links to it so
+      -- it can be uploaded by hand, and the adopt row so it can be compared
+      -- with Open Library's before anything is thrown away.
+      (SELECT cp.id FROM copies cp
+        WHERE cp.edition_id = c.edition_id AND cp.cover_file IS NOT NULL LIMIT 1) AS copy_id
     FROM ol_contributions c JOIN editions e ON e.id = c.edition_id
     WHERE c.status = ? ORDER BY e.title, c.field`).all(status);
   res.json(rows.map((r) => ({ ...r, label: FIELD_LABELS[r.field] || r.field })));
@@ -626,6 +655,40 @@ router.post('/api/ol-contributions/:id/approve', async (req, res) => {
     FROM ol_contributions c
     WHERE c.id = ? AND c.status IN ('pending', 'failed')`).get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
+
+  // Adopting Open Library's cover is the one approval that sends nothing. It
+  // needs no account, and it is handled before the credential check for that
+  // reason — an installation with no Open Library keys can still take this.
+  //
+  // It is also the only approval that DELETES something. The photograph and its
+  // uncropped source are removed from disk and the edition falls back to Open
+  // Library's artwork, which is what `editions.cover_url` has always been for.
+  // That is irreversible, which is exactly why it is a queued proposal rather
+  // than something a scan does on its own.
+  if (row.field === ADOPT_COVER) {
+    const copies = db.prepare(`SELECT id, cover_file, cover_source_file FROM copies
+                               WHERE edition_id = ? AND (cover_file IS NOT NULL OR cover_source_file IS NOT NULL)`)
+      .all(row.edition_id);
+    const swap = db.transaction(() => {
+      update('editions', row.edition_id, { cover_url: row.value });
+      for (const c of copies) {
+        db.prepare(`UPDATE copies SET cover_file = NULL, cover_token = NULL,
+                    cover_source_file = NULL, cover_source_token = NULL WHERE id = ?`).run(c.id);
+      }
+      db.prepare(`UPDATE ol_contributions SET status = 'applied', error = NULL,
+                  reviewed_at = datetime('now') WHERE id = ?`).run(row.id);
+    });
+    swap();
+    // Files last: the row is what the app reads, so an interruption here costs
+    // an unreferenced image on disk rather than a row naming a file that is
+    // gone. Same order, and the same reasoning, as applyImages above.
+    for (const c of copies) {
+      if (c.cover_file) removeCover(c.cover_file);
+      if (c.cover_source_file) removeCover(c.cover_source_file);
+    }
+    return res.json({ ok: true, adopted: row.value, photographsRemoved: copies.length });
+  }
+
   if (!haveCredentials()) return res.status(503).json({ error: 'Open Library credentials are not configured' });
 
   try {

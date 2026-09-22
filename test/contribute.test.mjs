@@ -23,6 +23,14 @@ const COVERS_DIR = DB_PATH.replace(/\.db$/, '-covers');
 
 let server, olServer;
 const olRequests = [];
+// What the stub says Open Library holds. Mutable, so a test can let Open
+// Library acquire a field between two scans — which is the whole point of the
+// proposals that close themselves.
+let stubRecord = {
+  key: '/books/OL42M',
+  number_of_pages: 300,   // already known: must never be offered
+  covers: [999],          // already has a cover: must never be offered
+};
 
 test.before(async () => {
   // Stub Open Library: one edition with a cover and a page count already, and
@@ -35,11 +43,7 @@ test.before(async () => {
     }
     if (req.url.startsWith('/isbn/')) {
       res.setHeader('Content-Type', 'application/json');
-      return res.end(JSON.stringify({
-        key: '/books/OL42M',
-        number_of_pages: 300,   // already known: must never be offered
-        covers: [999],          // already has a cover: must never be offered
-      }));
+      return res.end(JSON.stringify(stubRecord));
     }
     res.statusCode = 404;
     res.end('{}');
@@ -122,20 +126,28 @@ test('a scan queues only the gaps, and approving is blocked without credentials'
   // for the ISBN, not one shelf's copy of it.
   const mine = queue.filter((r) => r.edition_id === made.edition_id);
   const fields = mine.map((r) => r.field).sort();
-  assert.deepEqual(fields, ['physical_dimensions', 'physical_format'],
-    'the page count and cover Open Library already has are not offered');
+  // cover_from_ol is the inbound proposal, and belongs here precisely because
+  // Open Library already has a cover: it offers to adopt theirs in place of the
+  // photograph, which is the mirror image of never offering them a cover they
+  // already hold.
+  assert.deepEqual(fields, ['cover_from_ol', 'physical_dimensions', 'physical_format'],
+    'the page count and cover Open Library already has are not offered back to it');
   assert.equal(mine.find((r) => r.field === 'physical_dimensions').value, '20 x 13 x 2 centimeters');
   assert.equal(mine[0].olid, 'OL42M', 'proposals name the edition they would edit');
 
   // Scanning again must not stack up a second copy of the same proposal.
   await post('/api/ol-contributions/scan');
   const again = await (await fetch(`${BASE}/api/ol-contributions`)).json();
-  assert.equal(again.filter((r) => r.edition_id === made.edition_id).length, 2, 'no duplicates');
+  assert.equal(again.filter((r) => r.edition_id === made.edition_id).length, 3, 'no duplicates');
 
   // Nothing can be sent while the account is unconfigured, and the queue says so.
   const status = await (await fetch(`${BASE}/api/ol-contributions/status`)).json();
   assert.equal(status.configured, false);
-  const approve = await post(`/api/ol-contributions/${mine[0].id}/approve`);
+  // A row that would actually be SENT. Adopting Open Library's cover sends
+  // nothing and is allowed without an account, so it would pass this check for
+  // the wrong reason.
+  const sendable = mine.find((r) => r.field === 'physical_dimensions');
+  const approve = await post(`/api/ol-contributions/${sendable.id}/approve`);
   assert.equal(approve.status, 503, 'refuses to send with no credentials');
   assert.equal(olRequests.some((u) => u.includes('login')), false, 'and never tried to log in');
 });
@@ -195,4 +207,74 @@ test('an unknown ISBN is queued for import only when importing is switched on', 
   assert.ok(imp, 'switched on: the missing book is proposed as a new record');
   assert.equal(imp.olid, 'NEW', 'there is no record to point at yet');
   assert.equal(imp.label, 'New record');
+});
+
+// ─── proposals that answer themselves, and the one that runs inwards ─────────
+
+const dataUrl = (marker) => `data:image/jpeg;base64,${Buffer.from(`fake-jpeg-${marker}`).toString('base64')}`;
+const queue = async (status = 'pending') => (await (await fetch(`${BASE}/api/ol-contributions?status=${status}`)).json());
+
+// A proposal is a claim about what Open Library was missing when we looked.
+// Somebody else filling the gap is the good outcome, and the row has to notice:
+// three cover rows sat as `failed` for books Open Library had since acquired
+// covers for, because the queue only ever inserted.
+test('a gap somebody else has since filled closes itself', async () => {
+  const made = await (await post('/api/books', {
+    title: 'Filled In Later', isbn: '9780000000002',
+    height_mm: 198, width_mm: 129, thickness_mm: 18, format: 'paperback',
+  })).json();
+
+  await post('/api/ol-contributions/scan');
+  const open = (await queue()).find((r) => r.edition_id === made.edition_id && r.field === 'physical_dimensions');
+  assert.ok(open, 'the gap is proposed while it is a gap');
+
+  // Open Library acquires the value we were going to offer.
+  stubRecord = { ...stubRecord, physical_dimensions: '19.8 x 12.9 x 1.8 centimeters' };
+  const again = await (await post('/api/ol-contributions/scan')).json();
+  assert.ok(again.satisfied >= 1, 'the scan reports what it closed');
+
+  assert.equal((await queue()).some((r) => r.id === open.id), false, 'no longer waiting for a decision');
+  assert.equal((await queue('satisfied')).some((r) => r.id === open.id), true, 'recorded as answered, not as declined');
+  stubRecord = { ...stubRecord, physical_dimensions: undefined };
+});
+
+// The inverse of every other proposal: Open Library has the cover, we have the
+// photograph, and adopting theirs DELETES ours. Hence a queued row rather than
+// something a scan does on its own.
+test('Open Library\'s cover is offered in place of a photograph, and adopting it removes the photograph', async () => {
+  const made = await (await post('/api/books', {
+    title: 'Photographed Here', isbn: '9780000000026', cover_url: dataUrl('mine'),
+  })).json();
+  assert.match(made.cover_url, /\/cover/, 'the copy carries a photograph');
+
+  await post('/api/ol-contributions/scan');
+  const row = (await queue()).find((r) => r.edition_id === made.edition_id && r.field === 'cover_from_ol');
+  assert.ok(row, 'the adoption is proposed');
+  assert.equal(row.value, 'https://covers.openlibrary.org/b/id/999-L.jpg', 'and names the image it would adopt');
+  assert.equal(row.copy_id, made.id, 'with the copy whose photograph is at stake, for comparison');
+
+  // Nothing is deleted by proposing it.
+  assert.equal((await (await fetch(`${BASE}/api/books/${made.id}`)).json()).cover_url.includes('/cover'), true);
+
+  // Approving needs no Open Library account: it sends nothing.
+  const done = await (await post(`/api/ol-contributions/${row.id}/approve`)).json();
+  assert.equal(done.ok, true);
+  assert.equal(done.photographsRemoved, 1);
+
+  const after = await (await fetch(`${BASE}/api/books/${made.id}`)).json();
+  assert.equal(after.cover_url, 'https://covers.openlibrary.org/b/id/999-L.jpg', 'the edition now shows theirs');
+  const gone = await fetch(`${BASE}/api/books/${made.id}/cover`, { redirect: 'manual' });
+  assert.equal(gone.status, 302, 'the photograph is gone from disk');
+  assert.equal(gone.headers.get('location'), row.value, 'and the copy falls back to the adopted artwork');
+  assert.equal((await queue('applied')).some((r) => r.id === row.id), true);
+});
+
+// The default sweep is ordered by what changed recently, so a book catalogued a
+// year ago is never reached — which is why 13 of 19 photographed books had
+// never been looked at.
+test('the covers sweep looks only at books carrying a photograph', async () => {
+  const { scanned } = await (await post('/api/ol-contributions/scan', { scope: 'covers', limit: 100 })).json();
+  const withPhotos = (await (await fetch(`${BASE}/api/books?limit=200`)).json())
+    .filter((b) => (b.cover_url || '').startsWith('api/books/')).length;
+  assert.equal(scanned, withPhotos, 'every photographed book and nothing else');
 });

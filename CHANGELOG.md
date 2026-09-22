@@ -5,6 +5,36 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.1.0] — 2026-09-22
+
+### Added
+
+- **Cover rows hand the upload back to you.** Open Library takes covers only
+  through its own form, which refuses a program but works perfectly for a
+  signed-in person — so the cover row now offers the two things needed to do it
+  by hand, the image and the right `add-cover` page, instead of a Send button
+  that can only fail.
+- **Open Library's cover can be adopted in place of a photograph.** When a scan
+  finds that Open Library has acquired a cover for an edition you photographed,
+  it queues a proposal showing both images side by side. Approving it deletes
+  the copy's photograph and its uncropped source and falls the edition back to
+  Open Library's artwork, which is what `editions.cover_url` has always been
+  for. It is the only approval that deletes anything and the only one that needs
+  no Open Library account, so it asks for confirmation naming what goes.
+- **⟳ Check my photos**, a scan scoped to the editions carrying a photograph.
+  The default sweep is ordered by what changed recently and never reaches a book
+  catalogued a year ago — which is why 13 of 19 photographed books had never
+  been looked at.
+
+### Fixed
+
+- **A proposal somebody else has since satisfied now closes itself.** The queue
+  was `INSERT OR IGNORE` and nothing ever closed a row, so three cover rows sat
+  as `failed` for books Open Library had since acquired covers for. A field that
+  is no longer a gap is marked `satisfied`, which also stops it being
+  re-proposed; a scan reports how many it closed. This retires an `import`
+  proposal too, once Open Library has the book.
+
 ## [4.0.6] — 2026-09-22
 
 ### Fixed

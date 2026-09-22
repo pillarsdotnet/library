@@ -100,7 +100,20 @@ const FIELDS = [
   },
 ];
 
-export const FIELD_LABELS = Object.fromEntries([...FIELDS.map((f) => [f.name, f.label]), ['import', 'New record']]);
+// The one proposal that runs the other way. Everything else here offers Open
+// Library something it lacks; this notices that Open Library has acquired a
+// cover for an edition we are holding our own photograph of, and offers to
+// adopt theirs in its place. It is a proposal like all the rest — a scan never
+// deletes anything, and the photograph survives until a human approves the row.
+export const ADOPT_COVER = 'cover_from_ol';
+
+export const coverImageUrl = (id) => `https://covers.openlibrary.org/b/id/${id}-L.jpg`;
+
+export const FIELD_LABELS = Object.fromEntries([
+  ...FIELDS.map((f) => [f.name, f.label]),
+  ['import', 'New record'],
+  [ADOPT_COVER, "Open Library's cover"],
+]);
 export const FIELD_COMMENTS = Object.fromEntries(FIELDS.map((f) => [f.name, f.comment]));
 
 // Fetch the Open Library edition for an ISBN, and the work behind it. Returns
@@ -145,6 +158,19 @@ export function proposalsFor(book, record, work = null) {
     out.push({
       field: f.name, label: f.label, value: String(value),
       comment: f.comment, target: f.target || 'edition',
+    });
+  }
+
+  // Inbound, and therefore the exact inverse of the test above: offered when
+  // Open Library HAS a cover and we are the ones holding a photograph. Note
+  // that a cover we contributed ourselves comes back through here too — once
+  // it is on Open Library it is the edition's artwork like any other, and the
+  // alternative is tracking provenance for ever to avoid adopting our own.
+  const coverId = Array.isArray(record?.covers) ? record.covers.find((c) => c > 0) : null;
+  if (coverId && book.copy_cover) {
+    out.push({
+      field: ADOPT_COVER, label: FIELD_LABELS[ADOPT_COVER], inbound: true,
+      value: coverImageUrl(coverId), target: 'edition',
     });
   }
   return out;

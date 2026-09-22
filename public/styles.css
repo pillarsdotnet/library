@@ -129,6 +129,20 @@ button {
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 button.danger { color: #d33; border-color: #d33; background: transparent; }
 button.icon { border: none; background: transparent; color: inherit; font-size: 1.1rem; padding: 4px 8px; }
+/* A link that has to sit in a row of buttons and not look like a stray word:
+   the cover row's two actions are genuinely navigations, not form submissions —
+   one downloads a file, the other opens Open Library. */
+a.btn {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 9px 14px;
+  text-decoration: none;
+  display: inline-block;
+}
 
 .grid {
   display: grid;
@@ -421,7 +435,13 @@ dialog::backdrop { background: rgba(20, 15, 30, 0.55); }
 .contrib-book { flex: 1 1 220px; display: flex; flex-direction: column; }
 .contrib-field { flex: 1 1 200px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .contrib-value { font-size: 0.9rem; }
-.contrib-actions { display: flex; gap: 8px; }
+.contrib-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* Adopting Open Library's cover deletes a photograph, so both images are shown
+   at a size you can actually judge rather than as a pair of favicons. */
+.contrib-compare { display: flex; gap: 10px; align-items: flex-start; }
+.contrib-compare figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.contrib-compare img { width: 64px; height: auto; border-radius: 3px; border: 1px solid var(--border); }
+.contrib-compare figcaption { font-size: 0.72rem; color: var(--muted); }
 
 .crop-dialog { width: min(560px, 96vw); }
 .crop-area { position: relative; background: #000; border-radius: 8px; overflow: hidden; }

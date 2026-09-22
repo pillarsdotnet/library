@@ -8,6 +8,13 @@ services:
     environment:
       - PORT=3000
       - DB_PATH=/data/library.db
+      # Sign-in is off unless these two are set; the allowlist then defaults to
+      # /data/allowed-emails.txt, which is on the volume and survives a deploy.
+      # Keep the values in a .env file beside this one rather than in git.
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - SESSION_SECRET=${SESSION_SECRET:-}
+      - TRUST_PROXY=${TRUST_PROXY:-}
     volumes:
       - library-data:/data
 

@@ -186,8 +186,68 @@ Environment variables:
 | `OPENLIBRARY_SECRET_KEY` | _(none)_ | Paired with the access key                          |
 | `OPENLIBRARY_ALLOW_IMPORT` | _(unset)_ | `true` allows creating records for books Open Library lacks |
 | `OPENLIBRARY_SOURCE_PREFIX` | `pillarsdotnet_library` | `source_records` prefix for imports; set it empty to stamp nothing and import nothing |
+| `GOOGLE_CLIENT_ID` | _(none)_ | Google OAuth client; **setting this and the secret is what turns sign-in on** |
+| `GOOGLE_CLIENT_SECRET` | _(none)_ | Paired with the client id |
+| `AUTH_ALLOWED_FILE` | `<DB dir>/allowed-emails.txt` | Addresses permitted to sign in; absent or empty means all |
+| `SESSION_SECRET` | _(new each boot)_ | Signs session cookies; set it so a restart does not sign everyone out |
+| `SESSION_TTL_DAYS` | `30` | How long a signed-in session lasts (floored at 1 day) |
+| `OAUTH_REDIRECT_URI` | _(from the request)_ | Override when the public URL is not what the app sees |
+| `PUBLIC_ORIGIN` | _(from the request)_ | Scheme and host to build the redirect URI from |
+| `TRUST_PROXY` | _(off)_ | `true` behind nginx, so `X-Forwarded-Proto` decides the Secure cookie flag |
 | `LOOKUP_TTL_DAYS` | `30` | How long a found lookup stays cached (floored at 1 day) |
 | `LOOKUP_NEGATIVE_TTL_HOURS` | `24` | How long a "not found" stays cached (floored at 24h) |
+
+### Signing in
+
+The app has no accounts of its own. It either asks Google who you are, or it
+asks nobody — and which of those it is doing is printed on every boot:
+
+```
+   sign-in OFF — anyone who can reach this port can edit the library
+```
+
+**Sign-in is off until `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set.**
+That default is deliberate: a missing variable leaving a home server open is
+recoverable, and a missing variable locking everyone out of the machine that
+holds the library is not. The banner is there so "open" is always a choice.
+
+To turn it on, create an OAuth client (Google Cloud console → APIs & Services →
+Credentials → **Web application**), and register the callback as an authorized
+redirect URI — `https://your-host/auth/callback`, or with `BASE_PATH` set,
+`https://your-host/library/auth/callback`. One client can carry a redirect URI
+for each host the app answers on. Then:
+
+```bash
+GOOGLE_CLIENT_ID=….apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=…
+SESSION_SECRET=$(openssl rand -hex 32)   # or every restart signs everyone out
+TRUST_PROXY=true                         # behind nginx, so cookies can be Secure
+```
+
+With those set, every page and every API route needs a signed-in address. A
+browser is redirected to Google; anything else gets `401` and the sign-in URL,
+so a `fetch` reports "sign in required" rather than trying to parse Google's
+login page as JSON. Sign out at `/auth/logout`; `/auth/me` says who is signed in.
+
+#### Who is allowed in
+
+Sign-in alone already narrows the world to people with a Google account, which
+may be all a tailnet-only deployment needs. To narrow it further, list the
+addresses — one per line, `#` for comments — in `allowed-emails.txt` **next to
+the database**, the same place covers live:
+
+```
+# the household
+owner@gmail.com
+second@gmail.com   # the spare phone
+```
+
+- **Absent or empty, every signed-in address is allowed.** A file that does not
+  exist is read as "no further restriction", not as "nobody".
+- The file is consulted **on every request**, not once at sign-in, so deleting a
+  line ends that person's session on their next click. No restart, no deploy.
+- Refusal names the address that was turned away, because the usual cause is
+  signing in with the wrong one of two Google accounts.
 
 ### ISBN lookup sources & the Google Books quota
 

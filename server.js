@@ -7,6 +7,7 @@ import db from './db.js';
 import { canonicalIsbn } from './isbn.js';
 import { parseDataUrl, writeCover, coverPath, removeCover, mimeForFile } from './covers.js';
 import { lookupIsbn, RateLimitError } from './lookup.js';
+import { authConfigured, allowlistPath, readAllowlist, mountAuth, requireAuth, sessionSecretIsEphemeral } from './auth.js';
 import { parseEpub } from './epub.js';
 import {
   fetchEdition, proposalsFor, login, sendField, sendCover,
@@ -22,8 +23,20 @@ const BASE = (process.env.BASE_PATH || '').replace(/\/+$/, '');
 
 app.use(express.json({ limit: '6mb' })); // headroom for uploaded (data-URL) covers
 
+// Behind nginx on both deployments, so the client's scheme comes from
+// X-Forwarded-Proto rather than from the socket — which is what decides whether
+// the session cookie may be marked Secure. Off by default: trusting that header
+// when nothing sets it lets a visitor claim their own connection is encrypted.
+if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : process.env.TRUST_PROXY);
+
 // Everything (UI + API) hangs off this router so it can be mounted under BASE.
 const router = express.Router();
+
+// Sign-in first, then the gate, then the app. Both are no-ops unless Google
+// credentials are configured, so an unconfigured install behaves exactly as it
+// did before this existed — see auth.js for why that is the default.
+mountAuth(router, BASE);
+router.use(requireAuth(BASE));
 
 // Serve index.html with the right <base> href injected for the mount point,
 // so every relative asset/API URL resolves under BASE regardless of the host.
@@ -1062,4 +1075,19 @@ app.listen(PORT, () => {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   console.log(`📚 Home Library on http://localhost:${PORT}${BASE}/`);
   console.log(`   timezone ${tz}${tz === 'UTC' ? ' (set TZ if that is not intended — due dates use it)' : ''}`);
+  // Who can reach this is not a detail to leave implicit in a config file. Say
+  // it on every boot, so an install that is open to the world is open on
+  // purpose rather than because a variable went missing in a deploy.
+  if (!authConfigured()) {
+    console.log('   sign-in OFF — anyone who can reach this port can edit the library');
+    console.log('   (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to require a Google account)');
+  } else {
+    const list = readAllowlist();
+    console.log(list.entries.length
+      ? `   sign-in required; ${list.entries.length} address(es) allowed by ${list.path}`
+      : `   sign-in required; every Google account is allowed (${list.present ? 'empty' : 'no'} ${allowlistPath()})`);
+    if (sessionSecretIsEphemeral()) {
+      console.log('   SESSION_SECRET unset — sessions are signed with a new key each boot, so a restart signs everyone out');
+    }
+  }
 });

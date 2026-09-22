@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [4.0.3] — 2026-09-22
 
+### Added
+
+- **Sign in with Google.** Setting `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
+  puts every page and every API route behind a Google account; leaving them
+  unset leaves the app open exactly as before, and the startup banner says which
+  of the two it is doing. Sessions are signed cookies (`SESSION_SECRET`,
+  `SESSION_TTL_DAYS`), the flow uses PKCE and a state cookie, and the OAuth
+  exchange is written out rather than pulled from a dependency.
+- **An allowlist file.** `allowed-emails.txt` beside the database names the
+  addresses permitted to sign in — one per line, `#` for comments. Absent or
+  empty means every signed-in address is allowed. It is read on every request,
+  so removing a line ends that session on the next click without a restart.
+
 ### Changed
 
 - The `source_records` stamp on an import is now always the canonical 13-digit

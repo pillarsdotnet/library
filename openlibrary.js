@@ -20,6 +20,8 @@
 // ones — so every page-count contribution says so in its edit comment, and a
 // count Open Library already holds is left alone even when ours differs.
 
+import { canonicalIsbn } from './isbn.js';
+
 const OL = process.env.OPENLIBRARY_BASE || 'https://openlibrary.org';
 
 // Fields we are willing to offer, in the order a reviewer sees them. `book` is
@@ -170,21 +172,56 @@ export function importAllowed() {
   return process.env.OPENLIBRARY_ALLOW_IMPORT === 'true';
 }
 
+// The prefix this installation stamps its imports with. Every `source_records`
+// value reads `<prefix>:<identifier>`, and the prefix names the *catalogue* the
+// record came from — `ia`, `bwb`, `midcolumbia` — which is why it is settled
+// once here rather than per book.
+//
+// Deployments differ, so `OPENLIBRARY_SOURCE_PREFIX` overrides it. Setting that
+// variable to an empty string is a deliberate "no prefix", and no prefix means
+// no import: the stamp is not optional, so a record that cannot carry one is
+// not offered. Hence `??` rather than `||`, which would quietly reinstate the
+// default for anyone who had switched it off.
+export const DEFAULT_SOURCE_PREFIX = 'pillarsdotnet_library';
+
+export function sourcePrefix() {
+  const configured = (process.env.OPENLIBRARY_SOURCE_PREFIX ?? DEFAULT_SOURCE_PREFIX).trim();
+  // A colon separates the prefix from the identifier, and whitespace has never
+  // appeared in one: either would split or mangle the stamp downstream, where
+  // every reader takes the prefix as `value.split(':')[0]`. A prefix we cannot
+  // spell correctly is treated as no prefix rather than stamped wrong, because
+  // a malformed stamp in a public catalogue is not ours to clean up.
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(configured) ? configured : '';
+}
+
 // Open Library accepts either a "complete" record (title, authors, publishers,
 // publish_date) or one carrying a strong identifier (title + ISBN/LCCN); both
 // need source_records. Build the fullest record the book supports, and return
 // null when it satisfies neither shape — an import too thin to identify is
 // exactly the kind that becomes someone else's cleanup.
-export function importPayload(book, prefix = process.env.OPENLIBRARY_SOURCE_PREFIX) {
+export function importPayload(book, prefix = sourcePrefix()) {
   const isbn = String(book.isbn || '').replace(/[^0-9Xx]/g, '');
   const title = String(book.title || '').trim();
   if (!title || !isbn) return null;
-  if (!prefix) return null;      // the source prefix is assigned by Open Library
+  if (!prefix) return null;      // no usable prefix, no stamp, no import
+
+  // The stamp is what says "this record came from us", and a stamp has to name
+  // the book the same way every time. The 10- and 13-digit spellings of one
+  // edition would otherwise leave two different marks in a public catalogue,
+  // and nothing downstream could tell they were the same import. So the stamp
+  // is always the canonical 13-digit form, however the copy was catalogued —
+  // the single-valued convention `bwb` and `idb` follow. An ISBN that fails its
+  // check digit yields no canonical form, and an unverifiable identifier is not
+  // one to found a new public record on, so that book is not offered at all.
+  const canonical = canonicalIsbn(isbn);
+  if (!canonical) return null;
 
   const rec = {
     title,
-    source_records: [`${prefix}:${isbn}`],
-    [isbn.length === 10 ? 'isbn_10' : 'isbn_13']: [isbn],
+    source_records: [`${prefix}:${canonical}`],
+    // The identifier field still reports the ISBN as printed on the book; only
+    // the stamp is normalised. 'X' is a check digit, so it is spelled one way.
+    [isbn.length === 10 ? 'isbn_10' : 'isbn_13']: [isbn.toUpperCase()],
   };
   const authors = String(book.authors || '').split(',').map((a) => a.trim()).filter(Boolean);
   if (authors.length) rec.authors = authors.map((name) => ({ name }));

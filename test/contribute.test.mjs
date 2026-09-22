@@ -29,7 +29,7 @@ test.before(async () => {
   // nothing else — so exactly the empty fields should come back as proposals.
   olServer = createServer((req, res) => {
     olRequests.push(req.url);
-    if (req.url.startsWith('/isbn/9780000000009')) {   // deliberately unknown to OL
+    if (req.url.startsWith('/isbn/9780000000019')) {   // deliberately unknown to OL
       res.statusCode = 404;
       return res.end('{}');
     }
@@ -173,12 +173,15 @@ test('books Open Library has never heard of are counted, not queued', async () =
 // is the switch, not luck, and that the switch works when thrown.
 test('an unknown ISBN is queued for import only when importing is switched on', async () => {
   const made = await (await post('/api/books', {
-    title: 'Not In Open Library', isbn: '9780000000009',
+    title: 'Not In Open Library', isbn: '9780000000019',
     authors: 'A Writer', publisher: 'A Press', published_date: '2024',
     height_mm: 200, width_mm: 130, thickness_mm: 20, format: 'paperback',
   })).json();
 
-  // The stub 404s this ISBN (it only answers /isbn/ for the one it knows).
+  // The stub 404s this ISBN (it only answers /isbn/ for the one it knows). The
+  // ISBN has a real check digit: an unverifiable one is refused for import, so
+  // a placeholder that failed its check digit would pass this test for the
+  // wrong reason and then hide the switch being broken.
   await post('/api/ol-contributions/scan');
   let queue = await (await fetch(`${BASE}/api/ol-contributions`)).json();
   assert.equal(queue.some((r) => r.edition_id === made.edition_id && r.field === 'import'), false,

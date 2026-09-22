@@ -5,6 +5,28 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.0.3] — 2026-09-22
+
+### Changed
+
+- The `source_records` stamp on an import is now always the canonical 13-digit
+  ISBN. A book catalogued by its 10-digit ISBN and the same book catalogued by
+  its 13-digit one used to leave two different marks in Open Library, so our own
+  imports read back as two unrelated sources. Surveyed against 5,386 Open
+  Library editions: every `bwb` stamp is an ISBN-13 and every `idb` stamp is
+  too, which is the convention this now follows.
+- A book whose ISBN fails its check digit is no longer offered for import at
+  all. It was previously sent as `isbn_13`, which would have published an
+  unverifiable identifier in a public catalogue; filling blanks on an existing
+  record is unaffected.
+- The `source_records` prefix now has a default, `pillarsdotnet_library`, rather
+  than being unset until an environment variable supplied one.
+  `OPENLIBRARY_SOURCE_PREFIX` still overrides it, and setting that variable to
+  an empty string is a deliberate "no prefix", which as before means no import.
+  A prefix carrying a colon, whitespace or a slash is refused rather than
+  stamped wrong, since every reader of the field takes the prefix to be
+  everything before the first colon.
+
 ## [4.0.2] — 2026-08-01
 
 ### Changed

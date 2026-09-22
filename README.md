@@ -185,7 +185,7 @@ Environment variables:
 | `OPENLIBRARY_ACCESS_KEY` | _(none)_ | Optional; needed only to send contributions back    |
 | `OPENLIBRARY_SECRET_KEY` | _(none)_ | Paired with the access key                          |
 | `OPENLIBRARY_ALLOW_IMPORT` | _(unset)_ | `true` allows creating records for books Open Library lacks |
-| `OPENLIBRARY_SOURCE_PREFIX` | _(none)_ | `source_records` prefix for imports, agreed with Open Library |
+| `OPENLIBRARY_SOURCE_PREFIX` | `pillarsdotnet_library` | `source_records` prefix for imports; set it empty to stamp nothing and import nothing |
 | `LOOKUP_TTL_DAYS` | `30` | How long a found lookup stays cached (floored at 1 day) |
 | `LOOKUP_NEGATIVE_TTL_HOURS` | `24` | How long a "not found" stays cached (floored at 24h) |
 
@@ -336,13 +336,29 @@ duplicates can only be merged by librarians. So it is off by default:
 
 ```bash
 OPENLIBRARY_ALLOW_IMPORT=true
-OPENLIBRARY_SOURCE_PREFIX=yourbot   # the source_records prefix, agreed with Open Library
+OPENLIBRARY_SOURCE_PREFIX=yourbot   # optional; overrides the built-in prefix
 ```
+
+The prefix names the *catalogue* a record came from, not the person running the
+import — `ia`, `bwb` and `midcolumbia` are the shape of it, and the importer is
+already identified by the Open Library account the edit is attributed to. This
+installation stamps `pillarsdotnet_library` unless `OPENLIBRARY_SOURCE_PREFIX`
+says otherwise; another deployment that has agreed its own prefix with Open
+Library sets that variable. Setting it to an **empty** string means "no prefix",
+and no prefix means no import — the stamp is not optional, so nothing is
+offered without one. A prefix containing a colon, whitespace or a slash would
+split or mangle the stamp, and is refused the same way.
 
 With both set, a scan proposes a new record for any ISBN Open Library does not
 have, provided the book carries enough to identify it — Open Library accepts
 either a complete record (title, authors, publishers, publish date) or a title
 plus a strong identifier (ISBN/LCCN), and both need `source_records`.
+
+The `source_records` value is stamped as `<prefix>:<ISBN-13>`, always the
+canonical 13-digit form even for a book catalogued by its 10-digit ISBN, so one
+edition leaves one mark however it was entered. A book whose ISBN fails its
+check digit is not offered for import at all — an unverifiable identifier is not
+one to found a new public record on.
 
 Approving one runs it **twice**: first with `?preview=true`, which parses,
 validates and runs Open Library's own duplicate matching without saving. If the

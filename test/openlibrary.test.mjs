@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   proposalsFor, fetchEdition, sendField, FIELD_COMMENTS,
-  importAllowed, importPayload, sendImport,
+  importAllowed, importPayload, sendImport, sourcePrefix,
 } from '../openlibrary.js';
 
 const BOOK = {
@@ -182,12 +182,63 @@ test('an import payload carries a strong identifier and a source record', () => 
   assert.deepEqual(importPayload({ ...book, isbn: '0261102214' }, 'p').isbn_10, ['0261102214']);
 });
 
+// One edition, one stamp. A book catalogued by its 10-digit ISBN and the same
+// book catalogued by its 13-digit ISBN must leave the same mark in Open
+// Library, or our own imports look like two different sources to anyone
+// reading them back — including us.
+test('the source record stamp is single-valued across ISBN spellings', () => {
+  const ten = importPayload({ title: 'The Fellowship of the Ring', isbn: '0261102214' }, 'p');
+  const thirteen = importPayload({ title: 'The Fellowship of the Ring', isbn: '9780261102217' }, 'p');
+  assert.deepEqual(ten.source_records, ['p:9780261102217'], 'a 10-digit ISBN stamps the 13-digit form');
+  assert.deepEqual(ten.source_records, thirteen.source_records, 'both spellings stamp alike');
+  // Hyphens and a lowercase check digit are presentation, not identity.
+  const messy = importPayload({ title: 'Quidditch Through the Ages', isbn: '0-4394-2089-x' }, 'p');
+  assert.deepEqual(messy.source_records, ['p:9780439420891']);
+  assert.deepEqual(messy.isbn_10, ['043942089X'], "the printed ISBN keeps its form, with 'X' spelled one way");
+  // An ISBN that fails its check digit cannot be canonicalised, and an
+  // unverifiable identifier is not one to found a public record on.
+  assert.equal(importPayload({ title: 'Typo', isbn: '9780261102216' }, 'p'), null,
+    'a bad check digit is not imported');
+});
+
 test('nothing too thin to identify is ever offered for import', () => {
   assert.equal(importPayload({ title: 'No ISBN' }, 'p'), null, 'no identifier, no import');
   assert.equal(importPayload({ isbn: '9798892426183' }, 'p'), null, 'no title, no import');
-  // The source prefix is assigned by Open Library; without one we do not guess.
+  // The stamp is not optional: a caller that hands over no prefix gets no record.
   assert.equal(importPayload(BOOK, ''), null, 'no source prefix, no import');
-  assert.equal(importPayload(BOOK, undefined), null);
+});
+
+// The prefix names the catalogue an import came from, so it is settled once for
+// the installation rather than per book — but one installation is not every
+// installation, and a deployment that has agreed a different prefix with Open
+// Library must be able to say so without editing the source.
+test('the source prefix defaults, and the environment overrides it', () => {
+  const saved = process.env.OPENLIBRARY_SOURCE_PREFIX;
+  try {
+    delete process.env.OPENLIBRARY_SOURCE_PREFIX;
+    assert.equal(sourcePrefix(), 'pillarsdotnet_library', 'unconfigured falls back to the default');
+    assert.deepEqual(importPayload(BOOK).source_records, ['pillarsdotnet_library:9798892426183']);
+
+    process.env.OPENLIBRARY_SOURCE_PREFIX = 'otherbot';
+    assert.deepEqual(importPayload(BOOK).source_records, ['otherbot:9798892426183'],
+      'a configured prefix wins over the default');
+
+    // Empty is a deliberate "no prefix", not a request for the default back.
+    process.env.OPENLIBRARY_SOURCE_PREFIX = '';
+    assert.equal(sourcePrefix(), '');
+    assert.equal(importPayload(BOOK), null, 'switched off explicitly: no stamp, no import');
+
+    // A prefix that would split or mangle the stamp is refused rather than sent
+    // wrong — every reader of the field takes the prefix as value.split(':')[0].
+    for (const bad of ['two words', 'has:colon', '_leading', 'pillars/library']) {
+      process.env.OPENLIBRARY_SOURCE_PREFIX = bad;
+      assert.equal(sourcePrefix(), '', `${JSON.stringify(bad)} is not a usable prefix`);
+      assert.equal(importPayload(BOOK), null, `${JSON.stringify(bad)} is not offered for import`);
+    }
+  } finally {
+    if (saved === undefined) delete process.env.OPENLIBRARY_SOURCE_PREFIX;
+    else process.env.OPENLIBRARY_SOURCE_PREFIX = saved;
+  }
 });
 
 test('a refused import surfaces Open Library\'s own reason', async () => {

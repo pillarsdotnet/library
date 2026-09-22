@@ -36,6 +36,29 @@ const router = express.Router();
 // credentials are configured, so an unconfigured install behaves exactly as it
 // did before this existed — see auth.js for why that is the default.
 mountAuth(router, BASE);
+
+// Liveness, deliberately in front of the gate.
+//
+// The failover script claims the VIP only once the app answers, and the deploy
+// script reports success on the same signal. Both used to ask for `/`, which
+// stopped being a 200 the moment sign-in was switched on — so a healthy node
+// looked dead, the VIP went unassigned and its tailnet route was withdrawn.
+// The app was serving perfectly throughout; nothing could reach it.
+//
+// A probe is not a visitor. It carries no identity, it cannot be sent through
+// an OAuth redirect, and refusing it tells you nothing about the app. It does
+// touch the database, because an app that cannot read the library is not one
+// to hand the VIP to — express answering on its own proves only that node is
+// running.
+router.get('/healthz', (_req, res) => {
+  try {
+    db.prepare('SELECT 1').get();
+    res.type('text').send('ok');
+  } catch (e) {
+    res.status(503).type('text').send(`database unavailable: ${e.message}`);
+  }
+});
+
 router.use(requireAuth(BASE));
 
 // Serve index.html with the right <base> href injected for the mount point,

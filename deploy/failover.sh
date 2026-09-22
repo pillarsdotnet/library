@@ -256,7 +256,9 @@ vip_up_peer()   { on_peer vip-up; }
 vip_down_peer() { on_peer vip-down; }
 
 wait_healthy() {   # $1 = "local" | "peer"
-  url="http://127.0.0.1:30800/library/"
+  # /healthz, not /, because the app requires a signed-in address once Google
+  # credentials are configured and a probe has no account. See server.js.
+  url="http://127.0.0.1:30800/library/healthz"
   i=0
   while [ $i -lt 30 ]; do
     if [ "$1" = local ]; then

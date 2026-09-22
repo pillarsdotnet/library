@@ -22,7 +22,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 V=$(node -p "require('$ROOT/package.json').version")
 # Loopback-only publish port + BASE_PATH from the systemd unit, so the check has
 # to run on the node itself.
-HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:30800/library/}"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:30800/library/healthz}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-60}"
 
 echo "→ building $IMAGE:$V (+ :latest)"

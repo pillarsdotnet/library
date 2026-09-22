@@ -224,7 +224,12 @@ SESSION_SECRET=$(openssl rand -hex 32)   # or every restart signs everyone out
 TRUST_PROXY=true                         # behind nginx, so cookies can be Secure
 ```
 
-With those set, every page and every API route needs a signed-in address. A
+`/healthz` is the one route in front of the gate, and it has to be: the deploy
+and failover scripts claim the floating IP only when the app answers `200`, and
+a probe has no account to sign in with. Point any monitoring at that path rather
+than at `/`.
+
+With those set, every other page and API route needs a signed-in address. A
 browser is redirected to Google; anything else gets `401` and the sign-in URL,
 so a `fetch` reports "sign in required" rather than trying to parse Google's
 login page as JSON. Sign out at `/auth/logout`; `/auth/me` says who is signed in.

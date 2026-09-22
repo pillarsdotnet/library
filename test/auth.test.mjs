@@ -252,6 +252,22 @@ test('an unverified Google address is not an identity', async () => {
   nextIdentity = { email: 'owner@gmail.com', email_verified: true };
 });
 
+// The regression that took the site down: the failover script claims the VIP
+// only when the app answers 200, and it had been asking for a page that sign-in
+// turned into a 401. A healthy node looked dead, so the VIP was never assigned
+// and its tailnet route was withdrawn with it.
+test('the health probe answers without an account', async () => {
+  const r = await fetch(`${BASE}/healthz`);
+  assert.equal(r.status, 200, 'a probe carries no identity and must not be refused');
+  assert.equal(await r.text(), 'ok');
+
+  // It must not be a hole in the gate either: only this one path is open.
+  for (const path of ['/api/books', '/api/meta', '/', '/healthz/../api/books']) {
+    const gated = await fetch(BASE + path, { redirect: 'manual' });
+    assert.notEqual(gated.status, 200, `${path} is still behind the gate`);
+  }
+});
+
 test('cookie parsing survives the shapes a browser actually sends', () => {
   assert.deepEqual(parseCookies('a=1; b=2'), { a: '1', b: '2' });
   assert.deepEqual(parseCookies(''), {});

@@ -5,6 +5,25 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.0.4] — 2026-09-22
+
+### Fixed
+
+- **Sign-in took the site down on the first deploy that used it.** The failover
+  script claims the floating IP only once the app answers `200`, and it asked
+  for `/library/` — which sign-in turns into a `401`. A perfectly healthy node
+  looked dead, so the VIP was never assigned and `vip_down_local` had already
+  withdrawn its tailnet route, which is what reaches phones off the LAN. nginx
+  stayed bound to the VIP through `ip_nonlocal_bind`, so connections hung rather
+  than being refused, and the address did not even ping.
+
+  There is now a `/healthz` route, mounted in front of the gate, and
+  `deploy.sh`, `failover.sh` and `failover-peer.sh` all ask for it. A probe
+  carries no identity and cannot be sent through an OAuth redirect, so refusing
+  it says nothing about the app. It reads from the database rather than merely
+  answering, because an app that cannot read the library is not one to hand the
+  VIP to.
+
 ## [4.0.3] — 2026-09-22
 
 ### Added

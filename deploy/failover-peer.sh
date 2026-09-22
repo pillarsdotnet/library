@@ -23,7 +23,7 @@ DB=$DATA_DIR/library.db
 COVERS_DIR=$DATA_DIR/covers
 OWNER_FILE=$DATA_DIR/OWNER
 IMAGE=library.local/home-library:latest
-HEALTH_URL=http://127.0.0.1:30800/library/
+HEALTH_URL=http://127.0.0.1:30800/library/healthz
 VIP=192.168.144.1
 # Must match ACTIVE_FLAG in failover.sh: the app unit will not start without it.
 ACTIVE_FLAG=/run/home-library-active

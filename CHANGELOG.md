@@ -5,6 +5,17 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.1.1] — 2026-09-22
+
+### Changed
+
+- **The cover row numbers its two steps.** Saving the image is not optional
+  before opening Open Library's form, and skipping it is a dead end rather than
+  an error: the form opens a file picker, and a picker cannot offer a file that
+  was never saved. The buttons now read **1 · ↓ Save image** and **2 · Upload it
+  there ↗**, with a line saying that the picker opens *Photos* on a phone while
+  the saved image is under *Files → Downloads*.
+
 ## [4.1.0] — 2026-09-22
 
 ### Added

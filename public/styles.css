@@ -442,6 +442,9 @@ dialog::backdrop { background: rgba(20, 15, 30, 0.55); }
 .contrib-compare figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .contrib-compare img { width: 64px; height: auto; border-radius: 3px; border: 1px solid var(--border); }
 .contrib-compare figcaption { font-size: 0.72rem; color: var(--muted); }
+/* The cover row's instructions: a full-width line under its buttons rather than
+   a fourth thing competing with them for space. */
+.contrib-howto { flex-basis: 100%; font-size: 0.8rem; line-height: 1.35; }
 
 .crop-dialog { width: min(560px, 96vw); }
 .crop-area { position: relative; background: #000; border-radius: 8px; overflow: hidden; }

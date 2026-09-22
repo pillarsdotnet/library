@@ -1834,10 +1834,17 @@ function contribActions(r, status) {
   }
   if (r.field === 'cover') {
     const file = `${r.title.replace(/[^\w]+/g, '-').replace(/^-|-$/g, '')}-${r.olid}.jpg`;
-    return `${r.copy_id ? `<a class="btn" download="${esc(file)}" href="api/books/${r.copy_id}/cover">↓ Image</a>` : ''}
+    // Numbered, because the order is not optional and getting it wrong is a
+    // dead end rather than an error: Open Library's form opens a file picker,
+    // and a picker cannot offer a file that was never saved. The hint names the
+    // picker's wrong turn too — on a phone it opens Photos, and a downloaded
+    // image is in Files, under Downloads.
+    return `${r.copy_id ? `<a class="btn" download="${esc(file)}" href="api/books/${r.copy_id}/cover">1 · ↓ Save image</a>` : ''}
             <a class="btn" target="_blank" rel="noopener"
-               href="https://openlibrary.org/books/${encodeURIComponent(r.olid)}/add-cover">Upload on Open Library ↗</a>
-            <button type="button" data-act="decline">Skip</button>`;
+               href="https://openlibrary.org/books/${encodeURIComponent(r.olid)}/add-cover">2 · Upload it there ↗</a>
+            <button type="button" data-act="decline">Skip</button>
+            <span class="hint contrib-howto">Open Library takes covers only from a signed-in person, never from a program.
+              Save the image first — its form opens <em>Photos</em>, and the saved file is under <em>Files → Downloads</em>.</span>`;
   }
   return `<button type="button" class="primary" data-act="approve" ${status.configured ? '' : 'disabled'}>Send</button>
           <button type="button" data-act="decline">Skip</button>`;

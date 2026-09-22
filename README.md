@@ -447,6 +447,12 @@ one to found a new public record on.
 > browser goes through without a challenge at all. So a cover row offers the
 > image and a link to the right `add-cover` page rather than a Send button that
 > can only fail. Every other field goes through the JSON API and is unaffected.
+>
+> Save the image **before** opening their form: it opens a file picker, and on a
+> phone that picker opens *Photos* while a saved image lands under
+> *Files → Downloads*. The first visit may also be interrupted by their human
+> check and leave you on the book page rather than the upload form — tapping the
+> same link again goes straight there.
 
 The queue runs the other way too. When a scan finds Open Library has acquired a
 cover for an edition you photographed, it proposes adopting theirs: the row

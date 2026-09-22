@@ -5,6 +5,26 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.2.0] — 2026-09-22
+
+### Added
+
+- **3 · Done — check**, on a cover row. A cover leaves this app through Open
+  Library's own form, in your browser, so nothing here can know the upload
+  happened. The only other way to clear the row was **Skip**, which records a
+  decision never to offer that book again — the opposite of what actually
+  happened. This asks Open Library instead: one request, running the same review
+  a sweep does, so "this row is done" and "everything is up to date" can never
+  disagree about what a gap is. A row whose cover really arrived closes as
+  `satisfied` and the adoption proposal appears in its place; an upload that
+  silently failed leaves the row exactly where it was and says so, which is the
+  point of checking rather than dismissing.
+
+### Changed
+
+- The per-book half of a scan is now one function, shared by the sweep and by
+  the single-row re-check, rather than a loop body only the sweep could reach.
+
 ## [4.1.1] — 2026-09-22
 
 ### Changed

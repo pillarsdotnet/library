@@ -453,6 +453,11 @@ one to found a new public record on.
 > *Files → Downloads*. The first visit may also be interrupted by their human
 > check and leave you on the book page rather than the upload form — tapping the
 > same link again goes straight there.
+>
+> When the upload is done, **3 · Done — check** asks Open Library whether it
+> arrived and closes the row if it did. Use that rather than **Skip**: skipping
+> records a decision never to offer the book again, and an upload that failed
+> silently would disappear with it.
 
 The queue runs the other way too. When a scan finds Open Library has acquired a
 cover for an edition you photographed, it proposes adopting theirs: the row

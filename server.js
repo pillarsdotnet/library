@@ -534,30 +534,35 @@ router.delete('/api/books/:id', (req, res) => {
 // Look at books with an ISBN and queue up anything Open Library is missing that
 // we can answer. Books already fully proposed cost one request each, so this is
 // deliberately a button rather than something that runs on every save.
-router.post('/api/ol-contributions/scan', async (req, res) => {
-  const limit = Math.min(Number(req.body?.limit) || 25, 100);
-  // The default sweep is "whatever I touched most recently", which never
-  // reaches a book catalogued a year ago. `scope: 'covers'` walks the editions
-  // carrying a photograph instead — the only ones either cover proposal can
-  // apply to, and a far smaller set than the whole library.
-  const coversOnly = req.body?.scope === 'covers';
-  // The series tag names a series, not a position, so one title per book is all
-  // that is ever sent — the lowest-ordered one when a book sits in several.
-  // Over editions, not copies: the proposal edits Open Library's record for an
-  // ISBN, so owning three copies of a book is no reason to scan it three times.
-  const books = db.prepare(`
-    SELECT e.*, e.id AS edition_id, COALESCE(e.isbn13, e.isbn_text) AS isbn, (
-      SELECT s.title FROM series_books sb JOIN series s ON s.id = sb.series
-      WHERE sb.edition = e.id ORDER BY sb."order" LIMIT 1
-    ) AS series_title,
-    (SELECT c.cover_file FROM copies c WHERE c.edition_id = e.id AND c.cover_file IS NOT NULL LIMIT 1) AS copy_cover
-    FROM editions e
-    -- Any ISBN we hold, not just a verifiable one: an ISBN that fails its check
-    -- digit is still worth asking Open Library about, and the answer ("unknown")
-    -- is more useful than silently skipping the book.
-    WHERE COALESCE(e.isbn13, e.isbn_text) IS NOT NULL AND COALESCE(e.isbn13, e.isbn_text) <> ''
-      AND (0 = ? OR EXISTS (SELECT 1 FROM copies c2 WHERE c2.edition_id = e.id AND c2.cover_file IS NOT NULL))
-    ORDER BY e.updated_at DESC LIMIT ?`).all(coversOnly ? 1 : 0, limit);
+// The books a sweep considers. The series tag names a series, not a position,
+// so one title per book is all that is ever sent — the lowest-ordered one when
+// a book sits in several. Over editions, not copies: the proposal edits Open
+// Library's record for an ISBN, so owning three copies is no reason to ask
+// about it three times.
+//
+// `coversOnly` walks the editions carrying a photograph instead of whatever was
+// touched most recently — the only ones either cover proposal can apply to, and
+// a far smaller set than the whole library. `onlyEdition` narrows it to one,
+// which is what re-checking a single row after an upload does.
+const SCAN_BOOKS = `
+  SELECT e.*, e.id AS edition_id, COALESCE(e.isbn13, e.isbn_text) AS isbn, (
+    SELECT s.title FROM series_books sb JOIN series s ON s.id = sb.series
+    WHERE sb.edition = e.id ORDER BY sb."order" LIMIT 1
+  ) AS series_title,
+  (SELECT c.cover_file FROM copies c WHERE c.edition_id = e.id AND c.cover_file IS NOT NULL LIMIT 1) AS copy_cover
+  FROM editions e
+  -- Any ISBN we hold, not just a verifiable one: an ISBN that fails its check
+  -- digit is still worth asking Open Library about, and the answer ("unknown")
+  -- is more useful than silently skipping the book.
+  WHERE COALESCE(e.isbn13, e.isbn_text) IS NOT NULL AND COALESCE(e.isbn13, e.isbn_text) <> ''
+    AND (0 = @coversOnly OR EXISTS (SELECT 1 FROM copies c2 WHERE c2.edition_id = e.id AND c2.cover_file IS NOT NULL))
+    AND (@onlyEdition IS NULL OR e.id = @onlyEdition)
+  ORDER BY e.updated_at DESC LIMIT @limit`;
+
+// One book against Open Library: retire what is no longer a gap, queue what is.
+// Shared by the sweep and by the single-row re-check, so that "this row is done"
+// and "everything is up to date" can never disagree about what a gap is.
+async function reviewAgainstOpenLibrary(book, counts) {
   const already = db.prepare('SELECT 1 FROM ol_contributions WHERE edition_id = ? AND field = ?');
   // A proposal is a claim about what Open Library was missing when we looked.
   // Someone else filling that gap in the meantime is the good outcome, but the
@@ -570,8 +575,7 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
                              reviewed_at = datetime('now') WHERE id = ?`);
   const add = db.prepare(`INSERT OR IGNORE INTO ol_contributions (edition_id, olid, field, value)
                           VALUES (?, ?, ?, ?)`);
-  let scanned = 0, queued = 0, unknown = 0, satisfied = 0;
-  for (const book of books) {
+  {
     // Only a photograph one of our copies actually carries is ours to offer.
     // The edition's own cover_url is stock artwork, quite possibly Open
     // Library's own, and uploading that back to them proposes nothing.
@@ -579,17 +583,17 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
     book.cover_url = book.copy_cover;
     let edition = null;
     try { edition = await fetchEdition(book.isbn); } catch { edition = null; }
-    scanned += 1;
+    counts.scanned += 1;
     if (!edition) {
-      unknown += 1;
+      counts.unknown += 1;
       // Open Library has no edition for this ISBN. Adding one is creating a
       // record rather than filling a blank, so it happens only when explicitly
       // switched on — and still only as a proposal.
       if (importAllowed() && !already.get(book.edition_id, 'import') && importPayload(book)) {
         add.run(book.edition_id, 'NEW', 'import', book.isbn);
-        queued += 1;
+        counts.queued += 1;
       }
-      continue;
+      return counts;
     }
     const proposals = proposalsFor(book, edition.record, edition.work);
     const stillAGap = new Set(proposals.map((p) => p.field));
@@ -598,17 +602,50 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
     // exists. Closed as `satisfied`, which also stops it being re-proposed,
     // since `already` counts a row in any state.
     for (const open of openRows.all(book.edition_id)) {
-      if (!stillAGap.has(open.field)) { retire.run(open.id); satisfied += 1; }
+      if (!stillAGap.has(open.field)) { retire.run(open.id); counts.satisfied += 1; }
     }
     for (const p of proposals) {
       if (already.get(book.edition_id, p.field)) continue;
       // Each proposal records the record it would edit: the series tag belongs
       // to the work, everything else to the edition.
       add.run(book.edition_id, p.target === 'work' ? edition.workOlid : edition.olid, p.field, p.value);
-      queued += 1;
+      counts.queued += 1;
     }
   }
-  res.json({ scanned, queued, unknown, satisfied });
+  return counts;
+}
+
+const noCounts = () => ({ scanned: 0, queued: 0, unknown: 0, satisfied: 0 });
+
+router.post('/api/ol-contributions/scan', async (req, res) => {
+  const limit = Math.min(Number(req.body?.limit) || 25, 100);
+  const books = db.prepare(SCAN_BOOKS).all({
+    coversOnly: req.body?.scope === 'covers' ? 1 : 0, onlyEdition: null, limit,
+  });
+  const counts = noCounts();
+  for (const book of books) await reviewAgainstOpenLibrary(book, counts);
+  res.json(counts);
+});
+
+// "I have just done that by hand — is it there?"
+//
+// A cover leaves this app through Open Library's own form, in your browser, so
+// nothing here can know the upload happened. The alternative to this button is
+// Skip, which records a decision never to offer the book again — the opposite
+// of what actually happened. This asks Open Library instead: one request, the
+// same review a sweep does, so "this row is done" and "everything is up to
+// date" can never disagree. An upload that silently failed leaves the row
+// exactly where it was, which is the point of checking rather than dismissing.
+router.post('/api/ol-contributions/:id/recheck', async (req, res) => {
+  const row = db.prepare(`SELECT * FROM ol_contributions WHERE id = ? AND status IN ('pending', 'failed')`)
+    .get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const book = db.prepare(SCAN_BOOKS).get({ coversOnly: 0, onlyEdition: row.edition_id, limit: 1 });
+  if (!book) return res.status(409).json({ error: 'This book has no ISBN to look up.' });
+
+  const counts = await reviewAgainstOpenLibrary(book, noCounts());
+  const still = db.prepare('SELECT status FROM ol_contributions WHERE id = ?').get(row.id);
+  res.json({ ...counts, closed: still.status !== 'pending' && still.status !== 'failed', status: still.status });
 });
 
 router.get('/api/ol-contributions', (req, res) => {

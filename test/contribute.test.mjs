@@ -278,3 +278,36 @@ test('the covers sweep looks only at books carrying a photograph', async () => {
     .filter((b) => (b.cover_url || '').startsWith('api/books/')).length;
   assert.equal(scanned, withPhotos, 'every photographed book and nothing else');
 });
+
+// The cover leaves this app through Open Library's own form, in a browser, so
+// nothing here can know the upload happened. Skip would record a decision never
+// to offer the book again, which is the opposite of what happened.
+test('a cover row can be re-checked after a by-hand upload, and only closes if it really arrived', async () => {
+  stubRecord = { ...stubRecord, covers: undefined };   // Open Library has no cover
+  const made = await (await post('/api/books', {
+    title: 'Uploaded By Hand', isbn: '9780000000033', cover_url: dataUrl('hand'),
+  })).json();
+
+  await post('/api/ol-contributions/scan', { scope: 'covers', limit: 100 });
+  const row = (await queue()).find((r) => r.edition_id === made.edition_id && r.field === 'cover');
+  assert.ok(row, 'the cover is offered while Open Library lacks one');
+
+  // Checking before the upload has landed must leave the row exactly as it was:
+  // a re-check that dismissed on request would lose a failed upload silently.
+  const tooSoon = await (await post(`/api/ol-contributions/${row.id}/recheck`)).json();
+  assert.equal(tooSoon.closed, false, 'nothing to close yet');
+  assert.equal((await queue()).some((r) => r.id === row.id), true, 'still waiting');
+
+  // Now it arrives, by a route this app cannot see.
+  stubRecord = { ...stubRecord, covers: [4242] };
+  const done = await (await post(`/api/ol-contributions/${row.id}/recheck`)).json();
+  assert.equal(done.closed, true);
+  assert.equal(done.status, 'satisfied', 'recorded as answered, not declined');
+  assert.equal((await queue()).some((r) => r.id === row.id), false, 'gone from the queue');
+
+  // And the same look offers the mirror image, exactly as a full sweep would.
+  const adopt = (await queue()).find((r) => r.edition_id === made.edition_id && r.field === 'cover_from_ol');
+  assert.ok(adopt, 'the adoption is proposed by the same re-check');
+  assert.equal(adopt.value, 'https://covers.openlibrary.org/b/id/4242-L.jpg');
+  stubRecord = { ...stubRecord, covers: [999] };
+});

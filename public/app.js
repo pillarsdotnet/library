@@ -1842,9 +1842,11 @@ function contribActions(r, status) {
     return `${r.copy_id ? `<a class="btn" download="${esc(file)}" href="api/books/${r.copy_id}/cover">1 · ↓ Save image</a>` : ''}
             <a class="btn" target="_blank" rel="noopener"
                href="https://openlibrary.org/books/${encodeURIComponent(r.olid)}/add-cover">2 · Upload it there ↗</a>
+            <button type="button" class="primary" data-act="recheck">3 · Done — check</button>
             <button type="button" data-act="decline">Skip</button>
             <span class="hint contrib-howto">Open Library takes covers only from a signed-in person, never from a program.
-              Save the image first — its form opens <em>Photos</em>, and the saved file is under <em>Files → Downloads</em>.</span>`;
+              Save the image first — its form opens <em>Photos</em>, and the saved file is under <em>Files → Downloads</em>.
+              <strong>Done — check</strong> asks Open Library whether it arrived; <strong>Skip</strong> means never offer this book again.</span>`;
   }
   return `<button type="button" class="primary" data-act="approve" ${status.configured ? '' : 'disabled'}>Send</button>
           <button type="button" data-act="decline">Skip</button>`;
@@ -1861,9 +1863,17 @@ $('#contributeList').addEventListener('click', async (e) => {
   }
   btn.disabled = true;
   try {
-    await api(`/ol-contributions/${id}/${btn.dataset.act}`, { method: 'POST' });
+    const result = await api(`/ol-contributions/${id}/${btn.dataset.act}`, { method: 'POST' });
+    // A re-check that finds nothing looks identical to one that was never
+    // clicked, so it says so. The usual cause is having closed Open Library's
+    // form without submitting it.
+    if (btn.dataset.act === 'recheck' && !result.closed) {
+      alert('Open Library still shows no cover for this book.\n\n'
+        + 'If you have just uploaded one, give it a moment and check again. '
+        + 'Otherwise the upload did not go through.');
+    }
   } catch (err) {
-    alert(`Could not send: ${err.message}`);
+    alert(`Could not ${btn.dataset.act === 'recheck' ? 'check' : 'send'}: ${err.message}`);
   }
   await renderContributions();
 });

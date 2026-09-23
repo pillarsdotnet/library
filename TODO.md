@@ -23,10 +23,16 @@ someone else entered, which is exactly what rule 1 forbids.
 ### First, wait
 
 The upstream fix (#13708) makes this whole question moot: if they stop matching
-JSON write bodies, the two rows go through untouched and no rule change is
-needed. Do nothing until the week is up. **One example is not a pattern worth
-building for** — if no second case has appeared and #13708 is unfixed, still
-lean toward leaving it.
+JSON write bodies, the affected rows go through untouched and no rule change is
+needed. Do nothing until the week is up.
+
+**Update 2026-09-23: a second case has appeared** — `OL27190384M` ("A Call to
+Arms"), same `"--` signature, reported as a comment on #13708. So "one example
+is not a pattern" no longer applies; this is a class of MARC-imported records,
+and the count will only grow. That strengthens the case for building the
+exception if #13708 goes unanswered — but it does **not** change the shape of
+what to build or the instinct to prefer the upstream fix. Still wait out the
+week first.
 
 ### If we do build it
 
@@ -54,7 +60,10 @@ makes it 200 — not an opinion about the text. Constraints that must hold:
 - **Log it like the destructive actions it resembles** — see
   `ol_send_attempts` and the `applied`/`satisfied` states.
 
-### If a second case never appears
+### If it stays a handful of cases
 
-Drop the idea. Strip the trailing `"--` from `OL27239756M`'s description by hand
-in the browser, re-run its two field sends, and leave rule 1 as it is.
+Even with two (now `OL27239756M` and `OL27190384M`), building machinery may be
+more than it is worth. The by-hand path still works: strip the trailing `"--`
+from each description in the browser, re-run that record's field sends, and
+leave rule 1 as it is. Reserve building the exception for when the by-hand list
+is long enough to be a chore, not merely non-empty.

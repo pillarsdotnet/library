@@ -142,6 +142,69 @@ test('sending re-checks the live record and refuses to overwrite a filled blank'
   );
 });
 
+// The internet drops requests, and a dropped request is not a refusal. A send
+// that throws must be retried; one the catalogue answered — even with a 403 —
+// must not, or a genuine rejection turns into three.
+test('a network blip on the send is retried, and a real rejection is not', async () => {
+  const netFail = () => { const e = new Error('fetch failed'); e.cause = { code: 'ECONNRESET' }; return e; };
+  const blank = { key: '/books/OL1M', title: 'X' };
+
+  // GET throws once, then the read and the PUT both succeed.
+  let getThrows = 1;
+  const calls1 = [];
+  const flaky = async (url, opts = {}) => {
+    calls1.push(opts.method || 'GET');
+    if (!opts.method && getThrows-- > 0) throw netFail();
+    return opts.method === 'PUT' ? { ok: true, status: 200 } : { ok: true, json: async () => blank };
+  };
+  assert.equal(await sendField('OL1M', 'number_of_pages', '342', 'c', 'x', flaky), true, 'a retried read recovers');
+
+  // PUT throws once, then succeeds; the second turn re-reads (still blank) and writes.
+  let putThrows = 1;
+  const calls2 = [];
+  const flakyPut = async (url, opts = {}) => {
+    calls2.push(opts.method || 'GET');
+    if (opts.method === 'PUT' && putThrows-- > 0) throw netFail();
+    return opts.method === 'PUT' ? { ok: true, status: 200 } : { ok: true, json: async () => blank };
+  };
+  assert.equal(await sendField('OL1M', 'number_of_pages', '342', 'c', 'x', flakyPut), true, 'a retried write recovers');
+  assert.equal(calls2.filter((m) => m === 'GET').length, 2, 're-read before the second write');
+  assert.equal(calls2.filter((m) => m === 'PUT').length, 2);
+
+  // A 403 is the catalogue's answer, not a blip: one attempt, then stop.
+  let puts = 0;
+  const rejected = async (url, opts = {}) => {
+    if (opts.method === 'PUT') { puts += 1; return { ok: false, status: 403, text: async () => 'nope' }; }
+    return { ok: true, json: async () => blank };
+  };
+  await assert.rejects(() => sendField('OL1M', 'number_of_pages', '342', 'c', 'x', rejected), /rejected the edit \(403\)/);
+  assert.equal(puts, 1, 'a rejection is never retried');
+
+  // A write that landed but whose reply was lost: the next re-read shows it
+  // filled, and the send reports success without writing a second copy.
+  let seq = 0;
+  const landedButLost = async (url, opts = {}) => {
+    if (opts.method === 'PUT') { seq += 1; throw netFail(); }         // reply lost
+    return { ok: true, json: async () => (seq === 0
+      ? { key: '/books/OL1M', title: 'X' }                            // first read: blank
+      : { key: '/books/OL1M', title: 'X', number_of_pages: 342 }) };  // then: filled
+  };
+  assert.equal(await sendField('OL1M', 'number_of_pages', '342', 'c', 'x', landedButLost), true,
+    'a landed-but-lost write is seen on re-read, not sent again');
+  assert.equal(seq, 1, 'exactly one PUT was attempted');
+});
+
+// After exhausting retries the raw network error is thrown, carrying no HTTP
+// status — which is how the approve handler files it as a network failure
+// rather than a rejection.
+test('a send that never gets through throws a status-less network error', async () => {
+  const netFail = () => { const e = new Error('fetch failed'); e.cause = { code: 'ENOTFOUND' }; return e; };
+  const dead = async () => { throw netFail(); };
+  const err = await sendField('OL1M', 'number_of_pages', '342', 'c', 'x', dead, { attempts: 2 }).then(() => null, (e) => e);
+  assert.match(err.message, /fetch failed/);
+  assert.equal(err.status, undefined, 'no HTTP status, so the log records it as a network failure');
+});
+
 test('a successful send PUTs the record back with the edit comment attached', async () => {
   const calls = [];
   const doFetch = async (url, opts = {}) => {

@@ -472,6 +472,11 @@ Library, so clicking it repeatedly walks the whole library 25 books at a time
 rather than re-reading the same ones. **⟳ Check my photos** narrows the same
 sweep to the editions carrying a photograph, whenever they were catalogued.
 
+A send that fails on the network — a dropped connection rather than a refusal —
+is retried a few times before the row is marked failed, so a passing blip does
+not need a manual retry. A refusal from Open Library (any HTTP status) is taken
+at its word and not retried.
+
 The queue lists everything still waiting for a person — proposals not yet acted
 on, and ones whose send failed, which carry the reason. `?status=` on
 `/api/ol-contributions` narrows it to any set of states.

@@ -5,6 +5,22 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.4.0] — 2026-09-22
+
+### Added
+
+- **A dropped request is retried instead of counted as a rejection.** Six field
+  sends failed in one session with a bare `fetch failed` — a network error that
+  never reached Open Library, which nonetheless dropped each row into `failed`
+  looking just like a refusal. A send now retries a *thrown* fetch a few times
+  with a short backoff, while a *returned* response — even a `403` — is still
+  taken as Open Library's answer and never retried. `login` retries the same
+  way. Retrying a write is made safe by re-reading the record before every
+  attempt: if a previous PUT actually landed and only its reply was lost, the
+  field now reads as filled and the send stops rather than writing twice. When
+  every attempt is exhausted the raw network error is thrown, carrying no HTTP
+  status, so it is still logged as a network failure rather than a rejection.
+
 ## [4.3.0] — 2026-09-22
 
 ### Added

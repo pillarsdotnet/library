@@ -24,6 +24,36 @@ import { canonicalIsbn } from './isbn.js';
 
 const OL = process.env.OPENLIBRARY_BASE || 'https://openlibrary.org';
 
+// Contributing crosses the public internet, and the internet drops requests.
+// Six sends failed in one session on 2026-09-22 with a bare `fetch failed` — a
+// network error that never reached Open Library, indistinguishable in the queue
+// from a real rejection except that it carried no HTTP status. Every one of the
+// six records was still blank afterwards, so nothing had landed; they simply
+// needed trying again.
+//
+// The distinction that makes retrying safe is the one the queue already draws:
+// a *thrown* fetch is a blip and gets another go; a *returned* response — any
+// status — is Open Library's actual answer and is never retried, because a 403
+// or a 400 will say the same thing however many times it is asked.
+const RETRY_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = Number(process.env.OL_RETRY_BACKOFF_MS ?? 400);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Retry a single fetch that THROWS — a network failure with no response. A
+// response of any status is handed straight back for the caller to judge. Only
+// safe for a request that can be repeated without consequence: a read, or a
+// login that just mints another session. A write goes through sendField's own
+// loop instead, which re-reads before each attempt so a landed-but-lost write
+// is seen rather than sent twice.
+async function fetchRetryingNetwork(doFetch, url, opts, attempts = RETRY_ATTEMPTS) {
+  let lastErr;
+  for (let i = 1; i <= attempts; i += 1) {
+    try { return await doFetch(url, opts); }
+    catch (e) { lastErr = e; if (i < attempts) await sleep(RETRY_BACKOFF_MS * i); }
+  }
+  throw lastErr;
+}
+
 // Fields we are willing to offer, in the order a reviewer sees them. `book` is
 // a row from our books table; `ol` is a parsed Open Library edition record.
 //
@@ -294,7 +324,8 @@ export async function login(doFetch = globalThis.fetch) {
   const access = process.env.OPENLIBRARY_ACCESS_KEY;
   const secret = process.env.OPENLIBRARY_SECRET_KEY;
   if (!access || !secret) throw new Error('Open Library credentials are not configured');
-  const r = await doFetch(`${OL}/account/login.json`, {
+  // Idempotent enough to retry: a repeat just mints another session cookie.
+  const r = await fetchRetryingNetwork(doFetch, `${OL}/account/login.json`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ access, secret }),
@@ -309,28 +340,64 @@ export async function login(doFetch = globalThis.fetch) {
 // Add one field to an edition. Read-modify-write against the live record, and
 // refuse at the last moment if the blank has been filled since the proposal was
 // queued — a queue can sit for days, and someone else may have got there first.
-export async function sendField(olid, field, value, comment, cookie, doFetch = globalThis.fetch) {
+export async function sendField(olid, field, value, comment, cookie, doFetch = globalThis.fetch,
+  { attempts = RETRY_ATTEMPTS } = {}) {
   const spec = FIELDS.find((f) => f.name === field);
   if (!spec) throw new Error(`unknown field ${field}`);
   // The series tag is a subject on the work; everything else is on the edition.
   const path = spec.target === 'work' ? `/works/${olid}` : `/books/${olid}`;
 
-  const r = await doFetch(`${OL}${path}.json`, { headers: { Accept: 'application/json' } });
-  if (!r.ok) throw new Error(`could not re-read ${olid} (${r.status})`);
-  const record = await r.json();
-  if (spec.has(record)) throw new Error(`${olid} already has ${field} — not overwriting`);
+  // Re-read, then write, and retry the pair on a network throw. Re-reading
+  // before every attempt is what makes retrying a write safe: if a previous
+  // attempt's PUT actually landed and only its reply was lost, this read now
+  // shows the field filled and we stop, rather than writing it twice.
+  let putAttempted = false;
+  let lastNetErr = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let record;
+    try {
+      const r = await doFetch(`${OL}${path}.json`, { headers: { Accept: 'application/json' } });
+      if (!r.ok) throw new Error(`could not re-read ${olid} (${r.status})`);
+      record = await r.json();
+    } catch (e) {
+      // A returned non-ok response became a thrown Error above and must not be
+      // retried; only a genuine network throw (no response at all) may be.
+      if (e.status === undefined && !/could not re-read/.test(e.message) && attempt < attempts) {
+        lastNetErr = e; await sleep(RETRY_BACKOFF_MS * attempt); continue;
+      }
+      throw e;
+    }
 
-  const body = spec.apply
-    ? { ...spec.apply(record, value), _comment: comment }
-    : { ...record, [field]: field === 'number_of_pages' ? Number(value) : value, _comment: comment };
-  const payload = JSON.stringify(body);
-  const put = await doFetch(`${OL}${path}.json`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: payload,
-  });
-  if (!put.ok) throw await sendFailure(put, payload);
-  return true;
+    if (spec.has(record)) {
+      // Filled since we proposed it. If we have already sent a PUT this call,
+      // that lost write is what filled it — success. Otherwise somebody else
+      // did, and filling a blank was never licence to overwrite them.
+      if (putAttempted) return true;
+      throw new Error(`${olid} already has ${field} — not overwriting`);
+    }
+
+    const body = spec.apply
+      ? { ...spec.apply(record, value), _comment: comment }
+      : { ...record, [field]: field === 'number_of_pages' ? Number(value) : value, _comment: comment };
+    const payload = JSON.stringify(body);
+    putAttempted = true;
+    let put;
+    try {
+      put = await doFetch(`${OL}${path}.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: payload,
+      });
+    } catch (e) {
+      // Network throw on the write: try again. The re-read at the top of the
+      // next turn catches the case where it did land after all.
+      if (attempt < attempts) { lastNetErr = e; await sleep(RETRY_BACKOFF_MS * attempt); continue; }
+      throw e;
+    }
+    if (!put.ok) throw await sendFailure(put, payload);
+    return true;
+  }
+  throw lastNetErr ?? new Error(`could not send ${field} for ${olid}`);
 }
 
 // Open Library's front end answers some requests itself, and a bare status code

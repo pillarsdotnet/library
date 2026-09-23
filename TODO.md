@@ -62,8 +62,14 @@ makes it 200 — not an opinion about the text. Constraints that must hold:
 
 ### If it stays a handful of cases
 
-Even with two (now `OL27239756M` and `OL27190384M`), building machinery may be
-more than it is worth. The by-hand path still works: strip the trailing `"--`
-from each description in the browser, re-run that record's field sends, and
-leave rule 1 as it is. Reserve building the exception for when the by-hand list
-is long enough to be a chore, not merely non-empty.
+Even with a few (so far `OL27239756M`, `OL27190384M`, and the work
+`OL19754718W`), building machinery may be more than it is worth. The by-hand
+path still works: strip the trailing quote-and-dashes from each description in
+the browser, re-run that record's field sends, and leave rule 1 as it is.
+Reserve building the exception for when the by-hand list is long enough to be a
+chore, not merely non-empty.
+
+Note the third case is a *work* (`/works/…`) blocking a `series:` tag, not an
+edition blocking a physical field — so an exception, if built, has to cover both
+record types, and match the signature with optional whitespace (`["'] \s* --`),
+not just the adjacent `"--`.

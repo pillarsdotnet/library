@@ -229,6 +229,11 @@ and failover scripts claim the floating IP only when the app answers `200`, and
 a probe has no account to sign in with. Point any monitoring at that path rather
 than at `/`.
 
+The web app manifest and the icons it lists are open too. A browser fetches the
+manifest without the session cookie, and Android fetches the icons from Google's
+servers when it installs the app, so behind the gate "Add to Home screen" gets
+nothing. None of them says anything about the library.
+
 With those set, every other page and API route needs a signed-in address. A
 browser is redirected to Google; anything else gets `401` and the sign-in URL,
 so a `fetch` reports "sign in required" rather than trying to parse Google's

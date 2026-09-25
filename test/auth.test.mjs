@@ -272,6 +272,24 @@ test('the health probe answers without an account', async () => {
   }
 });
 
+// The manifest is fetched without the session cookie, so behind the gate it
+// was a 401 for everyone and the app could not be added to a home screen.
+test('the manifest and its icons load without an account', async () => {
+  const r = await fetch(`${BASE}/manifest.webmanifest`);
+  assert.equal(r.status, 200, 'a browser sends no cookie for the manifest');
+  const manifest = await r.json();
+  for (const icon of manifest.icons) {
+    const i = await fetch(`${BASE}/${icon.src}`);
+    assert.equal(i.status, 200, `${icon.src} is fetched with no cookie when the app is installed`);
+  }
+
+  // Only those files: the rest of public/ stays behind the gate.
+  for (const path of ['/app.js', '/styles.css', '/index.html', '/manifest.webmanifest/../app.js']) {
+    const gated = await fetch(BASE + path, { redirect: 'manual' });
+    assert.notEqual(gated.status, 200, `${path} is still behind the gate`);
+  }
+});
+
 // ─── how long a session lasts ───────────────────────────────────────────────
 
 test('a day count that is not a number falls back rather than never expiring', () => {

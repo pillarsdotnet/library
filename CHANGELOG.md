@@ -5,6 +5,17 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.4.1] — 2026-09-25
+
+### Fixed
+
+- **The app can be added to a home screen again with sign-in on.** The
+  manifest was behind the sign-in gate, and a browser never sends the session
+  cookie when it fetches one, so every request for it got `401`, even from a
+  signed-in phone. The manifest and the icons it lists are now served in front
+  of the gate, like `/healthz`. The list comes from the manifest itself, so an
+  icon added later is covered too. The rest of `public/` still needs sign-in.
+
 ## [4.4.0] — 2026-09-22
 
 ### Added

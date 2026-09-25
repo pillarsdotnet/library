@@ -59,6 +59,21 @@ router.get('/healthz', (_req, res) => {
   }
 });
 
+// The web app manifest and the icons it names, also in front of the gate.
+//
+// A browser fetches the manifest without the session cookie — `<link
+// rel="manifest">` is a no-credentials request by default — so behind the gate
+// it was always a 401, even for someone signed in, and "Add to Home screen"
+// had nothing to install. Android then mints the home-screen app on Google's
+// servers, which fetch the icons with no cookie either, so fixing only the
+// `<link>` with `crossorigin="use-credentials"` would not be enough. None of
+// these files says anything about the library. The list is read from the
+// manifest itself, so an icon added there is never silently left behind the gate.
+const manifest = JSON.parse(readFileSync(join(__dirname, 'public/manifest.webmanifest'), 'utf8'));
+const UNGATED_FILES = new Set(['/manifest.webmanifest', ...manifest.icons.map((i) => `/${i.src}`)]);
+const ungatedStatic = express.static(join(__dirname, 'public'), { index: false });
+router.use((req, res, next) => (UNGATED_FILES.has(req.path) ? ungatedStatic(req, res, next) : next()));
+
 router.use(requireAuth(BASE));
 
 // Serve index.html with the right <base> href injected for the mount point,

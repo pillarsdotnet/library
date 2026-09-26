@@ -257,7 +257,8 @@ once and discarded.
 #### Who is allowed in
 
 Sign-in alone already narrows the world to people with a Google account, which
-may be all a tailnet-only deployment needs. To narrow it further, list the
+may be all a tailnet-only deployment needs. One on a public address needs the
+list. To narrow it further, list the
 addresses — one per line, `#` for comments — in `allowed-emails.txt` **next to
 the database**, the same place covers live:
 
@@ -614,7 +615,23 @@ authoritative".
 mean a standby that reboots would pull the database from a perfectly healthy active
 node and take over. Only the preferred node reclaims on boot; the other comes up
 active solely if it already owns the database, i.e. the preferred node handed over
-and has not returned.
+and has not returned. Set it in both units' drop-ins on **both** nodes, alongside
+`PEER` and `VIP`; for a public node with a cold backup, prefer the public node, and
+promote the backup by hand with `failover.sh to-local` if it has to take over.
+
+Only the node that **owns** the database hands anything over. A standby's database
+unit is active too, so its shutdown runs the same `db-release`, and the generation
+guard cannot stop it: every handoff writes the same generation to both nodes, and
+an equal one passes. So `db-release` checks the owner marker first and does nothing
+on a node that does not own the database; without that, a standby going down
+pushed its stale copy over the live one.
+
+That same leftover-active unit is why the receiving node's `takeover` verb runs
+`db-claim` itself when `home-library-db` is already active. Starting an active unit
+runs nothing, so the activity flag was never written and the app was skipped.
+
+`failover.sh to-local` and `to-remote` run each step as a fresh invocation of the
+script. The steps inherit the lock the outer run took, rather than taking it again.
 
 A standby boot is a normal outcome, not an error, so it must not leave failed units.
 `db-claim` writes an activity flag under `/run` only on the node that should be

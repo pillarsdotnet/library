@@ -123,7 +123,7 @@ case "$verb" in
     staging=$DATA_DIR/.covers.incoming
     rm -rf "$staging"
     mkdir -p "$staging"
-    tar -C "$staging" --no-absolute-names --no-same-owner -xf -
+    tar -C "$staging" --no-same-owner -xf -
     if [ ! -d "$staging/covers" ]; then
       rm -rf "$staging"
       deny "no covers directory in the archive"
@@ -161,7 +161,18 @@ case "$verb" in
   #
   # The app unit's ConditionPathExists is satisfied in time because db-claim creates
   # the activity flag and is ordered Before= the app.
+  #
+  # Unless the db unit is already active, which is the usual case for a standby:
+  # it ran db-claim at boot, chose standby, and exited 0, so systemd holds it
+  # active and starting it again runs nothing. The flag was never written and the
+  # app and address units were skipped, so the handoff reported the peer dead.
+  # Run the claim directly then, with the unit's own configuration.
   takeover)
+    if systemctl is-active --quiet home-library-db; then
+      # shellcheck disable=SC2046  # PEER=... VIP=... words, one per variable
+      env $(systemctl show -p Environment --value home-library-db) \
+        /usr/local/sbin/home-library-failover db-claim
+    fi
     systemctl start home-library-db "$SERVICE" home-library-vip
     ;;
 

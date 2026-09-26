@@ -5,6 +5,28 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+Four failover bugs, all found by the first handoff that actually moved the
+database since the code that broke went in.
+
+- **A standby that shut down pushed its stale database over the live one.** A
+  standby's `home-library-db` unit is active too, so its shutdown ran
+  `db-release`, and the generation guard let the push through because every
+  handoff writes the same generation to both nodes. `db-release` now does nothing
+  on a node that does not own the database.
+- **Taking over left the app stopped on a node that had booted as standby.** Its
+  database unit was already active, so starting it ran nothing and the activity
+  flag was never written. The `takeover` verb now runs `db-claim` itself in that
+  case.
+- **`to-local` and `to-remote` failed on their first step**, because each step
+  re-ran the script and found its own parent holding the lock. The steps now
+  inherit it.
+- **Cover images failed to transfer in a handoff:** GNU `tar` has no
+  `--no-absolute-names`. Its defaults already strip leading `/` and refuse `..`.
+
 ## [4.4.1] — 2026-09-25
 
 ### Fixed

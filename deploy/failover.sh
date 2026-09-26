@@ -61,7 +61,7 @@ IMAGE="${IMAGE:-library.local/home-library:latest}"
 # hundred kilobytes each, not the twelve megabytes it used to be.
 KEEP="${KEEP:-10}"
 VIP_DEV="${VIP_DEV:-lo}"
-LOCK="/run/home-library-failover.lock"
+LOCK="${LOCK:-/run/home-library-failover.lock}"
 
 # Which node reclaims the service when it boots. Both nodes run identical units, so
 # something has to break the tie: without it a standby that reboots would pull the
@@ -76,7 +76,7 @@ ACTIVE_FLAG="${ACTIVE_FLAG:-/run/home-library-active}"
 mark_active()   { : > "$ACTIVE_FLAG"; }
 mark_standby()  { rm -f "$ACTIVE_FLAG"; }
 
-ME=$(hostname -s)
+ME="${ME:-$(hostname -s)}"
 log() { echo "[failover $(date -Is)] $*" >&2; }
 die() { log "FAILED: $*"; exit 1; }
 
@@ -100,8 +100,16 @@ peer_reachable() {
 }
 
 # One handoff at a time. Two overlapping runs could hand the DB both ways.
-exec 9>"$LOCK"
-flock -n 9 || die "another failover is already running"
+#
+# to-local and to-remote run each step as a fresh "$0 <hook>", and a step that
+# opened the lock again would find its own parent holding it and refuse, so the
+# manual commands failed on their first step. A step inherits fd 9, already
+# locked, and is told so through the environment rather than taking it again.
+if [ -z "${HOME_LIBRARY_FAILOVER_LOCKED:-}" ]; then
+  exec 9>"$LOCK"
+  flock -n 9 || die "another failover is already running"
+  export HOME_LIBRARY_FAILOVER_LOCKED=1
+fi
 
 # ─── database movement ──────────────────────────────────────────────────────────
 # Fold the WAL into the main file so a single file is a complete copy. Skipping
@@ -185,7 +193,7 @@ push_covers() {
 pull_covers() {
   staging="$DATA_DIR/.covers.incoming"
   rm -rf "$staging"; mkdir -p "$staging"
-  if on_peer covers-send | tar -C "$staging" --no-absolute-names --no-same-owner -xf - \
+  if on_peer covers-send | tar -C "$staging" --no-same-owner -xf - \
      && [ -d "$staging/covers" ]; then
     find "$staging" -type l -delete
     rm -rf "$COVERS_DIR.old"
@@ -359,6 +367,18 @@ vip-release)
 
 # Shutdown, after the app has already stopped: hand the database to the peer.
 db-release)
+  # Only the owner has anything to hand over. A standby's db unit is active too --
+  # its db-claim chose standby and exited 0 -- so its shutdown runs this as well.
+  # The generation guard cannot stop that push: every handoff writes the SAME
+  # generation to both nodes, so an equal generation passes. Without this check a
+  # standby going down pushed its stale copy over the live database and withdrew
+  # the live node's address.
+  o_local=$(owner_node "$(owner_raw_local)")
+  if [ "$o_local" != "$ME" ]; then
+    log "db-release on $ME: $o_local owns the database; nothing to hand over"
+    mark_standby
+    exit 0
+  fi
   log "db-release: handing over from $ME to $PEER_NAME"
   g_local=$(owner_gen "$(owner_raw_local)"); g_peer=$(owner_gen "$(owner_raw_peer)")
   m_local=$(db_mtime_local); m_peer=$(db_mtime_peer 2>/dev/null || echo 0)

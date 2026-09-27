@@ -6,7 +6,8 @@ so a "wait and see" does not quietly become "forgot about it".
 ## 2026-09-22 — decide whether to allow fixing a write-blocking defect
 
 **Revisit on or after 2026-09-29** (a week out), or sooner if Open Library
-responds to [issue #13708](https://github.com/internetarchive/openlibrary/issues/13708).
+responds to [issue #13708](https://github.com/internetarchive/openlibrary/issues/13708)
+or to the fix proposed for it, [PR #13730](https://github.com/internetarchive/openlibrary/pull/13730).
 
 ### The decision
 
@@ -35,12 +36,23 @@ what to build or the instinct to prefer the upstream fix. Still wait out the
 week first.
 
 **Update 2026-09-27: five records now, eight blocked rows.** Two more with the
-same `\"--` ending to a description: the work `OL19332309W` (series for "A call
+same `"--` ending to a description: the work `OL19332309W` (series for "A call
 to arms", whose edition `OL27190384M` is already listed) and the edition
 `OL27268134M` ("The Escape Room"). These eight `failed` rows are now the *only*
 open rows in the queue: every other gap found in the 316 books checked has been
 sent. So the Give-back dialog shows nothing else, which reads as a bug but is
 the queue being empty apart from this one class.
+
+**Update 2026-09-27: a fix is proposed upstream, as
+[PR #13730](https://github.com/internetarchive/openlibrary/pull/13730).** The
+block is ModSecurity's CRS rule 942100 (libinjection SQL-injection detection),
+identified on a rebuild of Open Library's own WAF layer that reproduces the
+#13708 probe table exactly. The PR stops 942100 reading the description field on
+`PUT` to a single book, work or author record; nothing else is relaxed. It needs
+staff to merge, since the ruleset lives in their private `olsystem` repo. If it
+merges and deploys, all five records go through untouched: re-run their field
+sends, and this decision is moot. An author's `bio` is not covered, so a record
+blocked only by its bio would still need the by-hand path.
 
 ### If we do build it
 

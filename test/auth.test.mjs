@@ -16,7 +16,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { emailAllowed, readAllowlist, parseCookies, sessionFor, sessionIdleDays, sessionNeedsRefresh } from '../auth.js';
+import { parseCookies, sessionFor, sessionIdleDays, sessionNeedsRefresh } from '../auth.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3217;
@@ -77,7 +77,9 @@ test.before(async () => {
   });
   await new Promise((r) => google.listen(GOOGLE_PORT, '127.0.0.1', r));
 
-  writeFileSync(ALLOWED, '');
+  // The allowlist as it was before users were rows. The first start turns it
+  // into the members of the first library, Bobbalisa.
+  writeFileSync(ALLOWED, '# the household\nOwner@Gmail.com\n');
   server = spawn('node', ['server.js'], {
     cwd: ROOT,
     env: {
@@ -111,15 +113,24 @@ test.after(async () => {
   rmSync(TMP, { recursive: true, force: true });
 });
 
-// Walk the whole flow the way a browser would, carrying cookies by hand, and
-// return the session cookie it ends up holding.
-async function signIn(to = '/') {
-  const login = await fetch(`${BASE}/auth/login?to=${encodeURIComponent(to)}`, { redirect: 'manual' });
-  assert.equal(login.status, 302, 'login starts a redirect');
-  const flowCookie = (login.headers.getSetCookie?.() ?? [])
-    .map((c) => c.split(';')[0]).join('; ');
+// Walk the whole flow the way a browser would, carrying cookies by hand: the
+// form, its POST naming a library, Google, and back. Returns the callback's
+// response and every cookie set along the way.
+const cookiesOf = (r) => (r.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]);
 
-  const atGoogle = await fetch(login.headers.get('location'), { redirect: 'manual' });
+async function signIn(to = '/', library = 'Bobbalisa', cookie = '') {
+  const form = await fetch(`${BASE}/auth/login?to=${encodeURIComponent(to)}`, { headers: { Cookie: cookie } });
+  assert.equal(form.status, 200, 'the sign-in form is a page');
+  const post = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+    body: new URLSearchParams({ to, library }).toString(),
+  });
+  assert.equal(post.status, 303, 'submitting the form goes to Google');
+  const flowCookie = cookiesOf(post).join('; ');
+
+  const atGoogle = await fetch(post.headers.get('location'), { redirect: 'manual' });
   const callback = await fetch(atGoogle.headers.get('location'), {
     redirect: 'manual',
     headers: { Cookie: flowCookie },
@@ -130,37 +141,11 @@ async function signIn(to = '/') {
 const sessionFrom = (setCookies) => setCookies
   .map((c) => c.split(';')[0])
   .find((c) => c.startsWith('hl_session='));
+const lastFrom = (setCookies) => setCookies
+  .map((c) => c.split(';')[0])
+  .find((c) => c.startsWith('hl_last='));
 
-// ─── the allowlist, read directly ───────────────────────────────────────────
-
-test('an absent or empty allowlist admits every signed-in address', () => {
-  const missing = join(TMP, 'does-not-exist.txt');
-  assert.equal(readAllowlist(missing).present, false);
-  assert.equal(emailAllowed('anybody@gmail.com', missing), true, 'absent file: no further restriction');
-
-  const empty = join(TMP, 'empty.txt');
-  writeFileSync(empty, '\n\n   \n# only a comment\n');
-  assert.deepEqual(readAllowlist(empty).entries, [], 'comments and blank lines are not entries');
-  assert.equal(emailAllowed('anybody@gmail.com', empty), true, 'empty file: no further restriction');
-});
-
-test('a populated allowlist admits only the addresses on it', () => {
-  const file = join(TMP, 'list.txt');
-  writeFileSync(file, '# the household\nOwner@Gmail.com\n  second@gmail.com  # the other phone\n');
-  assert.equal(emailAllowed('owner@gmail.com', file), true, 'case does not matter');
-  assert.equal(emailAllowed('second@gmail.com', file), true, 'a trailing comment is not part of the address');
-  assert.equal(emailAllowed('stranger@gmail.com', file), false, 'everybody else is refused');
-  assert.equal(emailAllowed('', file), false);
-  assert.equal(emailAllowed(undefined, file), false);
-});
-
-test('an edited allowlist is picked up without a restart', () => {
-  const file = join(TMP, 'edited.txt');
-  writeFileSync(file, 'owner@gmail.com\n');
-  assert.equal(emailAllowed('later@gmail.com', file), false);
-  writeFileSync(file, 'owner@gmail.com\nlater@gmail.com\n');
-  assert.equal(emailAllowed('later@gmail.com', file), true, 'the file is re-read when it changes');
-});
+const as = (session) => ({ headers: { Cookie: session, 'Content-Type': 'application/json' } });
 
 // ─── the gate ───────────────────────────────────────────────────────────────
 
@@ -203,10 +188,21 @@ test('signing in with Google opens the app, and signing out closes it again', as
   assert.equal(ok.status, 200, 'the API answers a signed-in request');
 
   const me = await (await fetch(`${BASE}/auth/me`, { headers: { Cookie: session } })).json();
-  assert.deepEqual(me, { required: true, email: 'owner@gmail.com' });
+  assert.deepEqual(me, {
+    required: true,
+    email: 'owner@gmail.com',
+    library: { id: 1, name: 'Bobbalisa', display: 'Bobbalisa Library' },
+  });
+
+  // The header says whose library this is, in the page and in the tab title.
+  const html = await (await fetch(`${BASE}/`, { headers: { Cookie: session } })).text();
+  assert.match(html, /📚 Bobbalisa Library/);
+  assert.match(html, /<title>Bobbalisa Library /);
 
   const out = await fetch(`${BASE}/auth/logout`, { method: 'POST', headers: { Cookie: session }, redirect: 'manual' });
   assert.match(out.headers.getSetCookie().join(';'), /hl_session=;/, 'signing out clears the cookie');
+  assert.doesNotMatch(out.headers.getSetCookie().join(';'), /hl_last=;/, 'but not the remembered sign-in');
+  assert.match(out.headers.get('location'), /\/auth\/login$/, 'and goes back to the form');
 });
 
 test('a callback nobody started is refused', async () => {
@@ -216,7 +212,11 @@ test('a callback nobody started is refused', async () => {
   assert.equal(bare.status, 400);
   assert.equal(sessionFrom(bare.headers.getSetCookie?.() ?? []), undefined, 'and sets no session');
 
-  const login = await fetch(`${BASE}/auth/login`, { redirect: 'manual' });
+  const login = await fetch(`${BASE}/auth/login`, {
+    method: 'POST', redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'library=Bobbalisa',
+  });
   const flowCookie = login.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
   const wrongState = await fetch(`${BASE}/auth/callback?code=test-auth-code&state=not-the-one`, {
     redirect: 'manual', headers: { Cookie: flowCookie },
@@ -224,26 +224,104 @@ test('a callback nobody started is refused', async () => {
   assert.equal(wrongState.status, 400, 'a state that does not match the cookie is refused');
 });
 
-test('an address not on the allowlist is turned away, and loses a session it already had', async () => {
+test('the allowlist file became the first library\'s members, and nobody else gets in', async () => {
+  nextIdentity = { email: 'owner@gmail.com', email_verified: true };
+  const owner = await signIn('/', 'bobbalisa');
+  assert.ok(sessionFrom(owner.setCookies), 'the address from the file is a member; the name is matched ignoring case');
+
   nextIdentity = { email: 'stranger@gmail.com', email_verified: true };
-  const open = await signIn();
-  const session = sessionFrom(open.setCookies);
-  assert.ok(session, 'with an empty allowlist the stranger gets in');
-
-  // Now name somebody else, and only somebody else.
-  writeFileSync(ALLOWED, '# just the one account\nowner@gmail.com\n');
-  const shut = await fetch(`${BASE}/api/books`, { headers: { Cookie: session } });
-  assert.equal(shut.status, 401, 'the session stops working the moment the file changes');
-
-  const refused = await signIn();
-  assert.equal(refused.callback.status, 403, 'and signing in again is refused outright');
-  assert.match(await refused.callback.text(), /stranger@gmail\.com/, 'the refusal names the address that was tried');
+  const refused = await signIn('/', 'Bobbalisa');
+  assert.equal(refused.callback.status, 403, 'an existing library admits its members and nobody else');
+  const page = await refused.callback.text();
+  assert.match(page, /stranger@gmail\.com/, 'the refusal names the address that was tried');
+  assert.match(page, /Bobbalisa Library/, 'and the library');
   assert.equal(sessionFrom(refused.setCookies), undefined, 'no session is issued');
+  nextIdentity = { email: 'owner@gmail.com', email_verified: true };
+});
+
+test('naming an unused library creates it, with only the person signing in', async () => {
+  nextIdentity = { email: 'founder@gmail.com', email_verified: true };
+  const made = await signIn('/', '  The   Reading Room  ');
+  const session = sessionFrom(made.setCookies);
+  assert.ok(session, 'the founder is signed in to the new library');
+  const me = await (await fetch(`${BASE}/auth/me`, { headers: { Cookie: session } })).json();
+  assert.equal(me.library.name, 'The Reading Room', 'whitespace is tidied, case kept');
+  assert.equal(me.library.display, 'The Reading Room Library', 'shown with " Library" after it');
+  const mine = await (await fetch(`${BASE}/api/library/members`, as(session))).json();
+  assert.deepEqual(mine.map((m) => m.email), ['founder@gmail.com'], 'its only member');
+  const genres = await (await fetch(`${BASE}/api/genres`, as(session))).json();
+  assert.ok(genres.length > 10, 'it starts with the stock genres, its own copy');
 
   nextIdentity = { email: 'owner@gmail.com', email_verified: true };
-  const allowed = await signIn();
-  assert.ok(sessionFrom(allowed.setCookies), 'the named address still gets in');
-  writeFileSync(ALLOWED, '');
+  const other = await signIn('/', 'the reading room');
+  assert.equal(other.callback.status, 403, 'a second person naming it is not a founder, just a non-member');
+});
+
+test('a member added from the Members screen gets in, and loses access when removed', async () => {
+  nextIdentity = { email: 'keeper@gmail.com', email_verified: true };
+  const keeper = sessionFrom((await signIn('/', 'Keepers Hall')).setCookies);
+
+  const added = await fetch(`${BASE}/api/library/members`, { method: 'POST', ...as(keeper), body: JSON.stringify({ email: 'Guest@Gmail.com' }) });
+  assert.equal(added.status, 201);
+  const bad = await fetch(`${BASE}/api/library/members`, { method: 'POST', ...as(keeper), body: JSON.stringify({ email: 'not an address' }) });
+  assert.equal(bad.status, 400, 'a typo is caught');
+
+  nextIdentity = { email: 'guest@gmail.com', email_verified: true };
+  const guest = sessionFrom((await signIn('/', 'Keepers Hall')).setCookies);
+  assert.ok(guest, 'the added address can now sign in');
+  assert.equal((await fetch(`${BASE}/api/books`, as(guest))).status, 200);
+
+  const list = await (await fetch(`${BASE}/api/library/members`, as(keeper))).json();
+  const guestRow = list.find((m) => m.email === 'guest@gmail.com');
+  const keeperRow = list.find((m) => m.email === 'keeper@gmail.com');
+  assert.equal(guestRow.added_by, 'keeper@gmail.com', 'who added whom is kept');
+  assert.equal(keeperRow.you, true);
+
+  const self = await fetch(`${BASE}/api/library/members/${keeperRow.id}`, { method: 'DELETE', ...as(keeper) });
+  assert.equal(self.status, 409, 'nobody removes themselves');
+
+  const removed = await fetch(`${BASE}/api/library/members/${guestRow.id}`, { method: 'DELETE', ...as(keeper) });
+  assert.equal(removed.status, 204);
+  assert.equal((await fetch(`${BASE}/api/books`, as(guest))).status, 401, 'the removed member is out on their next request');
+
+  // The last member cannot be removed by anyone: it would strand the library.
+  const onlyOne = await fetch(`${BASE}/api/library/members/${keeperRow.id}`, { method: 'DELETE', ...as(guest) });
+  assert.equal(onlyOne.status, 401, 'and a non-member cannot even ask');
+  nextIdentity = { email: 'owner@gmail.com', email_verified: true };
+});
+
+test('the sign-in form remembers who signed in last, and to which library', async () => {
+  nextIdentity = { email: 'owner@gmail.com', email_verified: true };
+  const first = await signIn('/', 'Bobbalisa');
+  const last = lastFrom(first.setCookies);
+  assert.ok(last, 'signing in leaves a remembered sign-in');
+  assert.match(first.setCookies.find((c) => c.startsWith('hl_last=')), /HttpOnly/i);
+
+  const form = await (await fetch(`${BASE}/auth/login`, { headers: { Cookie: last } })).text();
+  assert.match(form, /name="library"[^>]*value="Bobbalisa"/, 'the library is filled in');
+  assert.match(form, /owner@gmail\.com/, 'and the address is shown');
+
+  await signIn('/', 'Bobbalisa', last);
+  assert.equal(lastAuthRequest.searchParams.get('login_hint'), 'owner@gmail.com', 'Google is offered the same account first');
+
+  const blank = await fetch(`${BASE}/auth/login`, {
+    method: 'POST', redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `library=${'x'.repeat(61)}`,
+  });
+  assert.equal(blank.status, 400, 'a name that is too long is refused at the form');
+});
+
+test('a session from before libraries carries its member across', async () => {
+  // Minted the old way: no library in it. The owner belongs to one library, so
+  // that is the one it meant, and the refreshed cookie now says so.
+  const legacy = `hl_session=${sessionFor('owner@gmail.com')}`;
+  const r = await fetch(`${BASE}/api/books`, { headers: { Cookie: legacy } });
+  assert.equal(r.status, 200);
+  const upgraded = sessionFrom(r.headers.getSetCookie?.() ?? []);
+  assert.ok(upgraded, 'the session is re-issued');
+  const payload = JSON.parse(Buffer.from(upgraded.split('=')[1].split('.')[0], 'base64url'));
+  assert.equal(payload.lib, 1, 'naming the library');
 });
 
 test('an unverified Google address is not an identity', async () => {
@@ -328,7 +406,7 @@ test('visiting slides the window, so a regular visitor never signs in again', as
   // window, handed to a server running the default ten-day one, which therefore
   // sees it as well past its half-life.
   process.env.SESSION_IDLE_DAYS = '1';
-  const nearlyExpired = `hl_session=${sessionFor('owner@gmail.com')}`;
+  const nearlyExpired = `hl_session=${sessionFor('owner@gmail.com', 1)}`;
   delete process.env.SESSION_IDLE_DAYS;
 
   const used = await fetch(`${BASE}/api/books`, { headers: { Cookie: nearlyExpired } });

@@ -7,11 +7,15 @@ import db from './db.js';
 import { canonicalIsbn } from './isbn.js';
 import { parseDataUrl, writeCover, coverPath, removeCover, mimeForFile } from './covers.js';
 import { lookupIsbn, RateLimitError } from './lookup.js';
-import { authConfigured, allowlistPath, readAllowlist, mountAuth, requireAuth, sessionSecretIsEphemeral, sessionIdleDays } from './auth.js';
+import { authConfigured, mountAuth, requireAuth, sessionSecretIsEphemeral, sessionIdleDays } from './auth.js';
+import {
+  displayName, members, addMember, removeMember, librariesOf,
+  olCredentials, olStatus, setOlCredentials, clearOlCredentials,
+} from './accounts.js';
 import { parseEpub } from './epub.js';
 import {
   fetchEdition, proposalsFor, login, sendField, sendCover,
-  haveCredentials, FIELD_LABELS, FIELD_COMMENTS, ADOPT_COVER,
+  envCredentials, FIELD_LABELS, FIELD_COMMENTS, ADOPT_COVER,
   importAllowed, importPayload, sendImport,
 } from './openlibrary.js';
 
@@ -90,8 +94,14 @@ const indexHtml = readFileSync(join(__dirname, 'public/index.html'), 'utf8');
 // same version for display, left raw so a build-metadata suffix (1.2.3+build)
 // reads as itself rather than as %2Bbuild. The two placeholders cannot collide:
 // "__VERSION__" does not contain "__V__".
-router.get('/', (_req, res) => res.type('html')
+// __LIBRARY__ is the signed-in library's name ("Bobbalisa Library"), escaped:
+// it is whatever somebody typed at sign-in.
+const escHtml = (v) => String(v).replace(/[&<>"']/g, (c) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[c]));
+router.get('/', (req, res) => res.type('html')
   .send(indexHtml.replace('__BASE__', BASE)
+    .replaceAll('__LIBRARY__', escHtml(displayName(req.library.name)))
     .replaceAll('__V__', encodeURIComponent(VERSION))
     .replaceAll('__VERSION__', VERSION)));
 
@@ -189,12 +199,23 @@ function insert(table, data) {
   return db.prepare(sql).run(data).lastInsertRowid;
 }
 
-function update(table, id, data) {
+// Every table written through these helpers belongs to a library, and an update
+// names that library as well as the row, so an id from another library changes
+// nothing even if a caller forgot to check it first.
+function update(table, id, data, lib) {
   const cols = Object.keys(data);
   if (!cols.length) return;
   const setClause = cols.map((c) => `${c} = @${c}`).join(', ');
-  db.prepare(`UPDATE ${table} SET ${setClause}, updated_at = datetime('now') WHERE id = @id`).run({ ...data, id });
+  db.prepare(`UPDATE ${table} SET ${setClause}, updated_at = datetime('now') WHERE id = @id AND library_id = @lib`)
+    .run({ ...data, id, lib });
 }
+
+// A shelf id from a request body is only usable if it is this library's. The
+// database would refuse the other kind (copies_same_library_*), but a 400 that
+// says why beats a 500 that says trigger.
+const shelfInLibrary = (shelfId, lib) =>
+  shelfId == null || !!db.prepare('SELECT 1 FROM shelves WHERE id = ? AND library_id = ?').get(shelfId, lib);
+const badShelf = (res) => res.status(400).json({ error: 'shelf not found' });
 
 // ---------------------------------------------------------------------------
 // Books CRUD
@@ -244,13 +265,13 @@ function splitBookData(data) {
 // staple the print ISBN onto the e-book record. On the ISBN alone a Kindle file
 // and a hardback merge, and one of them loses its format and gains the other's
 // physical dimensions.
-function resolveEdition(editionData, isbnRaw) {
+function resolveEdition(editionData, isbnRaw, lib) {
   const canon = canonicalIsbn(isbnRaw);
   if (canon) {
     // Mirrors the column default, so a client that omits format still matches
     // the paperback it means.
     const format = editionData.format ?? 'paperback';
-    const found = db.prepare('SELECT * FROM editions WHERE isbn13 = ? AND format = ?').get(canon, format);
+    const found = db.prepare('SELECT * FROM editions WHERE library_id = ? AND isbn13 = ? AND format = ?').get(lib, canon, format);
     if (found) {
       // Contribute only what the shared record is still missing. This edition
       // may already back somebody else's copy, so filling a blank is welcome
@@ -259,12 +280,13 @@ function resolveEdition(editionData, isbnRaw) {
       for (const [k, v] of Object.entries(editionData)) {
         if ((found[k] === null || found[k] === '') && v !== null && v !== undefined && v !== '') fill[k] = v;
       }
-      if (Object.keys(fill).length) update('editions', found.id, fill);
+      if (Object.keys(fill).length) update('editions', found.id, fill, lib);
       return found.id;
     }
   }
   return insert('editions', {
     ...editionData,
+    library_id: lib,
     format: editionData.format ?? 'paperback',   // explicit, so it matches next time
     isbn13: canon,
     isbn_text: isbnRaw ?? null,
@@ -277,9 +299,10 @@ function resolveEdition(editionData, isbnRaw) {
 // The file is written before the row is updated, so the worst an interruption can
 // leave behind is an unreferenced image — which costs disk. The other order would
 // leave a row naming a file that does not exist, which costs the picture.
-function applyImages(copyId, images) {
+function applyImages(copyId, images, lib) {
   if (!images.cover && !images.source && !images.clearSource) return;
-  const cur = db.prepare('SELECT cover_file, cover_source_file FROM copies WHERE id = ?').get(copyId);
+  const cur = db.prepare('SELECT cover_file, cover_source_file FROM copies WHERE id = ? AND library_id = ?').get(copyId, lib);
+  if (!cur) return;
   const set = {};
   if (images.cover) {
     const w = writeCover(String(copyId), images.cover.buf, images.cover.mime, cur?.cover_file);
@@ -293,20 +316,21 @@ function applyImages(copyId, images) {
     set.cover_source_file = null;
     set.cover_source_token = null;
   }
-  if (Object.keys(set).length) update('copies', copyId, set);
+  if (Object.keys(set).length) update('copies', copyId, set, lib);
 }
 
 // Replace an edition's genres with the given list of genre ids (ignores unknown
 // ids). Genres belong to the edition, so this affects every copy of the book —
 // which is the point: two copies of one ISBN are one book, tagged once.
-function setBookGenres(editionId, genreIds) {
+function setBookGenres(editionId, genreIds, lib) {
   if (!Array.isArray(genreIds)) return;
   db.prepare('DELETE FROM book_genres WHERE edition_id = ?').run(editionId);
   const link = db.prepare('INSERT OR IGNORE INTO book_genres (edition_id, genre_id) VALUES (?, ?)');
-  const known = db.prepare('SELECT id FROM genres WHERE id = ?');
+  // Another library's genre id is an unknown id here, and ignored like one.
+  const known = db.prepare('SELECT id FROM genres WHERE id = ? AND library_id = ?');
   for (const gid of genreIds) {
     const n = Number(gid);
-    if (n && known.get(n)) link.run(editionId, n);
+    if (n && known.get(n, lib)) link.run(editionId, n);
   }
 }
 
@@ -352,8 +376,8 @@ function attachGenres(books) {
 
 router.get('/api/books', (req, res) => {
   const { q, status, room, bookcase, genre_id, series_id, format, shelf_id, library } = req.query;
-  const where = [];
-  const params = {};
+  const where = ['b.library_id = @lib'];
+  const params = { lib: req.library.id };
 
   if (q) {
     where.push('(b.title LIKE @q OR b.authors LIKE @q OR b.isbn LIKE @q)');
@@ -393,7 +417,7 @@ router.get('/api/books', (req, res) => {
     where.push('b.is_library_book = 1');
   }
 
-  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const whereSql = 'WHERE ' + where.join(' AND ');
   const from = `FROM books b LEFT JOIN shelves s ON s.id = b.shelf_id ${whereSql}`;
   const total = db.prepare(`SELECT COUNT(*) AS n ${from}`).get(params).n;
 
@@ -440,7 +464,8 @@ function sendCoverFile(res, file, versioned) {
 }
 
 router.get('/api/books/:id/cover', (req, res) => {
-  const row = db.prepare('SELECT cover_file, edition_cover_url FROM books WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT cover_file, edition_cover_url FROM books WHERE id = ? AND library_id = ?')
+    .get(req.params.id, req.library.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
   // No photograph of this copy: the edition's stock artwork is somewhere else
   // entirely, so say where instead of pretending to hold it.
@@ -453,13 +478,15 @@ router.get('/api/books/:id/cover', (req, res) => {
 
 // The photo a cover was cropped from, for re-cropping it later.
 router.get('/api/books/:id/cover-source', (req, res) => {
-  const row = db.prepare('SELECT cover_source_file FROM books WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT cover_source_file FROM books WHERE id = ? AND library_id = ?').get(req.params.id, req.library.id);
   if (!row || !row.cover_source_file) return res.status(404).json({ error: 'Not found' });
   return sendCoverFile(res, row.cover_source_file, !!req.query.v);
 });
 
+const oneBook = (id, lib) => db.prepare(`SELECT ${BOOK_SELECT} FROM books b WHERE b.id = ? AND b.library_id = ?`).get(id, lib);
+
 router.get('/api/books/:id', (req, res) => {
-  const book = db.prepare(`SELECT ${BOOK_SELECT} FROM books b WHERE b.id = ?`).get(req.params.id);
+  const book = oneBook(req.params.id, req.library.id);
   if (!book) return res.status(404).json({ error: 'Not found' });
   res.json(coverRef(attachGenres([book])[0]));
 });
@@ -469,29 +496,33 @@ router.post('/api/books', (req, res) => {
   if (isCoverRef(req.body.cover_source)) delete req.body.cover_source;
   const data = pick(req.body, BOOK_COLS);
   if (!data.title) return res.status(400).json({ error: 'title is required' });
+  const lib = req.library.id;
+  if (!shelfInLibrary(data.shelf_id, lib)) return badShelf(res);
   const { edition, copy, images } = splitBookData(data);
   // One transaction: a copy without its edition, or genres attached to an
   // edition whose copy failed to insert, would both be worse than no book.
   const create = db.transaction(() => {
-    const editionId = resolveEdition(edition, data.isbn);
-    const id = insert('copies', { ...copy, edition_id: editionId });
-    if (req.body.genre_ids !== undefined) setBookGenres(editionId, req.body.genre_ids);
+    const editionId = resolveEdition(edition, data.isbn, lib);
+    const id = insert('copies', { ...copy, edition_id: editionId, library_id: lib });
+    if (req.body.genre_ids !== undefined) setBookGenres(editionId, req.body.genre_ids, lib);
     return id;
   });
   const id = create();
-  applyImages(id, images);
-  res.status(201).json(coverRef(attachGenres([db.prepare(`SELECT ${BOOK_SELECT} FROM books b WHERE b.id = ?`).get(id)])[0]));
+  applyImages(id, images, lib);
+  res.status(201).json(coverRef(attachGenres([oneBook(id, lib)])[0]));
 });
 
 router.put('/api/books/:id', (req, res) => {
-  const current = db.prepare('SELECT id, edition_id FROM copies WHERE id = ?').get(req.params.id);
+  const lib = req.library.id;
+  const current = db.prepare('SELECT id, edition_id FROM copies WHERE id = ? AND library_id = ?').get(req.params.id, lib);
   if (!current) return res.status(404).json({ error: 'Not found' });
   // The client may echo back "api/books/:id/cover"; that means "unchanged".
   if (isCoverRef(req.body.cover_url)) delete req.body.cover_url;
   if (isCoverRef(req.body.cover_source)) delete req.body.cover_source;
   const data = pick(req.body, BOOK_COLS);
+  if (!shelfInLibrary(data.shelf_id, lib)) return badShelf(res);
   const { edition, copy, images } = splitBookData(data);
-  applyImages(current.id, images);
+  applyImages(current.id, images, lib);
 
   const save = db.transaction(() => {
     let editionId = current.edition_id;
@@ -512,17 +543,17 @@ router.put('/api/books/:id', (req, res) => {
       // Keep the ISBN we already had when only the format moved, or the copy
       // would land on a new edition with its ISBN silently dropped.
       const isbn = data.isbn !== undefined ? data.isbn : (curEd.isbn13 ?? curEd.isbn_text);
-      editionId = resolveEdition({ ...carried, ...edition }, isbn);
-      db.prepare('UPDATE copies SET edition_id = ? WHERE id = ?').run(editionId, current.id);
+      editionId = resolveEdition({ ...carried, ...edition }, isbn, lib);
+      db.prepare('UPDATE copies SET edition_id = ? WHERE id = ? AND library_id = ?').run(editionId, current.id, lib);
     } else if (Object.keys(edition).length) {
       // Edition data is shared by every copy, so this edit is visible on all of them.
-      update('editions', editionId, edition);
+      update('editions', editionId, edition, lib);
     }
-    if (Object.keys(copy).length) update('copies', current.id, copy);
-    if (req.body.genre_ids !== undefined) setBookGenres(editionId, req.body.genre_ids);
+    if (Object.keys(copy).length) update('copies', current.id, copy, lib);
+    if (req.body.genre_ids !== undefined) setBookGenres(editionId, req.body.genre_ids, lib);
   });
   save();
-  res.json(coverRef(attachGenres([db.prepare(`SELECT ${BOOK_SELECT} FROM books b WHERE b.id = ?`).get(req.params.id)])[0]));
+  res.json(coverRef(attachGenres([oneBook(req.params.id, lib)])[0]));
 });
 
 // Deletes the copy. The edition stays: it is shared metadata that another copy
@@ -531,8 +562,9 @@ router.put('/api/books/:id', (req, res) => {
 router.delete('/api/books/:id', (req, res) => {
   // Read the filenames before the row goes: afterwards there is nothing left to
   // say which files were this copy's, and they would sit there forever.
-  const files = db.prepare('SELECT cover_file, cover_source_file FROM copies WHERE id = ?').get(req.params.id);
-  const info = db.prepare('DELETE FROM copies WHERE id = ?').run(req.params.id);
+  const lib = req.library.id;
+  const files = db.prepare('SELECT cover_file, cover_source_file FROM copies WHERE id = ? AND library_id = ?').get(req.params.id, lib);
+  const info = db.prepare('DELETE FROM copies WHERE id = ? AND library_id = ?').run(req.params.id, lib);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
   removeCover(files?.cover_file);
   removeCover(files?.cover_source_file);
@@ -572,6 +604,7 @@ const SCAN_BOOKS = `
   WHERE COALESCE(e.isbn13, e.isbn_text) IS NOT NULL AND COALESCE(e.isbn13, e.isbn_text) <> ''
     AND (0 = @coversOnly OR EXISTS (SELECT 1 FROM copies c2 WHERE c2.edition_id = e.id AND c2.cover_file IS NOT NULL))
     AND (@onlyEdition IS NULL OR e.id = @onlyEdition)
+    AND e.library_id = @lib
   -- Least recently checked first, never-checked before that. Ordering by
   -- updated_at meant every sweep re-read the same 25 books and the rest of the
   -- library was never reached at all.
@@ -593,8 +626,8 @@ async function reviewAgainstOpenLibrary(book, counts) {
                                WHERE edition_id = ? AND status IN ('pending', 'failed')`);
   const retire = db.prepare(`UPDATE ol_contributions SET status = 'satisfied', error = NULL,
                              reviewed_at = datetime('now') WHERE id = ?`);
-  const add = db.prepare(`INSERT OR IGNORE INTO ol_contributions (edition_id, olid, field, value)
-                          VALUES (?, ?, ?, ?)`);
+  const add = db.prepare(`INSERT OR IGNORE INTO ol_contributions (library_id, edition_id, olid, field, value)
+                          VALUES (?, ?, ?, ?, ?)`);
   {
     // Only a photograph one of our copies actually carries is ours to offer.
     // The edition's own cover_url is stock artwork, quite possibly Open
@@ -614,7 +647,7 @@ async function reviewAgainstOpenLibrary(book, counts) {
       // record rather than filling a blank, so it happens only when explicitly
       // switched on — and still only as a proposal.
       if (importAllowed() && !already.get(book.edition_id, 'import') && importPayload(book)) {
-        add.run(book.edition_id, 'NEW', 'import', book.isbn);
+        add.run(book.library_id, book.edition_id, 'NEW', 'import', book.isbn);
         counts.queued += 1;
       }
       return counts;
@@ -632,7 +665,7 @@ async function reviewAgainstOpenLibrary(book, counts) {
       if (already.get(book.edition_id, p.field)) continue;
       // Each proposal records the record it would edit: the series tag belongs
       // to the work, everything else to the edition.
-      add.run(book.edition_id, p.target === 'work' ? edition.workOlid : edition.olid, p.field, p.value);
+      add.run(book.library_id, book.edition_id, p.target === 'work' ? edition.workOlid : edition.olid, p.field, p.value);
       counts.queued += 1;
     }
   }
@@ -641,10 +674,28 @@ async function reviewAgainstOpenLibrary(book, counts) {
 
 const noCounts = () => ({ scanned: 0, queued: 0, unknown: 0, satisfied: 0 });
 
+// Whose Open Library keys a send from this request goes out under. With sign-in
+// on, the signed-in user's own, verified when saved; nobody sends as anybody
+// else. With sign-in off there are no users, and the keys in the environment
+// are the only kind there is.
+function sendingCredentials(req) {
+  if (!authConfigured()) return envCredentials();
+  return req.user ? olCredentials(req.user.id) : null;
+}
+
+// Giving back is for a user who can send. Without keys of their own the queue
+// is not theirs to work through — not even the parts that send nothing — so
+// the whole of it is closed, the same way the dialog is hidden. Sign-in off
+// keeps the dialog as it always was, sending or not.
+router.use('/api/ol-contributions', (req, res, next) => {
+  if (!authConfigured() || sendingCredentials(req)) return next();
+  res.status(403).json({ error: 'Giving back needs Open Library keys on your account.' });
+});
+
 router.post('/api/ol-contributions/scan', async (req, res) => {
   const limit = Math.min(Number(req.body?.limit) || 25, 100);
   const books = db.prepare(SCAN_BOOKS).all({
-    coversOnly: req.body?.scope === 'covers' ? 1 : 0, onlyEdition: null, limit,
+    coversOnly: req.body?.scope === 'covers' ? 1 : 0, onlyEdition: null, limit, lib: req.library.id,
   });
   const counts = noCounts();
   for (const book of books) await reviewAgainstOpenLibrary(book, counts);
@@ -661,10 +712,10 @@ router.post('/api/ol-contributions/scan', async (req, res) => {
 // date" can never disagree. An upload that silently failed leaves the row
 // exactly where it was, which is the point of checking rather than dismissing.
 router.post('/api/ol-contributions/:id/recheck', async (req, res) => {
-  const row = db.prepare(`SELECT * FROM ol_contributions WHERE id = ? AND status IN ('pending', 'failed')`)
-    .get(req.params.id);
+  const row = db.prepare(`SELECT * FROM ol_contributions WHERE id = ? AND library_id = ? AND status IN ('pending', 'failed')`)
+    .get(req.params.id, req.library.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
-  const book = db.prepare(SCAN_BOOKS).get({ coversOnly: 0, onlyEdition: row.edition_id, limit: 1 });
+  const book = db.prepare(SCAN_BOOKS).get({ coversOnly: 0, onlyEdition: row.edition_id, limit: 1, lib: req.library.id });
   if (!book) return res.status(409).json({ error: 'This book has no ISBN to look up.' });
 
   const counts = await reviewAgainstOpenLibrary(book, noCounts());
@@ -693,8 +744,8 @@ router.get('/api/ol-contributions', (req, res) => {
       (SELECT cp.id FROM copies cp
         WHERE cp.edition_id = c.edition_id AND cp.cover_file IS NOT NULL LIMIT 1) AS copy_id
     FROM ol_contributions c JOIN editions e ON e.id = c.edition_id
-    WHERE c.status IN (${wanted.map(() => '?').join(',')})
-    ORDER BY e.title, c.field`).all(...wanted);
+    WHERE c.library_id = ? AND c.status IN (${wanted.map(() => '?').join(',')})
+    ORDER BY e.title, c.field`).all(req.library.id, ...wanted);
   res.json(rows.map((r) => ({ ...r, label: FIELD_LABELS[r.field] || r.field })));
 });
 
@@ -703,20 +754,23 @@ router.get('/api/ol-contributions', (req, res) => {
 // with what it is retrying.
 router.get('/api/ol-contributions/attempts', (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 50, 500);
+  const lib = req.library.id;
+  // An attempt belongs to a library through its proposal.
+  const mine = `FROM ol_send_attempts a JOIN ol_contributions c ON c.id = a.contribution_id AND c.library_id = ?`;
   res.json({
-    byStatus: db.prepare(`SELECT status, COUNT(*) AS n, MAX(at) AS last
-                          FROM ol_send_attempts GROUP BY status ORDER BY n DESC`).all(),
-    byField: db.prepare(`SELECT field, status, COUNT(*) AS n
-                         FROM ol_send_attempts GROUP BY field, status ORDER BY n DESC`).all(),
-    recent: db.prepare(`SELECT a.*, e.title FROM ol_send_attempts a
-                        LEFT JOIN ol_contributions c ON c.id = a.contribution_id
+    byStatus: db.prepare(`SELECT a.status, COUNT(*) AS n, MAX(a.at) AS last
+                          ${mine} GROUP BY a.status ORDER BY n DESC`).all(lib),
+    byField: db.prepare(`SELECT a.field, a.status, COUNT(*) AS n
+                         ${mine} GROUP BY a.field, a.status ORDER BY n DESC`).all(lib),
+    recent: db.prepare(`SELECT a.*, e.title ${mine}
                         LEFT JOIN editions e ON e.id = c.edition_id
-                        ORDER BY a.id DESC LIMIT ?`).all(limit),
+                        ORDER BY a.id DESC LIMIT ?`).all(lib, limit),
   });
 });
 
-router.get('/api/ol-contributions/status', (_req, res) => {
-  const counts = db.prepare('SELECT status, COUNT(*) AS n FROM ol_contributions GROUP BY status').all();
+router.get('/api/ol-contributions/status', (req, res) => {
+  const lib = req.library.id;
+  const counts = db.prepare('SELECT status, COUNT(*) AS n FROM ol_contributions WHERE library_id = ? GROUP BY status').all(lib);
   // How much of the library has been compared, and how lately. Without it, a
   // queue holding only rows Open Library refused looks like a sweep that is
   // broken, when every other gap has in fact been found and sent. Counted over
@@ -725,9 +779,9 @@ router.get('/api/ol-contributions/status', (_req, res) => {
     SELECT COUNT(*) AS books,
            COUNT(ol_checked_at) AS checked,
            MAX(ol_checked_at) AS last_checked
-    FROM editions WHERE COALESCE(isbn13, isbn_text) IS NOT NULL AND COALESCE(isbn13, isbn_text) <> ''`).get();
+    FROM editions WHERE library_id = ? AND COALESCE(isbn13, isbn_text) IS NOT NULL AND COALESCE(isbn13, isbn_text) <> ''`).get(lib);
   res.json({
-    configured: haveCredentials(),
+    configured: !!sendingCredentials(req),
     counts: Object.fromEntries(counts.map((c) => [c.status, c.n])),
     coverage: { ...coverage, unchecked: coverage.books - coverage.checked },
   });
@@ -736,7 +790,7 @@ router.get('/api/ol-contributions/status', (_req, res) => {
 router.post('/api/ol-contributions/:id/decline', (req, res) => {
   const info = db.prepare(`UPDATE ol_contributions
     SET status = 'declined', reviewed_at = datetime('now')
-    WHERE id = ? AND status IN ('pending', 'failed')`).run(req.params.id);
+    WHERE id = ? AND library_id = ? AND status IN ('pending', 'failed')`).run(req.params.id, req.library.id);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
   res.json({ ok: true });
 });
@@ -751,8 +805,9 @@ router.post('/api/ol-contributions/:id/approve', async (req, res) => {
       (SELECT cp.cover_file FROM copies cp
         WHERE cp.edition_id = c.edition_id AND cp.cover_file IS NOT NULL LIMIT 1) AS cover_file
     FROM ol_contributions c
-    WHERE c.id = ? AND c.status IN ('pending', 'failed')`).get(req.params.id);
+    WHERE c.id = ? AND c.library_id = ? AND c.status IN ('pending', 'failed')`).get(req.params.id, req.library.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
+  const lib = req.library.id;
 
   // Adopting Open Library's cover is the one approval that sends nothing. It
   // needs no account, and it is handled before the credential check for that
@@ -768,7 +823,7 @@ router.post('/api/ol-contributions/:id/approve', async (req, res) => {
                                WHERE edition_id = ? AND (cover_file IS NOT NULL OR cover_source_file IS NOT NULL)`)
       .all(row.edition_id);
     const swap = db.transaction(() => {
-      update('editions', row.edition_id, { cover_url: row.value });
+      update('editions', row.edition_id, { cover_url: row.value }, lib);
       for (const c of copies) {
         db.prepare(`UPDATE copies SET cover_file = NULL, cover_token = NULL,
                     cover_source_file = NULL, cover_source_token = NULL WHERE id = ?`).run(c.id);
@@ -787,13 +842,14 @@ router.post('/api/ol-contributions/:id/approve', async (req, res) => {
     return res.json({ ok: true, adopted: row.value, photographsRemoved: copies.length });
   }
 
-  if (!haveCredentials()) return res.status(503).json({ error: 'Open Library credentials are not configured' });
+  const creds = sendingCredentials(req);
+  if (!creds) return res.status(503).json({ error: 'Open Library credentials are not configured' });
 
   try {
-    const cookie = await login();
+    const cookie = await login(creds);
     if (row.field === 'import') {
       // Any copy of the edition presents the same importable metadata.
-      const book = db.prepare('SELECT * FROM books WHERE edition_id = ? LIMIT 1').get(row.edition_id);
+      const book = db.prepare('SELECT * FROM books WHERE edition_id = ? AND library_id = ? LIMIT 1').get(row.edition_id, lib);
       const payload = importPayload(book);
       if (!payload) throw new Error('this book no longer has enough detail to import');
       // Rehearse first: the preview runs Open Library's own duplicate matching,
@@ -836,20 +892,24 @@ router.post('/api/ol-contributions/:id/approve', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Shelves CRUD + capacity statistics
 // ---------------------------------------------------------------------------
-function avgThickness() {
-  return db.prepare('SELECT AVG(thickness_mm) AS t FROM books WHERE thickness_mm > 0').get().t || DEFAULT_THICKNESS_MM;
+function avgThickness(lib) {
+  return db.prepare('SELECT AVG(thickness_mm) AS t FROM books WHERE library_id = ? AND thickness_mm > 0').get(lib).t
+    || DEFAULT_THICKNESS_MM;
 }
 
-router.get('/api/shelves', (_req, res) => {
-  const avg = avgThickness();
-  const shelves = db.prepare('SELECT * FROM shelves ORDER BY room, bookcase, label COLLATE NOCASE').all();
+const oneShelf = (id, lib) => db.prepare('SELECT * FROM shelves WHERE id = ? AND library_id = ?').get(id, lib);
+
+router.get('/api/shelves', (req, res) => {
+  const avg = avgThickness(req.library.id);
+  const shelves = db.prepare('SELECT * FROM shelves WHERE library_id = ? ORDER BY room, bookcase, label COLLATE NOCASE')
+    .all(req.library.id);
   res.json(shelves.map((s) => ({ ...s, ...shelfStats(s, avg) })));
 });
 
 router.get('/api/shelves/:id', (req, res) => {
-  const shelf = db.prepare('SELECT * FROM shelves WHERE id = ?').get(req.params.id);
+  const shelf = oneShelf(req.params.id, req.library.id);
   if (!shelf) return res.status(404).json({ error: 'Not found' });
-  res.json({ ...shelf, ...shelfStats(shelf, avgThickness()) });
+  res.json({ ...shelf, ...shelfStats(shelf, avgThickness(req.library.id)) });
 });
 
 // Rank shelves by how well a book (given its dimensions) fits on them.
@@ -864,12 +924,13 @@ router.post('/api/suggest-shelf', (req, res) => {
 
   let currentShelfId = null;
   if (req.body.book_id) {
-    const b = db.prepare('SELECT shelf_id, thickness_mm FROM books WHERE id = ?').get(req.body.book_id);
+    const b = db.prepare('SELECT shelf_id, thickness_mm FROM books WHERE id = ? AND library_id = ?')
+      .get(req.body.book_id, req.library.id);
     if (b) currentShelfId = b.shelf_id;
   }
 
-  const avg = avgThickness();
-  const scored = db.prepare('SELECT * FROM shelves').all().map((s) => {
+  const avg = avgThickness(req.library.id);
+  const scored = db.prepare('SELECT * FROM shelves WHERE library_id = ?').all(req.library.id).map((s) => {
     const stats = shelfStats(s, avg);
     // Give the book back its own width when evaluating the shelf it already sits on.
     let free = stats.free_width_mm;
@@ -907,20 +968,19 @@ router.post('/api/suggest-shelf', (req, res) => {
 router.post('/api/shelves', (req, res) => {
   const data = pick(req.body, SHELF_COLS);
   if (!data.label) return res.status(400).json({ error: 'label is required' });
-  const id = insert('shelves', data);
-  res.status(201).json(db.prepare('SELECT * FROM shelves WHERE id = ?').get(id));
+  const id = insert('shelves', { ...data, library_id: req.library.id });
+  res.status(201).json(oneShelf(id, req.library.id));
 });
 
 router.put('/api/shelves/:id', (req, res) => {
-  if (!db.prepare('SELECT id FROM shelves WHERE id = ?').get(req.params.id))
-    return res.status(404).json({ error: 'Not found' });
-  update('shelves', req.params.id, pick(req.body, SHELF_COLS));
-  res.json(db.prepare('SELECT * FROM shelves WHERE id = ?').get(req.params.id));
+  if (!oneShelf(req.params.id, req.library.id)) return res.status(404).json({ error: 'Not found' });
+  update('shelves', req.params.id, pick(req.body, SHELF_COLS), req.library.id);
+  res.json(oneShelf(req.params.id, req.library.id));
 });
 
 router.delete('/api/shelves/:id', (req, res) => {
   // Books on this shelf become unshelved (ON DELETE SET NULL).
-  const info = db.prepare('DELETE FROM shelves WHERE id = ?').run(req.params.id);
+  const info = db.prepare('DELETE FROM shelves WHERE id = ? AND library_id = ?').run(req.params.id, req.library.id);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
   res.status(204).end();
 });
@@ -957,15 +1017,17 @@ function shelfStats(shelf, avgThickness) {
 // ---------------------------------------------------------------------------
 // Distinct values for autocomplete / filters.
 // ---------------------------------------------------------------------------
-router.get('/api/meta', (_req, res) => {
+router.get('/api/meta', (req, res) => {
+  const lib = req.library.id;
   const distinct = (table, col) =>
-    db.prepare(`SELECT DISTINCT ${col} AS v FROM ${table} WHERE ${col} IS NOT NULL AND ${col} != '' ORDER BY v COLLATE NOCASE`)
-      .all().map((r) => r.v);
+    db.prepare(`SELECT DISTINCT ${col} AS v FROM ${table}
+                WHERE library_id = ? AND ${col} IS NOT NULL AND ${col} != '' ORDER BY v COLLATE NOCASE`)
+      .all(lib).map((r) => r.v);
   res.json({
     rooms: distinct('shelves', 'room'),
     bookcases: distinct('shelves', 'bookcase'),
-    count: db.prepare('SELECT COUNT(*) AS n FROM books').get().n,
-    unshelved: db.prepare('SELECT COUNT(*) AS n FROM books WHERE shelf_id IS NULL').get().n,
+    count: db.prepare('SELECT COUNT(*) AS n FROM books WHERE library_id = ?').get(lib).n,
+    unshelved: db.prepare('SELECT COUNT(*) AS n FROM books WHERE library_id = ? AND shelf_id IS NULL').get(lib).n,
   });
 });
 
@@ -991,20 +1053,23 @@ function parseOrders(value) {
   else String(value ?? '').split(',').forEach(token);
   return [...out].sort((a, b) => a - b);
 }
-router.get('/api/series', (_req, res) => {
+const oneSeries = (id, lib) => db.prepare('SELECT * FROM series WHERE id = ? AND library_id = ?').get(id, lib);
+
+router.get('/api/series', (req, res) => {
   res.json(db.prepare(`
     SELECT s.*, (SELECT COUNT(*) FROM series_books sb WHERE sb.series = s.id) AS book_count
-    FROM series s ORDER BY s.title COLLATE NOCASE`).all());
+    FROM series s WHERE s.library_id = ? ORDER BY s.title COLLATE NOCASE`).all(req.library.id));
 });
 
 // Find-or-create by title (case-insensitive), so typing an existing name reuses it.
 router.post('/api/series', (req, res) => {
   const title = (req.body.title || '').trim();
   if (!title) return res.status(400).json({ error: 'title is required' });
-  const existing = db.prepare('SELECT * FROM series WHERE title = ? COLLATE NOCASE').get(title);
+  const lib = req.library.id;
+  const existing = db.prepare('SELECT * FROM series WHERE library_id = ? AND title = ? COLLATE NOCASE').get(lib, title);
   if (existing) return res.status(200).json(existing);
-  const id = db.prepare('INSERT INTO series (title) VALUES (?)').run(title).lastInsertRowid;
-  res.status(201).json(db.prepare('SELECT * FROM series WHERE id = ?').get(id));
+  const id = db.prepare('INSERT INTO series (library_id, title) VALUES (?, ?)').run(lib, title).lastInsertRowid;
+  res.status(201).json(oneSeries(id, lib));
 });
 
 // Series membership belongs to the edition, so a series lists one entry per
@@ -1014,6 +1079,7 @@ const SERIES_MEMBER_JOIN = `FROM series_books sb
   JOIN books b ON b.id = (SELECT MIN(c.id) FROM copies c WHERE c.edition_id = sb.edition)`;
 
 router.get('/api/series/:id/books', (req, res) => {
+  if (!oneSeries(req.params.id, req.library.id)) return res.status(404).json({ error: 'series not found' });
   res.json(db.prepare(`
     SELECT sb."order" AS "order", b.*
     ${SERIES_MEMBER_JOIN}
@@ -1025,13 +1091,13 @@ router.get('/api/series/:id/books', (req, res) => {
 // (the same volume in several formats) and gaps are allowed (owning #1 and #3).
 router.post('/api/series/:id/books', (req, res) => {
   const seriesId = Number(req.params.id);
-  if (!db.prepare('SELECT id FROM series WHERE id = ?').get(seriesId)) {
+  if (!oneSeries(seriesId, req.library.id)) {
     return res.status(404).json({ error: 'series not found' });
   }
   // The API still speaks in book (copy) ids; the position is recorded against
   // the edition, so placing one copy places the book however many copies exist.
   const bookId = Number(req.body.book_id);
-  const copy = bookId ? db.prepare('SELECT edition_id FROM copies WHERE id = ?').get(bookId) : null;
+  const copy = bookId ? db.prepare('SELECT edition_id FROM copies WHERE id = ? AND library_id = ?').get(bookId, req.library.id) : null;
   if (!copy) {
     return res.status(400).json({ error: 'valid book_id is required' });
   }
@@ -1057,8 +1123,8 @@ router.post('/api/series/:id/books', (req, res) => {
 // the series, not positions in a list (renumbering would be wrong when several
 // editions share a number).
 router.delete('/api/series/:id/books/:bookId', (req, res) => {
-  const copy = db.prepare('SELECT edition_id FROM copies WHERE id = ?').get(req.params.bookId);
-  if (!copy) return res.status(404).json({ error: 'Not found' });
+  const copy = db.prepare('SELECT edition_id FROM copies WHERE id = ? AND library_id = ?').get(req.params.bookId, req.library.id);
+  if (!copy || !oneSeries(req.params.id, req.library.id)) return res.status(404).json({ error: 'Not found' });
   const info = db.prepare('DELETE FROM series_books WHERE series = ? AND edition = ?')
     .run(Number(req.params.id), copy.edition_id);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
@@ -1068,38 +1134,42 @@ router.delete('/api/series/:id/books/:bookId', (req, res) => {
 // ---------------------------------------------------------------------------
 // Genres — hierarchical taxonomy (parent_id NULL = top-level, else a subgenre).
 // ---------------------------------------------------------------------------
-router.get('/api/genres', (_req, res) => {
+const oneGenre = (id, lib) => db.prepare('SELECT * FROM genres WHERE id = ? AND library_id = ?').get(id, lib);
+
+router.get('/api/genres', (req, res) => {
   res.json(db.prepare(`
     SELECT g.*, (SELECT COUNT(*) FROM book_genres bg WHERE bg.genre_id = g.id) AS book_count
-    FROM genres g ORDER BY g.name COLLATE NOCASE`).all());
+    FROM genres g WHERE g.library_id = ? ORDER BY g.name COLLATE NOCASE`).all(req.library.id));
 });
 
 router.post('/api/genres', (req, res) => {
   const name = (req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'name is required' });
+  const lib = req.library.id;
   const parentId = req.body.parent_id ? Number(req.body.parent_id) : null;
-  if (parentId && !db.prepare('SELECT id FROM genres WHERE id = ?').get(parentId)) {
+  if (parentId && !oneGenre(parentId, lib)) {
     return res.status(400).json({ error: 'parent genre not found' });
   }
   // Reuse an existing entry with the same name in the same parent scope.
   const existing = db.prepare(
-    'SELECT * FROM genres WHERE name = ? COLLATE NOCASE AND ifnull(parent_id, 0) = ifnull(?, 0)',
-  ).get(name, parentId);
+    'SELECT * FROM genres WHERE library_id = ? AND name = ? COLLATE NOCASE AND ifnull(parent_id, 0) = ifnull(?, 0)',
+  ).get(lib, name, parentId);
   if (existing) {
     if (req.body.definition && !existing.definition) {
-      db.prepare("UPDATE genres SET definition = ?, updated_at = datetime('now') WHERE id = ?")
-        .run(req.body.definition, existing.id);
+      db.prepare("UPDATE genres SET definition = ?, updated_at = datetime('now') WHERE id = ? AND library_id = ?")
+        .run(req.body.definition, existing.id, lib);
     }
-    return res.status(200).json(db.prepare('SELECT * FROM genres WHERE id = ?').get(existing.id));
+    return res.status(200).json(oneGenre(existing.id, lib));
   }
-  const info = db.prepare('INSERT INTO genres (name, definition, parent_id) VALUES (?, ?, ?)')
-    .run(name, req.body.definition || '', parentId);
-  res.status(201).json(db.prepare('SELECT * FROM genres WHERE id = ?').get(info.lastInsertRowid));
+  const info = db.prepare('INSERT INTO genres (library_id, name, definition, parent_id) VALUES (?, ?, ?, ?)')
+    .run(lib, name, req.body.definition || '', parentId);
+  res.status(201).json(oneGenre(info.lastInsertRowid, lib));
 });
 
 router.put('/api/genres/:id', (req, res) => {
   const id = Number(req.params.id);
-  const genre = db.prepare('SELECT * FROM genres WHERE id = ?').get(id);
+  const lib = req.library.id;
+  const genre = oneGenre(id, lib);
   if (!genre) return res.status(404).json({ error: 'Not found' });
   const name = req.body.name !== undefined ? (req.body.name || '').trim() : genre.name;
   if (!name) return res.status(400).json({ error: 'name cannot be empty' });
@@ -1110,7 +1180,7 @@ router.put('/api/genres/:id', (req, res) => {
     parentId = req.body.parent_id ? Number(req.body.parent_id) : null;
     if (parentId != null) {
       if (parentId === id) return res.status(400).json({ error: 'a genre cannot be its own parent' });
-      if (!db.prepare('SELECT id FROM genres WHERE id = ?').get(parentId)) {
+      if (!oneGenre(parentId, lib)) {
         return res.status(400).json({ error: 'parent genre not found' });
       }
       // Walk up from the proposed parent; reaching this genre would form a cycle.
@@ -1123,19 +1193,82 @@ router.put('/api/genres/:id', (req, res) => {
   }
 
   try {
-    db.prepare("UPDATE genres SET name = ?, definition = ?, parent_id = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(name, definition, parentId, id);
+    db.prepare("UPDATE genres SET name = ?, definition = ?, parent_id = ?, updated_at = datetime('now') WHERE id = ? AND library_id = ?")
+      .run(name, definition, parentId, id, lib);
   } catch (err) {
     if (/UNIQUE/i.test(err.message)) return res.status(409).json({ error: 'a genre with that name already exists under that parent' });
     throw err;
   }
-  res.json(db.prepare('SELECT * FROM genres WHERE id = ?').get(id));
+  res.json(oneGenre(id, lib));
 });
 
 router.delete('/api/genres/:id', (req, res) => {
   // Children cascade (ON DELETE CASCADE); book_genres links cascade too.
-  const info = db.prepare('DELETE FROM genres WHERE id = ?').run(req.params.id);
+  const info = db.prepare('DELETE FROM genres WHERE id = ? AND library_id = ?').run(req.params.id, req.library.id);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
+  res.status(204).end();
+});
+
+// ---------------------------------------------------------------------------
+// Your account and this library's members. Both are about people, so both
+// need sign-in: with it off there is nobody to hold keys or be a member.
+// ---------------------------------------------------------------------------
+const needsSignIn = (req, res, next) => (req.user ? next()
+  : res.status(404).json({ error: 'Sign-in is off, so there are no accounts or members.' }));
+
+router.get('/api/account', (req, res) => {
+  const library = { id: req.library.id, name: req.library.name, display: displayName(req.library.name) };
+  if (!req.user) {
+    // Sign-in off: the keys, if any, are the environment's.
+    return res.json({ email: null, library, libraries: [], openlibrary: { active: !!envCredentials(), from_env: true } });
+  }
+  res.json({
+    email: req.user.email,
+    library,
+    libraries: librariesOf(req.user.id).map((l) => ({ id: l.id, name: l.name })),
+    openlibrary: olStatus(req.user.id),
+  });
+});
+
+// Saved only once Open Library has accepted them: keys that cannot sign in
+// would show Give back to somebody whose every send then fails.
+router.put('/api/account/openlibrary', needsSignIn, async (req, res) => {
+  const access = String(req.body?.access_key ?? '').trim();
+  const secret = String(req.body?.secret_key ?? '').trim();
+  if (!access || !secret) return res.status(400).json({ error: 'Both the access key and the secret key are needed.' });
+  try {
+    await login({ access, secret });
+  } catch (e) {
+    return res.status(422).json({ error: `Open Library did not accept those keys: ${e.message}` });
+  }
+  setOlCredentials(req.user.id, { access, secret });
+  res.json(olStatus(req.user.id));
+});
+
+router.delete('/api/account/openlibrary', needsSignIn, (req, res) => {
+  clearOlCredentials(req.user.id);
+  res.json(olStatus(req.user.id));
+});
+
+// Any member may see and change who else is a member.
+router.get('/api/library/members', needsSignIn, (req, res) => {
+  res.json(members(req.library.id).map((m) => ({ ...m, you: m.id === req.user.id })));
+});
+
+// Enough of a check to catch a typo; Google decides whether the address is real
+// when that person signs in.
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+router.post('/api/library/members', needsSignIn, (req, res) => {
+  const email = String(req.body?.email ?? '').trim().toLowerCase();
+  if (!EMAIL.test(email) || email.length > 254) return res.status(400).json({ error: 'That is not an email address.' });
+  addMember(req.library.id, email, req.user.id);
+  res.status(201).json(members(req.library.id).map((m) => ({ ...m, you: m.id === req.user.id })));
+});
+
+router.delete('/api/library/members/:userId', needsSignIn, (req, res) => {
+  const refusal = removeMember(req.library.id, Number(req.params.userId), req.user.id);
+  if (refusal) return res.status(409).json({ error: refusal });
   res.status(204).end();
 });
 
@@ -1244,17 +1377,19 @@ router.post('/api/import/epub', express.raw({ type: () => true, limit: '80mb' })
     source: 'epub',
     shelf_id: req.query.shelf_id || null,
   }, BOOK_COLS);
+  const lib = req.library.id;
+  if (!shelfInLibrary(data.shelf_id, lib)) return badShelf(res);
   const { edition, copy } = splitBookData(data);
   const create = db.transaction(() => {
-    const editionId = resolveEdition(edition, data.isbn);
-    return insert('copies', { ...copy, edition_id: editionId });
+    const editionId = resolveEdition(edition, data.isbn, lib);
+    return insert('copies', { ...copy, edition_id: editionId, library_id: lib });
   });
   const id = create();
-  if (coverJpeg) applyImages(id, { cover: { buf: coverJpeg, mime: 'image/jpeg' } });
+  if (coverJpeg) applyImages(id, { cover: { buf: coverJpeg, mime: 'image/jpeg' } }, lib);
   // Through coverRef like every other book response: the client just uploaded
   // this file and has no use for its cover echoed back as half a megabyte of
   // base64. It gets the same reference URL the rest of the API returns.
-  res.status(201).json(coverRef(db.prepare(`SELECT ${BOOK_SELECT} FROM books b WHERE b.id = ?`).get(id)));
+  res.status(201).json(coverRef(oneBook(id, lib)));
 });
 
 app.use(BASE || '/', router);
@@ -1273,10 +1408,9 @@ app.listen(PORT, () => {
     console.log('   sign-in OFF — anyone who can reach this port can edit the library');
     console.log('   (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to require a Google account)');
   } else {
-    const list = readAllowlist();
-    console.log(list.entries.length
-      ? `   sign-in required; ${list.entries.length} address(es) allowed by ${list.path}`
-      : `   sign-in required; every Google account is allowed (${list.present ? 'empty' : 'no'} ${allowlistPath()})`);
+    const n = db.prepare('SELECT (SELECT COUNT(*) FROM libraries) AS libraries, (SELECT COUNT(*) FROM users) AS users').get();
+    console.log(`   sign-in required; ${n.libraries} librar${n.libraries === 1 ? 'y' : 'ies'}, ${n.users} user(s)`
+      + ' — naming a new library at sign-in creates it');
     console.log(`   sessions idle out after ${sessionIdleDays()} day(s) of no visits, and slide forward on every visit`);
     // Renamed when the timeout became a sliding one. Say so rather than ignore
     // it: a variable that stopped being read is exactly the kind of change that

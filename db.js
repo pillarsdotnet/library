@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { sortTitle } from './sorttitle.js';
 import { canonicalIsbn } from './isbn.js';
 import { parseDataUrl, writeCover, COVERS_DIR } from './covers.js';
@@ -46,8 +46,42 @@ const objectKind = (name) =>
 const LEGACY_BOOKS = objectKind('books') === 'table';
 
 db.exec(`
+  -- A library is a tenant: its own books, shelves, genres and series. Names are
+  -- what people type at sign-in, so they are unique however they are cased.
+  CREATE TABLE IF NOT EXISTS libraries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_libraries_name ON libraries(name COLLATE NOCASE);
+
+  -- A person, identified by the address Google vouched for. The Open Library
+  -- keys are that person's own, encrypted (see accounts.js): sending under them
+  -- is sending as them, so they belong to a user rather than to a library.
+  CREATE TABLE IF NOT EXISTS users (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    email             TEXT NOT NULL,
+    ol_access_key     TEXT,
+    ol_secret_key     TEXT,
+    ol_verified_at    TEXT,
+    created_at        TEXT DEFAULT (datetime('now'))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE);
+
+  -- Who may use which library. Checked on every request, so deleting a row
+  -- ends that person's access on their next click.
+  CREATE TABLE IF NOT EXISTS library_users (
+    library_id  INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES users(id)     ON DELETE CASCADE,
+    added_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (library_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_library_users_user ON library_users(user_id);
+
   CREATE TABLE IF NOT EXISTS shelves (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id      INTEGER REFERENCES libraries(id),
     room            TEXT,
     bookcase        TEXT,
     label           TEXT NOT NULL,     -- e.g. "Shelf 3" / "Top left"
@@ -63,6 +97,7 @@ db.exec(`
   -- there is more than one) in every other.
   CREATE TABLE IF NOT EXISTS editions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id      INTEGER REFERENCES libraries(id),
     -- Canonical ISBN-13, the only spelling ever stored, so the 10- and 13-digit
     -- forms of one edition cannot become two rows. NULL when the book has no
     -- usable ISBN — see isbn_text.
@@ -108,13 +143,13 @@ db.exec(`
     updated_at      TEXT DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_editions_title ON editions(title);
-  -- Edition identity. NULLs never compare equal in SQLite, so every book without
-  -- a usable ISBN keeps an edition to itself, which is exactly what we want.
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_editions_isbn_format ON editions(isbn13, format);
+  -- Edition identity, (library_id, isbn13, format), is indexed in the tenancy
+  -- block below: a database from before libraries has no library_id yet here.
 
   -- One physical object on one shelf.
   CREATE TABLE IF NOT EXISTS copies (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id      INTEGER REFERENCES libraries(id),
     edition_id      INTEGER NOT NULL REFERENCES editions(id) ON DELETE CASCADE,
 
     -- Survives on this copy or does not. The one genuinely per-copy field in
@@ -161,6 +196,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS genres (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id  INTEGER REFERENCES libraries(id),
     name        TEXT NOT NULL,
     definition  TEXT,
     -- NULL = top-level genre; otherwise this row is a subgenre of parent_id.
@@ -169,19 +205,15 @@ db.exec(`
     updated_at  TEXT DEFAULT (datetime('now'))
   );
 
-  -- A name is unique within its parent scope (top-level names, and children of a
-  -- given parent). The same subgenre name may recur under different parents
-  -- (e.g. "Contemporary" under both Fantasy and Realism).
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_genres_name_parent
-    ON genres(name COLLATE NOCASE, ifnull(parent_id, 0));
+  -- Genre and series names are unique per library; indexed in the tenancy block.
 
   CREATE TABLE IF NOT EXISTS series (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id  INTEGER REFERENCES libraries(id),
     title       TEXT NOT NULL,
     created_at  TEXT DEFAULT (datetime('now')),
     updated_at  TEXT DEFAULT (datetime('now'))
   );
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_series_title ON series(title COLLATE NOCASE);
 
   -- Cache of ISBN lookups (the merged result across every metadata source), so a
   -- re-scan, a retry, or a second glance at the same book does not spend another
@@ -279,6 +311,7 @@ db.exec(LEGACY_BOOKS ? `
 
   CREATE TABLE IF NOT EXISTS ol_contributions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id  INTEGER REFERENCES libraries(id),
     edition_id  INTEGER NOT NULL REFERENCES editions(id) ON DELETE CASCADE,
     -- the record this would edit: an edition (OL123M) for most fields, the work
     -- (OL123W) for the series tag, which Open Library keeps on the work.
@@ -680,6 +713,97 @@ if (LEGACY_BOOKS) {
   }
 }
 
+// ─── libraries: one database, many tenants ──────────────────────────────────────
+// Every row a library owns carries its library_id: shelves, editions, copies,
+// genres, series and Open Library proposals. The link tables (book_genres,
+// series_books, ol_send_attempts) belong to a library through the rows they
+// link, and the triggers below keep those links inside one library.
+//
+// The first library is created here, and everything already in the database is
+// its. So are the addresses from allowed-emails.txt, which is how this app said
+// who could sign in before users were rows: they become that library's members,
+// once, and the file is not read again.
+export const TENANT_TABLES = ['shelves', 'editions', 'copies', 'genres', 'series', 'ol_contributions'];
+export const FIRST_LIBRARY_NAME = 'Bobbalisa';
+
+// Beside the database, where the allowlist always lived unless moved.
+function legacyAllowlist() {
+  const path = process.env.AUTH_ALLOWED_FILE || join(dirname(DB_PATH), 'allowed-emails.txt');
+  if (!existsSync(path)) return [];
+  return readFileSync(path, 'utf8').split('\n')
+    .map((line) => line.replace(/#.*$/, '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+{
+  const colsOf = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+  for (const t of TENANT_TABLES) {
+    // Nullable, because SQLite cannot ADD a NOT NULL column that references
+    // another table. The triggers below are what enforce it.
+    if (!colsOf(t).includes('library_id')) db.exec(`ALTER TABLE ${t} ADD COLUMN library_id INTEGER REFERENCES libraries(id)`);
+  }
+
+  const migrate = db.transaction(() => {
+    let first = db.prepare('SELECT id FROM libraries ORDER BY id LIMIT 1').get();
+    if (!first) {
+      const id = db.prepare('INSERT INTO libraries (name) VALUES (?)').run(FIRST_LIBRARY_NAME).lastInsertRowid;
+      first = { id };
+      const addUser = db.prepare('INSERT OR IGNORE INTO users (email) VALUES (?)');
+      const userId = db.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE');
+      const link = db.prepare('INSERT OR IGNORE INTO library_users (library_id, user_id) VALUES (?, ?)');
+      const emails = legacyAllowlist();
+      for (const email of emails) {
+        addUser.run(email);
+        link.run(id, userId.get(email).id);
+      }
+      if (emails.length) console.log(`👥 ${emails.length} address(es) from allowed-emails.txt are now members of ${FIRST_LIBRARY_NAME}`);
+    }
+    // Everything from before libraries existed belongs to the first one.
+    for (const t of TENANT_TABLES) db.prepare(`UPDATE ${t} SET library_id = ? WHERE library_id IS NULL`).run(first.id);
+  });
+  migrate();
+
+  db.exec(`
+    -- Identity and uniqueness are per library: two libraries may each own the
+    -- same ISBN, or each have a genre called Fantasy.
+    DROP INDEX IF EXISTS idx_editions_isbn_format;
+    DROP INDEX IF EXISTS idx_genres_name_parent;
+    DROP INDEX IF EXISTS idx_series_title;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_editions_library_isbn_format ON editions(library_id, isbn13, format);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_genres_library_name_parent
+      ON genres(library_id, name COLLATE NOCASE, ifnull(parent_id, 0));
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_series_library_title ON series(library_id, title COLLATE NOCASE);
+    CREATE INDEX IF NOT EXISTS idx_shelves_library ON shelves(library_id);
+    CREATE INDEX IF NOT EXISTS idx_copies_library ON copies(library_id);
+    CREATE INDEX IF NOT EXISTS idx_ol_contrib_library ON ol_contributions(library_id);
+  `);
+
+  // The database refuses what the application must never do, so a query that
+  // forgets its library fails loudly instead of quietly mixing two libraries.
+  // A row must name its library, may never move to another, and may only point
+  // at rows of its own library.
+  const trigger = (name, when, event, table, cond) => db.exec(`
+    CREATE TRIGGER IF NOT EXISTS ${name} ${when} ${event} ON ${table} FOR EACH ROW
+    WHEN ${cond} BEGIN SELECT RAISE(ABORT, '${name}'); END;`);
+  for (const t of TENANT_TABLES) {
+    trigger(`${t}_library_required`, 'BEFORE', 'INSERT', t, 'NEW.library_id IS NULL');
+    trigger(`${t}_library_fixed`, 'BEFORE', 'UPDATE OF library_id', t, 'NEW.library_id IS NOT OLD.library_id');
+  }
+  const copyCond = `(SELECT library_id FROM editions WHERE id = NEW.edition_id) IS NOT NEW.library_id
+    OR (NEW.shelf_id IS NOT NULL AND (SELECT library_id FROM shelves WHERE id = NEW.shelf_id) IS NOT NEW.library_id)`;
+  trigger('copies_same_library_ins', 'BEFORE', 'INSERT', 'copies', copyCond);
+  trigger('copies_same_library_upd', 'BEFORE', 'UPDATE OF edition_id, shelf_id', 'copies', copyCond);
+  const parentCond = `NEW.parent_id IS NOT NULL AND (SELECT library_id FROM genres WHERE id = NEW.parent_id) IS NOT NEW.library_id`;
+  trigger('genres_same_library_ins', 'BEFORE', 'INSERT', 'genres', parentCond);
+  trigger('genres_same_library_upd', 'BEFORE', 'UPDATE OF parent_id', 'genres', parentCond);
+  trigger('book_genres_same_library', 'BEFORE', 'INSERT', 'book_genres',
+    '(SELECT library_id FROM genres WHERE id = NEW.genre_id) IS NOT (SELECT library_id FROM editions WHERE id = NEW.edition_id)');
+  trigger('series_books_same_library', 'BEFORE', 'INSERT', 'series_books',
+    '(SELECT library_id FROM series WHERE id = NEW.series) IS NOT (SELECT library_id FROM editions WHERE id = NEW.edition)');
+  trigger('ol_contributions_same_library', 'BEFORE', 'INSERT', 'ol_contributions',
+    '(SELECT library_id FROM editions WHERE id = NEW.edition_id) IS NOT NEW.library_id');
+}
+
 // ─── the `books` compatibility view ─────────────────────────────────────────────
 // Reads keep working exactly as before: one row per copy, edition columns folded
 // in. `library_name` is preserved as an alias so existing queries and API
@@ -690,7 +814,7 @@ if (LEGACY_BOOKS) {
 // derived, so dropping one loses nothing, and a stale definition would silently
 // deprive the list query of the columns that keep the images off the read path.
 if (objectKind('books') === 'view'
-    && !db.prepare('PRAGMA table_info(books)').all().some((c) => c.name === 'cover_file')) {
+    && !['cover_file', 'library_id'].every((col) => db.prepare('PRAGMA table_info(books)').all().some((c) => c.name === col))) {
   db.exec('DROP VIEW books');
 }
 if (objectKind('books') !== 'view') {
@@ -698,6 +822,7 @@ if (objectKind('books') !== 'view') {
     CREATE VIEW books AS
     SELECT
       c.id                              AS id,
+      c.library_id                      AS library_id,
       c.edition_id                      AS edition_id,
       COALESCE(e.isbn13, e.isbn_text)   AS isbn,
       e.isbn13                          AS isbn13,
@@ -753,19 +878,24 @@ if (objectKind('books') !== 'view') {
 // and there is exactly one write path, in JavaScript, where canonicalIsbn() is
 // available and a merge can report what it did.
 
-// Seed the genre taxonomy ONCE, only when the table is empty. The taxonomy is
-// user-owned after that: re-seeding on every startup would resurrect genres the
-// user has deliberately deleted (which it did), so we never re-insert seed rows
-// into a non-empty table.
-if (db.prepare('SELECT COUNT(*) AS n FROM genres').get().n === 0) {
-  const insGenre = db.prepare('INSERT INTO genres (name, definition, parent_id) VALUES (?, ?, ?)');
-  const seed = db.transaction(() => {
-    for (const g of GENRE_SEED) {
-      const parentId = insGenre.run(g.name, g.definition, null).lastInsertRowid;
-      for (const c of g.children || []) insGenre.run(c.name, c.definition, parentId);
-    }
-  });
-  seed();
+// Seed a library's genre taxonomy ONCE: when the library is created, or here
+// for the first library if it has none. The taxonomy is the library's own after
+// that: re-seeding on every startup would resurrect genres somebody has
+// deliberately deleted (which it did), so seed rows never go into a library
+// that already has genres. Not a transaction of its own, so that creating a
+// library can include it in one.
+export function seedGenres(libraryId) {
+  const insGenre = db.prepare('INSERT INTO genres (library_id, name, definition, parent_id) VALUES (?, ?, ?, ?)');
+  for (const g of GENRE_SEED) {
+    const parentId = insGenre.run(libraryId, g.name, g.definition, null).lastInsertRowid;
+    for (const c of g.children || []) insGenre.run(libraryId, c.name, c.definition, parentId);
+  }
+}
+{
+  const first = db.prepare('SELECT id FROM libraries ORDER BY id LIMIT 1').get();
+  if (!db.prepare('SELECT 1 FROM genres WHERE library_id = ? LIMIT 1').get(first.id)) {
+    db.transaction(() => seedGenres(first.id))();
+  }
 }
 
 // Dimensions are whole millimetres. Round any legacy fractional values (they

@@ -313,16 +313,20 @@ export async function sendImport(payload, cookie, { preview = false } = {}, doFe
 // Sending. Everything below needs credentials; see the README for getting them.
 // ---------------------------------------------------------------------------
 
-export function haveCredentials() {
-  return !!(process.env.OPENLIBRARY_ACCESS_KEY && process.env.OPENLIBRARY_SECRET_KEY);
+// The keys in the environment. With sign-in on, keys belong to users and are
+// stored on their accounts instead (see accounts.js); these apply only when
+// sign-in is off, where there are no users to hold them.
+export function envCredentials() {
+  const access = process.env.OPENLIBRARY_ACCESS_KEY;
+  const secret = process.env.OPENLIBRARY_SECRET_KEY;
+  return access && secret ? { access, secret } : null;
 }
 
 // Log in with Internet Archive S3 keys and keep the session cookie. Open
 // Library hands back a cookie rather than a bearer token, so the cookie is the
 // credential for every write that follows.
-export async function login(doFetch = globalThis.fetch) {
-  const access = process.env.OPENLIBRARY_ACCESS_KEY;
-  const secret = process.env.OPENLIBRARY_SECRET_KEY;
+export async function login(creds, doFetch = globalThis.fetch) {
+  const { access, secret } = creds || {};
   if (!access || !secret) throw new Error('Open Library credentials are not configured');
   // Idempotent enough to retry: a repeat just mints another session cookie.
   const r = await fetchRetryingNetwork(doFetch, `${OL}/account/login.json`, {

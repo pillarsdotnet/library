@@ -1,32 +1,39 @@
-// Signing in with Google, and deciding who is let in.
+// Signing in with Google, and deciding who is let in, to which library.
 //
 // This app held no accounts for its whole life, and the deployments compensated
-// for that outside the app: the public VPS binds nginx to the Tailscale address
+// for that outside the app: the public VPS bound nginx to the Tailscale address
 // rather than 0.0.0.0, precisely because anyone who could reach the port could
 // edit the library. Sign-in is what makes that a choice rather than the only
 // safe option.
 //
-// Three rules shape everything below:
+// Four rules shape everything below:
 //
 //   1. Off unless configured. With no GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
 //      there is no identity provider to ask, so the app behaves exactly as it
-//      did before — open. Failing closed instead would mean a missing variable
-//      silently bricks a home server nobody can log in to fix. The startup log
-//      says which mode it is in, every time, so "open" is never a surprise.
-//   2. The allowlist is checked on every request, not once at login. Removing
-//      an address from the file ends that person's session on their next click;
-//      a session that outlived its permission is the thing an allowlist is for.
-//   3. Absent or empty means everyone. "Signed in with Google" is itself a
-//      meaningful gate — it is the difference between the world and people with
-//      an account — so an unwritten file is read as "no further restriction",
-//      which is what the file not existing most plainly means.
+//      did before — open, on its first library. Failing closed instead would
+//      mean a missing variable silently bricks a home server nobody can log in
+//      to fix. The startup log says which mode it is in, every time.
+//   2. Membership is checked on every request, not once at login. Removing a
+//      member ends that person's session on their next click; a session that
+//      outlived its permission is the thing membership is for.
+//   3. Signing in names a library. A name nobody has taken becomes a new
+//      library with the person signing in as its only member; a taken name
+//      admits its members and nobody else.
+//   4. One library at a time. The session carries the library it was opened
+//      for; using another means signing in to that one.
 //
 // The OAuth exchange is written out here rather than pulled from a library. It
 // is one redirect and one POST, both documented by Google, and a dependency in
 // the trust path of the login screen is a dependency worth not having.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import express from 'express';
+import { secret } from './secrets.js';
+import {
+  normalizeLibraryName, displayName, libraryById, libraryByName, firstLibrary, NAME_MAX,
+  findOrCreateUser, userByEmail, isMember, librariesOf, createLibrary,
+} from './accounts.js';
+
+export { sessionSecretIsEphemeral } from './secrets.js';
 
 // Overridable so the tests can point the flow at a stub, the same way
 // OPENLIBRARY_BASE does for contributions. Nothing else should set these.
@@ -35,6 +42,11 @@ const TOKEN_URL = process.env.GOOGLE_TOKEN_URL || 'https://oauth2.googleapis.com
 
 const SESSION_COOKIE = 'hl_session';
 const FLOW_COOKIE = 'hl_oauth';
+// Who signed in last on this browser, and to which library, so the sign-in form
+// can offer it again. Outlives the session on purpose: signing out is when it
+// is most wanted.
+const LAST_COOKIE = 'hl_last';
+const LAST_TTL_MS = 365 * 24 * 3600 * 1000;
 const FLOW_TTL_MS = 10 * 60 * 1000;          // long enough to type a password
 
 // How long a session survives *without being used*. It is an idle window, not a
@@ -78,79 +90,6 @@ export function authConfigured() {
   return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 }
 
-// A secret that survives restarts keeps people signed in across a deploy. One
-// generated at boot works just as well for security and signs everybody out
-// every time the container restarts, which on a box that restarts nightly is
-// indistinguishable from broken — hence the nudge in the startup banner.
-let bootSecret = null;
-function secret() {
-  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
-  bootSecret ??= randomBytes(32).toString('hex');
-  return bootSecret;
-}
-
-export function sessionSecretIsEphemeral() {
-  return !process.env.SESSION_SECRET;
-}
-
-// ---------------------------------------------------------------------------
-// The allowlist file.
-// ---------------------------------------------------------------------------
-
-// Beside the database by default, the same as the covers directory — because
-// that is the path a deployment already makes persistent. A default under the
-// working directory would put the list inside the container image, where an
-// edit survives exactly until the next deploy overwrites it.
-export function allowlistPath() {
-  if (process.env.AUTH_ALLOWED_FILE) return process.env.AUTH_ALLOWED_FILE;
-  return join(dirname(process.env.DB_PATH || './data/library.db'), 'allowed-emails.txt');
-}
-
-// Re-read only when the file's mtime or size moves. An allowlist is consulted
-// on every request (rule 2), and a home server has no business doing a disk
-// read per asset when the answer changed last month.
-let cached = { key: null, entries: [] };
-
-export function readAllowlist(path = allowlistPath()) {
-  let key;
-  try {
-    const st = statSync(path);
-    key = `${st.mtimeMs}:${st.size}`;
-  } catch {
-    cached = { key: null, entries: [] };
-    return { entries: [], present: false, path };
-  }
-  if (key !== cached.key) {
-    let entries = [];
-    try {
-      entries = readFileSync(path, 'utf8')
-        .split('\n')
-        // '#' starts a comment so the file can say why somebody is on it.
-        .map((line) => line.replace(/#.*$/, '').trim().toLowerCase())
-        .filter(Boolean);
-    } catch {
-      // Readable a moment ago, unreadable now: treat as empty rather than
-      // crash, and let the next request pick up whatever it settles into.
-      entries = [];
-    }
-    cached = { key, entries };
-  }
-  return { entries: cached.entries, present: true, path };
-}
-
-/**
- * Is this address permitted?
- *
- * An absent or empty file permits every signed-in address — see rule 3. Only a
- * file with at least one entry restricts anything.
- */
-export function emailAllowed(email, path = allowlistPath()) {
-  if (!email) return false;
-  const { entries } = readAllowlist(path);
-  if (!entries.length) return true;
-  return entries.includes(String(email).trim().toLowerCase());
-}
-
 // ---------------------------------------------------------------------------
 // Signed values. Cookies are the only place this app stores anything a browser
 // hands back, so they are signed and their signatures compared in constant time.
@@ -188,11 +127,13 @@ export function parseCookies(header) {
   return out;
 }
 
-export function sessionFor(email) {
+// `lib` is the library the session was opened for. A session from before
+// libraries has none; the gate settles it (see sessionLibrary).
+export function sessionFor(email, libraryId) {
   const now = Date.now();
   // `iat` is not read by anything today. It is what an absolute cap on top of
   // the idle window would be written against, so it costs nothing to record.
-  return sign({ email: String(email).toLowerCase(), iat: now, exp: now + sessionIdleMs() });
+  return sign({ email: String(email).toLowerCase(), lib: libraryId, iat: now, exp: now + sessionIdleMs() });
 }
 
 export function sessionFromRequest(req) {
@@ -251,6 +192,67 @@ function claimsFromIdToken(idToken) {
   return typeof claims.email === 'string' ? claims : null;
 }
 
+// ---------------------------------------------------------------------------
+// Pages. Sign-in happens before the app has loaded, so these are plain HTML.
+// ---------------------------------------------------------------------------
+
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[c]));
+
+function page(title, body) {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>
+  :root { color-scheme: light dark; --bg: #faf8f5; --fg: #1d1b20; --muted: #6b6570; --accent: #6d4aa8; --line: #d9d3dd; --err: #b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #16131c; --fg: #ece6f0; --muted: #a39cab; --accent: #b39ddb; --line: #3a3342; --err: #f2b8b5; } }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg);
+         font: 16px/1.5 system-ui, sans-serif; padding: 16px; box-sizing: border-box; }
+  main { width: 100%; max-width: 380px; }
+  h1 { font-size: 1.4rem; margin: 0 0 12px; }
+  p { margin: 0 0 12px; }
+  .hint { color: var(--muted); font-size: 0.9rem; }
+  .err { color: var(--err); }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  input { width: 100%; box-sizing: border-box; font: inherit; padding: 10px 12px; border: 1px solid var(--line);
+          border-radius: 8px; background: transparent; color: inherit; }
+  button, a.btn { display: inline-block; margin-top: 16px; font: inherit; font-weight: 600; padding: 10px 16px; border: 0;
+           border-radius: 8px; background: var(--accent); color: var(--bg); cursor: pointer; text-decoration: none; }
+  ul { padding-left: 1.2em; }
+</style></head>
+<body><main>${body}</main></body></html>`;
+}
+
+function loginPage({ base, to, library = '', email = '', libraries = [], error = '' }) {
+  const mine = libraries.length
+    ? `<p class="hint">Your libraries: ${libraries.map((l) => esc(l.name)).join(', ')}</p>` : '';
+  return page('Sign in', `
+    <h1>📚 Sign in</h1>
+    ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ''}
+    <form method="post" action="${esc(base)}/auth/login">
+      <input type="hidden" name="to" value="${esc(to)}">
+      <label for="library">Library</label>
+      <input id="library" name="library" required maxlength="${NAME_MAX}" autocomplete="organization"
+             value="${esc(library)}" ${library ? '' : 'autofocus'}>
+      <p class="hint">The library to open. A name nobody has used yet starts a new library, with you as its only member.</p>
+      ${mine}
+      ${email ? `<p class="hint">Last signed in here as ${esc(email)}.</p>` : ''}
+      <button type="submit" ${library ? 'autofocus' : ''}>Continue with Google</button>
+    </form>`);
+}
+
+// ---------------------------------------------------------------------------
+// Remembering the last sign-in.
+// ---------------------------------------------------------------------------
+
+// The remembered sign-in, if this browser has one: { email, library }.
+function lastSignIn(req) {
+  const v = unsign(parseCookies(req.headers?.cookie)[LAST_COOKIE]);
+  return v ? { email: v.email || '', library: v.library || '' } : { email: '', library: '' };
+}
+
 /**
  * Mount /auth/login, /auth/callback, /auth/logout and /auth/me on a router.
  *
@@ -260,14 +262,44 @@ function claimsFromIdToken(idToken) {
  */
 export function mountAuth(router, base = '', doFetch = globalThis.fetch) {
   router.get('/auth/me', (req, res) => {
-    if (!authConfigured()) return res.json({ required: false, email: null });
-    const session = sessionFromRequest(req);
-    const email = session && emailAllowed(session.email) ? session.email : null;
-    res.json({ required: true, email });
+    if (!authConfigured()) {
+      const lib = firstLibrary();
+      return res.json({ required: false, email: null, library: { id: lib.id, name: lib.name, display: displayName(lib.name) } });
+    }
+    const who = signedIn(req);
+    if (!who) return res.json({ required: true, email: null, library: null });
+    res.json({
+      required: true,
+      email: who.user.email,
+      library: { id: who.library.id, name: who.library.name, display: displayName(who.library.name) },
+    });
   });
 
+  // The form. Pre-filled from the last sign-in on this browser, and from
+  // ?library= so a link can name one.
   router.get('/auth/login', (req, res) => {
     if (!authConfigured()) return res.redirect(safeReturnPath(req.query.to, base));
+    const last = lastSignIn(req);
+    const known = last.email ? userByEmail(last.email) : null;
+    res.type('html').send(loginPage({
+      base,
+      to: safeReturnPath(req.query.to, base),
+      library: normalizeLibraryName(req.query.library) || last.library,
+      email: last.email,
+      libraries: known ? librariesOf(known.id) : [],
+    }));
+  });
+
+  router.post('/auth/login', express.urlencoded({ extended: false, limit: '4kb' }), (req, res) => {
+    if (!authConfigured()) return res.redirect(safeReturnPath(req.body?.to, base));
+    const to = safeReturnPath(req.body?.to, base);
+    const library = normalizeLibraryName(req.body?.library);
+    if (!library) {
+      return res.status(400).type('html').send(loginPage({
+        base, to, library: String(req.body?.library ?? '').slice(0, NAME_MAX), email: lastSignIn(req).email,
+        error: `A library name is 1 to ${NAME_MAX} characters.`,
+      }));
+    }
 
     // PKCE is not required for a client that holds a secret, but it costs one
     // hash and removes a whole class of "somebody else's code" attack.
@@ -275,10 +307,12 @@ export function mountAuth(router, base = '', doFetch = globalThis.fetch) {
     const challenge = createHash('sha256').update(verifier).digest('base64url');
     const state = randomBytes(16).toString('base64url');
 
+    // The library rides in the signed flow cookie, not in anything Google sees.
     res.cookie(FLOW_COOKIE, sign({
-      state, verifier, to: safeReturnPath(req.query.to, base), exp: Date.now() + FLOW_TTL_MS,
+      state, verifier, to, library, exp: Date.now() + FLOW_TTL_MS,
     }), cookieOptions(req, FLOW_TTL_MS));
 
+    const last = lastSignIn(req);
     const url = new URL(AUTH_URL);
     url.search = new URLSearchParams({
       client_id: process.env.GOOGLE_CLIENT_ID,
@@ -289,10 +323,12 @@ export function mountAuth(router, base = '', doFetch = globalThis.fetch) {
       code_challenge: challenge,
       code_challenge_method: 'S256',
       // Ask for an account rather than silently reusing the one Google happens
-      // to be signed in as — a shared family machine has several.
+      // to be signed in as — a shared family machine has several. The last
+      // address used here is offered first.
       prompt: 'select_account',
+      ...(last.email ? { login_hint: last.email } : {}),
     }).toString();
-    res.redirect(url.toString());
+    res.redirect(303, url.toString());
   });
 
   router.get('/auth/callback', async (req, res) => {
@@ -308,6 +344,8 @@ export function mountAuth(router, base = '', doFetch = globalThis.fetch) {
     }
     if (req.query.error) return res.status(400).type('text').send('Google declined the sign-in.');
     if (!req.query.code) return res.status(400).type('text').send('Google sent no authorization code.');
+    const name = normalizeLibraryName(flow.library);
+    if (!name) return res.status(400).type('text').send('Sign-in did not say which library — try again.');
 
     let claims = null;
     try {
@@ -329,49 +367,103 @@ export function mountAuth(router, base = '', doFetch = globalThis.fetch) {
     }
     if (!claims) return res.status(502).type('text').send('Could not complete sign-in with Google.');
 
-    // Named rather than merely signed in: the refusal says which address was
-    // turned away, because the usual cause is signing in with the wrong one of
-    // two Google accounts, and "not permitted" alone leaves nothing to act on.
-    if (!emailAllowed(claims.email)) {
-      return res.status(403).type('text').send(`${claims.email} is not on this library's list.`);
+    const user = findOrCreateUser(claims.email);
+    let library = libraryByName(name);
+    if (!library) {
+      // Nobody has this name: it is a new library, and this person founds it.
+      // Two people racing for one new name both reach here; the unique index
+      // lets one create it, and the other is then an ordinary non-member.
+      try {
+        library = createLibrary(name, user.id);
+      } catch (e) {
+        if (!/UNIQUE/i.test(e.message)) throw e;
+        library = libraryByName(name);
+      }
+    }
+    // Named rather than merely refused: the usual cause is signing in with the
+    // wrong one of two Google accounts, or mistyping the library, and "not
+    // permitted" alone leaves nothing to act on.
+    if (!isMember(library.id, user.id)) {
+      return res.status(403).type('html').send(page('Not a member', `
+        <h1>Not a member</h1>
+        <p>${esc(claims.email)} is not a member of ${esc(displayName(library.name))}.</p>
+        <p class="hint">A member of that library can add you from its Members screen. Or sign in with another
+          account, or to another library.</p>
+        <a class="btn" href="${esc(base)}/auth/login">Back to sign in</a>`));
     }
 
-    res.cookie(SESSION_COOKIE, sessionFor(claims.email), cookieOptions(req, sessionIdleMs()));
+    res.cookie(SESSION_COOKIE, sessionFor(user.email, library.id), cookieOptions(req, sessionIdleMs()));
+    res.cookie(LAST_COOKIE, sign({ email: user.email, library: library.name, exp: Date.now() + LAST_TTL_MS }),
+      cookieOptions(req, LAST_TTL_MS));
     res.redirect(safeReturnPath(flow.to, base));
   });
 
+  // Signing out ends the session and keeps the remembered sign-in, so the form
+  // is ready for the next one.
   const signOut = (req, res) => {
     res.clearCookie(SESSION_COOKIE, { path: '/' });
-    res.redirect(`${base}/`);
+    res.redirect(`${base}/auth/login`);
   };
   router.get('/auth/logout', signOut);
   router.post('/auth/logout', signOut);
 }
 
+// The user and library a request's session stands for, or null when it stands
+// for nothing a member may use: no session, an expired one, an address that is
+// not a user, or a library the user is no longer a member of.
+//
+// A session from before libraries names no library. It stood for the only one
+// there was, so it is honoured for a user who belongs to exactly one library,
+// which carries the people signed in at the upgrade across it.
+function signedIn(req) {
+  const session = sessionFromRequest(req);
+  if (!session) return null;
+  const user = userByEmail(session.email);
+  if (!user) return null;
+  let libraryId = session.lib;
+  if (libraryId == null) {
+    const mine = librariesOf(user.id);
+    if (mine.length !== 1) return null;
+    libraryId = mine[0].id;
+  }
+  const library = libraryById(libraryId);
+  if (!library || !isMember(library.id, user.id)) return null;
+  return { session, user, library };
+}
+
 /**
- * The gate. Everything mounted after this needs a signed-in, permitted address.
+ * The gate. Everything mounted after this needs a member of the session's
+ * library, and gets req.user and req.library.
  *
- * A browser asking for a page is redirected into the flow; anything else gets a
+ * With sign-in off there is no user, and the library is the first one.
+ *
+ * A browser asking for a page is sent to the sign-in form; anything else gets a
  * 401 carrying the login URL, because a fetch() that follows a redirect to
  * Google ends up parsing Google's HTML as JSON and reporting a nonsense error.
  */
 export function requireAuth(base = '') {
   return (req, res, next) => {
-    if (!authConfigured()) return next();
+    if (!authConfigured()) {
+      req.user = null;
+      req.library = firstLibrary();
+      return next();
+    }
     if (req.path.startsWith('/auth/')) return next();
 
-    const session = sessionFromRequest(req);
-    if (session && emailAllowed(session.email)) {
-      req.user = { email: session.email };
+    const who = signedIn(req);
+    if (who) {
+      req.user = who.user;
+      req.library = who.library;
       // Using the library is what keeps you signed in. The expiry is carried in
       // the cookie rather than in any server-side store, so pushing it out means
-      // handing back a freshly signed one.
-      if (sessionNeedsRefresh(session)) {
-        res.cookie(SESSION_COOKIE, sessionFor(session.email), cookieOptions(req, sessionIdleMs()));
+      // handing back a freshly signed one — naming the library, which also
+      // upgrades a session from before libraries.
+      if (sessionNeedsRefresh(who.session) || who.session.lib == null) {
+        res.cookie(SESSION_COOKIE, sessionFor(who.user.email, who.library.id), cookieOptions(req, sessionIdleMs()));
       }
       return next();
     }
-    // Only a browser *navigating* is sent to Google. `req.accepts` is no use
+    // Only a browser *navigating* is sent to sign in. `req.accepts` is no use
     // here: a fetch() with the default `Accept: */*` matches text/html as
     // happily as a page load does, and an API call that follows a redirect to
     // Google ends up parsing a sign-in page as JSON and reporting nonsense.

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#6d4aa8" />
   <!-- Injected by the server so every relative URL resolves under the mount path. -->
   <base href="__BASE__/" />
-  <title>Home Library __VERSION__</title>
+  <title>__LIBRARY__ __VERSION__</title>
   <link rel="stylesheet" href="styles.css?v=__V__" />
   <link rel="stylesheet" href="vendor/cropper/cropper.min.css?v=__V__" />
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
@@ -15,10 +15,12 @@
 </head>
 <body>
   <header>
-    <h1>📚 Home Library <span class="version">__VERSION__</span> <span id="count" class="count"></span></h1>
+    <h1>📚 __LIBRARY__ <span class="version">__VERSION__</span> <span id="count" class="count"></span></h1>
     <div class="header-actions">
       <button id="unitToggle" class="unit-toggle" title="Toggle units">mm</button>
-      <button id="contributeBtn" type="button" title="Contribute missing data to Open Library">↑ Give back</button>
+      <!-- Hidden until the account says it can send; see loadAccount() in app.js. -->
+      <button id="contributeBtn" type="button" title="Contribute missing data to Open Library" hidden>↑ Give back</button>
+      <button id="accountBtn" type="button" class="icon-btn" title="Your account and this library's members" aria-label="Account">⚙</button>
       <button id="addBtn">+ Add book</button>
     </div>
   </header>
@@ -363,6 +365,50 @@
       <span class="grow"></span>
       <button type="button" id="contributeCloseBtn">Close</button>
     </div>
+  </dialog>
+
+  <!-- ============ ACCOUNT & MEMBERS ============ -->
+  <dialog id="accountDialog" class="pad-dialog">
+    <div class="dialog-head">
+      <h2>Account</h2>
+      <button type="button" class="icon" id="closeAccountDialog" aria-label="Close">✕</button>
+    </div>
+    <p id="accountWho" class="hint"></p>
+    <p id="accountSignedOff" class="hint" hidden>Sign-in is off on this server, so there are no accounts or members.
+      Anyone who can reach it can use this library.</p>
+    <div id="accountSignedIn" class="dialog-actions">
+      <a class="btn" id="switchLibraryLink" href="auth/login">Switch library</a>
+      <span class="grow"></span>
+      <a class="btn" href="auth/logout">Sign out</a>
+    </div>
+
+    <section id="olSection" class="account-section">
+      <h3>Open Library keys</h3>
+      <p class="hint">Your own keys, used when you give back. Make a pair at
+        <a href="https://archive.org/account/s3.php" target="_blank" rel="noopener">archive.org/account/s3.php</a>.
+        They are checked with Open Library before they are saved, and stored encrypted.</p>
+      <p id="olStatus" class="msg" role="status"></p>
+      <form id="olForm" autocomplete="off">
+        <label>Access key <input name="access_key" required autocomplete="off" spellcheck="false" /></label>
+        <label>Secret key <input name="secret_key" type="password" required autocomplete="new-password" /></label>
+        <div class="dialog-actions">
+          <button type="button" id="olRemoveBtn" class="danger" hidden>Remove keys</button>
+          <span class="grow"></span>
+          <button type="submit" class="primary" id="olSaveBtn">Check and save</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="membersSection" class="account-section">
+      <h3>Members</h3>
+      <p class="hint">Everyone here can use this library, and add or remove other members.</p>
+      <ul id="memberList" class="member-list"></ul>
+      <form id="memberForm" class="member-add">
+        <input name="email" type="email" required placeholder="name@gmail.com" aria-label="Email address to add" />
+        <button type="submit">Add</button>
+      </form>
+      <p id="memberMsg" class="msg err" role="alert" hidden></p>
+    </section>
   </dialog>
 
   <!-- ============ CROP DIALOG ============ -->

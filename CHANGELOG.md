@@ -5,6 +5,45 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.0.0] — 2026-09-27
+
+### Added
+
+- **Many libraries on one server.** A new `libraries` table, with `users` and
+  `library_users` saying who may use which. Shelves, editions, copies, genres,
+  series and Open Library proposals each carry a `library_id`, and every route
+  reads and writes only the signed-in library's: another library's ids are not
+  found, and its shelves, genres, series and books cannot be linked to.
+  Uniqueness is per library, so two libraries may own the same ISBN. Triggers
+  make the database itself refuse a row without a library, a row that moves
+  library, and a link between two libraries' rows.
+- **Signing in names a library.** `/auth/login` is now a form asking for the
+  library name before handing over to Google. An unused name creates the
+  library, with the person signing in as its only member and its own starter
+  genres; a name in use admits its members and nobody else. The session
+  carries the library, one at a time; a remembered sign-in (`hl_last`) fills
+  the form in next time and offers Google the same account.
+- **The header names the library**: "📚 Bobbalisa Library" instead of "Home
+  Library", in the page and the tab title.
+- **An Account screen (⚙)** to switch library, sign out, manage the library's
+  members (any member may add or remove others; not themselves, not the last),
+  and hold your own Open Library keys.
+
+### Changed
+
+- **Open Library keys belong to users.** Each user saves their own on the
+  Account screen; they are verified by signing in to Open Library first and
+  stored encrypted under a key derived from `SESSION_SECRET`. **Give back is
+  shown only to a user with saved keys**, its endpoints refuse anyone else,
+  and sends go out under that user's keys. With sign-in on,
+  `OPENLIBRARY_ACCESS_KEY` and `OPENLIBRARY_SECRET_KEY` are no longer read;
+  with sign-in off, nothing changes.
+- **Authorization is rows, not a file.** On the first start the library
+  "Bobbalisa" is created, everything already in the database becomes its, and
+  the addresses in `allowed-emails.txt` become its members. The file is not
+  read again. Sessions from before this carry across for anyone in exactly one
+  library.
+
 ## [4.5.0] — 2026-09-27
 
 ### Added

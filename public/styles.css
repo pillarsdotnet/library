@@ -489,3 +489,12 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
   touch-action: none;
   cursor: grab;
 }
+
+/* ---------- Account & members ---------- */
+.account-section { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 12px; }
+.account-section h3 { margin: 0 0 6px; font-size: 1rem; }
+.member-list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.member-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.member-list .member-email { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.member-add { display: flex; gap: 8px; }
+.member-add input { flex: 1 1 auto; min-width: 0; }

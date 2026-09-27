@@ -1,6 +1,8 @@
 # 📚 Home Library
 
-A self-hosted web app to catalogue the books in your private library. Works from
+A self-hosted web app to catalogue the books in your private library, or in
+several: one server holds any number of libraries, each with its own books,
+shelves, genres, series and members. Works from
 any phone or desktop browser (Android + iPhone), scans ISBN barcodes with the
 camera, auto-fills metadata from Open Library / Google Books, tracks where each
 book physically lives, and calculates how many books fit on each shelf.
@@ -32,8 +34,10 @@ both iOS Safari and Android Chrome.
   bookcase, or shelf (incl. "Unshelved"). Filters compose.
 - **Give back to Open Library** — measurements, binding, page count and cover
   photos from your own copies can fill gaps in Open Library's records, through a
-  review queue where you approve each one. See
-  [Contributing back to Open Library](#contributing-back-to-open-library).
+  review queue where you approve each one, sent under your own Open Library keys.
+  See [Contributing back to Open Library](#contributing-back-to-open-library).
+- **Many libraries, one server** — signing in names a library; a new name starts
+  a new one. See [Libraries and members](#libraries-and-members).
 
 ## Data model
 
@@ -44,6 +48,19 @@ SQLite — see [`db.js`](./db.js). Book data is split along the ISBN:
 | `editions` | Title, authors, publisher, published date, page count, **format**, **dimensions**, stock cover artwork, metadata source | Everything an ISBN determines, and therefore identical for every copy |
 | `copies` | Dust jacket, shelf, status, loan, library borrowing + due date, notes, a photograph of *this* copy | Everything true of one physical object on one shelf |
 | `shelves` | Room, bookcase, label, clearances | Where copies live |
+| `libraries` | Name | A tenant: everything above belongs to exactly one |
+| `users`, `library_users` | Email address and encrypted Open Library keys; who belongs to which library | Who may sign in to what |
+
+Every table a library owns carries its `library_id`: shelves, editions, copies,
+genres, series and Open Library proposals. The link tables (`book_genres`,
+`series_books`, `ol_send_attempts`) belong to a library through the rows they
+link. Triggers make the database refuse a row with no library, a row that moves
+to another library, and a link between two libraries' rows (a copy on another
+library's shelf, a genre under another library's genre), so a query that
+forgets its library fails loudly instead of mixing two. Uniqueness is per
+library too: two libraries may each own the same ISBN or each have a genre
+called Fantasy. The ISBN lookup cache is the one thing shared, because it holds
+only what the metadata services said about an ISBN.
 
 Format and dimensions are **edition** data, which surprises people: a hardback
 and a paperback of one book carry *different ISBNs*, so the ISBN settles the
@@ -67,7 +84,7 @@ book cannot become two records. Check digits are verified: an ISBN that fails is
 kept for display but never used to match, because merging on an unverifiable
 value would fuse two unrelated books.
 
-An edition is keyed on **`(isbn13, format)`**, not on the ISBN alone. E-books
+An edition is keyed on **`(library_id, isbn13, format)`**, not on the ISBN alone. E-books
 have ASINs rather than ISBNs, and importers routinely staple the print ISBN onto
 the e-book record — so matching on the ISBN alone merges a Kindle file into a
 hardback, and one of them loses its format and inherits the other's physical
@@ -132,28 +149,25 @@ Semantic versioning, judged from the user's side: **patch** for a fix, **minor**
 for a feature, **major** when a database written by the new build can no longer
 be read by the old one.
 
-## Access control: there isn't any
+## Access control
 
-**Every endpoint is unauthenticated.** There are no accounts, no login, no
-per-user anything. Whoever can reach the port can read the whole library, edit
-it, and delete it — and, if Open Library credentials are configured, can send
-contributions to a public catalogue under your account.
+With sign-in on (see [Signing in](#signing-in)), every page and API route needs a
+Google account that is a **member** of the library the session was opened for,
+checked on every request. With sign-in off there are no accounts: whoever can
+reach the port can read and edit the first library, which only suits a private
+network (Tailscale, a VPN, a LAN you trust).
 
-That is a deliberate fit for the intended deployment — a private network
-(Tailscale, VPN, or a LAN you trust) where being able to reach the app *is* the
-authorisation — and it is the whole security model. There is nothing else.
+Sign-in is what makes a public address possible. Even then:
 
-So, before putting this anywhere reachable:
-
-- **Do not expose it to the public internet as-is.** Put authentication in front
-  of it — HTTP basic auth in the reverse proxy is enough for a household;
-  `oauth2-proxy`, Authelia or `tailscale serve` if you want something better.
-- **Bind it to somewhere private.** The systemd unit described below publishes
-  the container port on `127.0.0.1` and lets nginx be the only thing that
-  listens outward, which is a good default to copy.
-- **Treat the Open Library keys as the sharp edge.** They turn "someone can
-  scribble on my book list" into "someone can write to a public catalogue as
-  me". Leave them unset unless you are contributing.
+- **New libraries are open to anyone with a Google account.** Naming an unused
+  library at sign-in creates it. That is by design, and it means strangers can
+  store books on your server; every library is isolated from the others.
+- **Open Library keys belong to people, not to the server.** Each user adds
+  their own, and only someone with verified keys sees Give back, so nobody can
+  write to a public catalogue under anybody else's account.
+- **Bind it to somewhere deliberate.** The systemd unit described below
+  publishes the container port on `127.0.0.1` and lets nginx be the only thing
+  that listens outward, which is a good default to copy.
 
 ## Run it
 
@@ -182,14 +196,14 @@ Environment variables:
 | `DB_PATH`   | `./data/library.db`  | SQLite file location                                |
 | `BASE_PATH` | `` (root)            | Sub-path to serve under, e.g. `/library`            |
 | `GOOGLE_BOOKS_API_KEY` | _(none)_  | Optional; raises the Google Books lookup quota      |
-| `OPENLIBRARY_ACCESS_KEY` | _(none)_ | Optional; needed only to send contributions back    |
+| `OPENLIBRARY_ACCESS_KEY` | _(none)_ | Sign-in **off** only: the keys contributions are sent with. With sign-in on, each user adds their own |
 | `OPENLIBRARY_SECRET_KEY` | _(none)_ | Paired with the access key                          |
 | `OPENLIBRARY_ALLOW_IMPORT` | _(unset)_ | `true` allows creating records for books Open Library lacks |
 | `OPENLIBRARY_SOURCE_PREFIX` | `pillarsdotnet_library` | `source_records` prefix for imports; set it empty to stamp nothing and import nothing |
 | `GOOGLE_CLIENT_ID` | _(none)_ | Google OAuth client; **setting this and the secret is what turns sign-in on** |
 | `GOOGLE_CLIENT_SECRET` | _(none)_ | Paired with the client id |
-| `AUTH_ALLOWED_FILE` | `<DB dir>/allowed-emails.txt` | Addresses permitted to sign in; absent or empty means all |
-| `SESSION_SECRET` | _(new each boot)_ | Signs session cookies; set it so a restart does not sign everyone out |
+| `AUTH_ALLOWED_FILE` | `<DB dir>/allowed-emails.txt` | Read **once**, when the first library is created: its addresses become that library's members |
+| `SESSION_SECRET` | _(new each boot)_ | Signs session cookies and encrypts users' Open Library keys; set it, or a restart signs everyone out and loses the keys |
 | `SESSION_IDLE_DAYS` | `10` | Sign-in expires after this long **without a visit**; every visit pushes it out (floored at 1 day) |
 | `OAUTH_REDIRECT_URI` | _(from the request)_ | Override when the public URL is not what the app sees |
 | `PUBLIC_ORIGIN` | _(from the request)_ | Scheme and host to build the redirect URI from |
@@ -199,8 +213,9 @@ Environment variables:
 
 ### Signing in
 
-The app has no accounts of its own. It either asks Google who you are, or it
-asks nobody — and which of those it is doing is printed on every boot:
+Google says who you are; the app's own `users` and `library_users` tables say
+what you may open. Or, with sign-in off, it asks nobody — and which of those it
+is doing is printed on every boot:
 
 ```
    sign-in OFF — anyone who can reach this port can edit the library
@@ -234,10 +249,12 @@ manifest without the session cookie, and Android fetches the icons from Google's
 servers when it installs the app, so behind the gate "Add to Home screen" gets
 nothing. None of them says anything about the library.
 
-With those set, every other page and API route needs a signed-in address. A
-browser is redirected to Google; anything else gets `401` and the sign-in URL,
-so a `fetch` reports "sign in required" rather than trying to parse Google's
-login page as JSON. Sign out at `/auth/logout`; `/auth/me` says who is signed in.
+With those set, every other page and API route needs a member of the session's
+library. A browser is sent to the sign-in form at `/auth/login`; anything else
+gets `401` and that URL, so a `fetch` reports "sign in required" rather than
+trying to parse a sign-in page as JSON. The form asks for the **library name**,
+then hands over to Google. Sign out at `/auth/logout` (or from the ⚙ Account
+screen); `/auth/me` says who is signed in, and to which library.
 
 #### How long a sign-in lasts
 
@@ -248,32 +265,42 @@ stops being used is signed out ten days later. The cookie is only re-issued once
 a session is past its half-life, so ordinary browsing does not put a `Set-Cookie`
 on every stylesheet.
 
-A session also ends early when the address leaves `allowed-emails.txt`, at
+A session also ends early when its user stops being a member of its library, at
 `/auth/logout`, or if `SESSION_SECRET` changes — which is why the two nodes must
 share one, or a failover would look like a mass sign-out. Nothing on Google's
 side expires it: no refresh token is ever requested, and the `id_token` is read
 once and discarded.
 
-#### Who is allowed in
+### Libraries and members
 
-Sign-in alone already narrows the world to people with a Google account, which
-may be all a tailnet-only deployment needs. One on a public address needs the
-list. To narrow it further, list the
-addresses — one per line, `#` for comments — in `allowed-emails.txt` **next to
-the database**, the same place covers live:
+Signing in names a library, and the header then says whose it is: a user in the
+Bobbalisa library sees **📚 Bobbalisa Library**. (A name that already ends in
+"Library" is not given a second one.)
 
-```
-# the household
-owner@gmail.com
-second@gmail.com   # the spare phone
-```
+- **A name nobody has used creates a library**, with the person signing in as
+  its only member and its own copy of the starter genres. Names are matched
+  ignoring case and extra spaces, and are 1 to 60 characters.
+- **A name in use admits its members and nobody else.** The refusal names the
+  address and the library, since the usual cause is the wrong Google account or
+  a typo in the name.
+- **One library at a time.** The session carries the library it was opened for.
+  To use another, sign in again naming it (**Switch library** on the ⚙ Account
+  screen); the form lists the libraries you belong to.
+- **The form remembers you.** Signing in leaves a year-long `hl_last` cookie with
+  your address and library, so the form is filled in next time and Google offers
+  the same account first. Signing out keeps it.
+- **Members are managed in the app.** The ⚙ Account screen lists the library's
+  members; any member can add an address or remove someone else. Removing
+  yourself, or the last member, is refused. Membership is checked on every
+  request, so a removed member is out on their next click.
 
-- **Absent or empty, every signed-in address is allowed.** A file that does not
-  exist is read as "no further restriction", not as "nobody".
-- The file is consulted **on every request**, not once at sign-in, so deleting a
-  line ends that person's session on their next click. No restart, no deploy.
-- Refusal names the address that was turned away, because the usual cause is
-  signing in with the wrong one of two Google accounts.
+The first library, **Bobbalisa**, is created automatically, and everything in a
+database from before libraries belongs to it. So do the addresses in
+`allowed-emails.txt` beside the database: they become its members, once, when
+it is created. The file is not read after that.
+
+A session from before libraries names none; it is honoured for a user who
+belongs to exactly one library, and re-issued naming it.
 
 ### ISBN lookup sources & the Google Books quota
 
@@ -401,16 +428,24 @@ account, separate from your personal one.
    [archive.org/account/s3.php](https://archive.org/account/s3.php) and copy the
    access key and secret key. (Open Library authenticates with Internet Archive
    S3-style keys, then hands back a session cookie.)
-4. **Install the keys** the same way as the Google Books key — in
-   `/etc/home-library.env` on the node, or the environment locally:
+4. **Add the keys to your account.** Signed in to the app, open ⚙ **Account**
+   and paste them under **Open Library keys**. They are checked by signing in to
+   Open Library before they are saved, and stored encrypted under a key derived
+   from `SESSION_SECRET`: only the last four characters of the access key are
+   ever shown again, and a copy of the database is no use without the secret.
+   **Give back appears only once your keys are saved**, and everything you send
+   goes out under them. Another member of the same library sees Give back only
+   with keys of their own.
+
+   With sign-in **off** there are no accounts, so the keys go in the environment
+   instead — `/etc/home-library.env` on the node, or locally:
 
    ```bash
    OPENLIBRARY_ACCESS_KEY=your_access_key
    OPENLIBRARY_SECRET_KEY=your_secret_key
    ```
 
-Until the keys are set, the queue still collects gaps; it just cannot send them,
-and says so.
+   and Give back is shown as it always was, sending once they are set.
 
 ### Books Open Library has never heard of
 
@@ -502,7 +537,8 @@ genuinely create something proceeds to the real import.
 
 ### Using it
 
-**↑ Give back** opens the queue; it does not search by itself. **Look for gaps**
+**↑ Give back** appears once your Open Library keys are saved on your account
+(always, with sign-in off). It opens the queue; it does not search by itself. **Look for gaps**
 checks 25 of your books (never-checked first, then least recently checked)
 against Open Library, one request per book, and queues what it finds. Its result
 stays on screen, and beneath it the dialog says how many books have been checked
@@ -531,8 +567,10 @@ behind the node's nginx, served under a sub-path such as `/library/`.
   it via systemd `Environment=` does *not* work — that reaches the `docker run` client,
   not the container. With two nodes, set the same value on both, or a book is overdue
   on one and not the other. The server logs its timezone at startup;
-- secrets (`GOOGLE_BOOKS_API_KEY`, `OPENLIBRARY_ACCESS_KEY`,
-  `OPENLIBRARY_SECRET_KEY`) come from `/etc/home-library.env` on the node;
+- secrets (`GOOGLE_BOOKS_API_KEY`, `SESSION_SECRET` and the Google client) come
+  from `/etc/home-library.env` on the node. With sign-in on, Open Library keys
+  are users' own, on their accounts; `OPENLIBRARY_ACCESS_KEY` and
+  `OPENLIBRARY_SECRET_KEY` there are read only with sign-in off;
 - port 3000 is published on `127.0.0.1:30800`, fronted by the node's nginx, which
   proxies `location /library/` (see [`deploy/nginx-library.conf`](./deploy/nginx-library.conf)).
 

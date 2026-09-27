@@ -1948,4 +1948,123 @@ $('#closeContributeDialog').addEventListener('click', () => contributeDialog.clo
 $('#contributeCloseBtn').addEventListener('click', () => contributeDialog.close());
 
 applyUnitLabels();
+// ---------------------------------------------------------------------------
+// Your account and this library's members. The account also decides whether
+// Give back is offered at all: it is for somebody whose own Open Library keys
+// are saved and verified. With sign-in off there are no accounts, and the
+// dialog stays as it always was.
+// ---------------------------------------------------------------------------
+const accountDialog = $('#accountDialog');
+let ACCOUNT = null;
+
+async function loadAccount() {
+  ACCOUNT = await api('/account');
+  $('#contributeBtn').hidden = !(ACCOUNT.openlibrary.from_env || ACCOUNT.openlibrary.active);
+  return ACCOUNT;
+}
+
+function renderAccount() {
+  const signedIn = !!ACCOUNT.email;
+  $('#accountWho').textContent = signedIn
+    ? `Signed in as ${ACCOUNT.email} to ${ACCOUNT.library.display}.`
+    : ACCOUNT.library.display;
+  $('#accountSignedIn').hidden = !signedIn;
+  $('#accountSignedOff').hidden = signedIn;
+  $('#olSection').hidden = !signedIn;
+  $('#membersSection').hidden = !signedIn;
+  if (!signedIn) return;
+
+  const ol = ACCOUNT.openlibrary;
+  const status = $('#olStatus');
+  status.className = `msg ${ol.active ? 'ok' : ''}`;
+  status.textContent = ol.active
+    ? `Keys ending ${ol.access_hint} are saved, checked ${timeAgo(ol.verified_at)}. Give back is on.`
+    : 'No keys saved, so Give back is hidden.';
+  $('#olRemoveBtn').hidden = !ol.active;
+  $('#olSaveBtn').textContent = ol.active ? 'Replace keys' : 'Check and save';
+}
+
+async function renderMembers() {
+  const list = await api('/library/members');
+  $('#memberList').innerHTML = list.map((m) => `
+    <li>
+      <span class="member-email">${esc(m.email)}${m.you ? ' <span class="hint">(you)</span>' : ''}</span>
+      ${m.you ? '' : `<button type="button" class="danger" data-remove="${m.id}" data-email="${esc(m.email)}">Remove</button>`}
+    </li>`).join('');
+}
+
+async function openAccount() {
+  await loadAccount();
+  renderAccount();
+  $('#memberMsg').hidden = true;
+  accountDialog.showModal();
+  if (ACCOUNT.email) await renderMembers();
+}
+
+$('#accountBtn').addEventListener('click', () => openAccount().catch((e) => alert(e.message)));
+$('#closeAccountDialog').addEventListener('click', () => accountDialog.close());
+
+$('#olForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const btn = $('#olSaveBtn');
+  const was = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Checking with Open Library…';
+  try {
+    ACCOUNT.openlibrary = await api('/account/openlibrary', {
+      method: 'PUT', headers: json(),
+      body: JSON.stringify({ access_key: form.access_key.value, secret_key: form.secret_key.value }),
+    });
+    // Neither key stays in the page once it is saved.
+    form.reset();
+    renderAccount();
+    await loadAccount();
+  } catch (err) {
+    const status = $('#olStatus');
+    status.className = 'msg err';
+    status.textContent = err.message;
+    btn.textContent = was;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#olRemoveBtn').addEventListener('click', async () => {
+  if (!confirm('Remove your Open Library keys? Give back will be hidden until you add them again.')) return;
+  ACCOUNT.openlibrary = await api('/account/openlibrary', { method: 'DELETE' });
+  renderAccount();
+  await loadAccount();
+});
+
+$('#memberForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('#memberMsg');
+  msg.hidden = true;
+  try {
+    await api('/library/members', { method: 'POST', headers: json(), body: JSON.stringify({ email: e.target.email.value }) });
+    e.target.reset();
+    await renderMembers();
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.hidden = false;
+  }
+});
+
+$('#memberList').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-remove]');
+  if (!btn) return;
+  if (!confirm(`Remove ${btn.dataset.email} from ${ACCOUNT.library.display}? They lose access straight away.`)) return;
+  const msg = $('#memberMsg');
+  msg.hidden = true;
+  try {
+    await api(`/library/members/${btn.dataset.remove}`, { method: 'DELETE' });
+    await renderMembers();
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.hidden = false;
+  }
+});
+
+loadAccount().catch(() => { /* the button stays hidden; nothing else depends on it */ });
 refresh().catch((err) => alert('Failed to load: ' + err.message));

@@ -35,8 +35,9 @@ test('db.js adds the source column to a pre-existing books table, preserving row
 
   // Writes go to the tables; reading it back through the `books` view checks
   // both that the column works and that the view still presents it.
-  const ed = db.prepare('INSERT INTO editions (title, source) VALUES (?, ?)').run('New Book', 'barnesnoble').lastInsertRowid;
-  db.prepare('INSERT INTO copies (edition_id) VALUES (?)').run(ed);
+  // Every row names its library; the migration made the first one, id 1.
+  const ed = db.prepare('INSERT INTO editions (library_id, title, source) VALUES (1, ?, ?)').run('New Book', 'barnesnoble').lastInsertRowid;
+  db.prepare('INSERT INTO copies (library_id, edition_id) VALUES (1, ?)').run(ed);
   assert.equal(db.prepare('SELECT source FROM books WHERE title = ?').get('New Book').source, 'barnesnoble');
 
   db.close();
@@ -115,7 +116,7 @@ test('a new database declares dimension columns as INTEGER and stores them as in
     for (const c of cols) assert.equal(info.find((x) => x.name === c).type, 'INTEGER', `${table}.${c} declared INTEGER`);
   }
   // `books` is a read-only view, so this writes to the table that owns the column.
-  fresh.prepare('INSERT INTO editions (title, height_mm) VALUES (?, ?)').run('X', 241);
+  fresh.prepare('INSERT INTO editions (library_id, title, height_mm) VALUES (1, ?, ?)').run('X', 241);
   assert.equal(fresh.prepare("SELECT typeof(height_mm) AS t FROM editions WHERE title = 'X'").get().t, 'integer');
   fresh.close();
   rmSync(dir, { recursive: true, force: true });

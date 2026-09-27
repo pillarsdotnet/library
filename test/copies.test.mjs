@@ -206,11 +206,13 @@ test('the served page shows the running version, with no placeholder left behind
 
   // Assets are cache-busted by version, so a device showing a stale build is the
   // hard case to diagnose — the version has to be readable from the page itself.
-  assert.match(html, new RegExp(`<title>Home Library ${version.replace(/\./g, '\\.')}</title>`));
+  // With sign-in off the page is the first library's, named in the title.
+  assert.match(html, new RegExp(`<title>Bobbalisa Library ${version.replace(/\./g, '\\.')}</title>`));
   assert.match(html, new RegExp(`<span class="version">${version.replace(/\./g, '\\.')}</span>`));
   // Every placeholder must be substituted; a literal one reaching the browser is
   // the failure this test exists to catch.
   assert.ok(!html.includes('__VERSION__'), 'no unsubstituted __VERSION__');
   assert.ok(!html.includes('__V__'), 'no unsubstituted __V__');
   assert.ok(!html.includes('__BASE__'), 'no unsubstituted __BASE__');
+  assert.ok(!html.includes('__LIBRARY__'), 'no unsubstituted __LIBRARY__');
 });

@@ -363,3 +363,23 @@ test('repeated sweeps walk the library instead of re-reading the same books', as
   // Four two-book sweeps must reach more than the two most recently touched.
   assert.ok(seen.size > 2, `sweeps reached ${seen.size} editions, not just the same two`);
 });
+
+// The dialog says how much of the library has been compared and how lately,
+// so a queue holding only refused rows does not read as a broken sweep.
+test('the status reports how much of the library has been checked', async () => {
+  const before = (await (await fetch(`${BASE}/api/ol-contributions/status`)).json()).coverage;
+  assert.equal(before.unchecked, before.books - before.checked);
+
+  await (await post('/api/books', {
+    title: 'Not yet compared', isbn: '9780306406157', format: 'paperback',
+  })).json();
+  const added = (await (await fetch(`${BASE}/api/ol-contributions/status`)).json()).coverage;
+  assert.equal(added.books, before.books + 1, 'a new book with an ISBN is counted');
+  assert.equal(added.unchecked, before.unchecked + 1, 'and counted as not yet checked');
+
+  // Never-checked books go first, so one sweep reaches it.
+  await post('/api/ol-contributions/scan');
+  const after = (await (await fetch(`${BASE}/api/ol-contributions/status`)).json()).coverage;
+  assert.equal(after.unchecked, 0, 'the sweep checked it');
+  assert.match(after.last_checked, /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/, 'stamped in SQLite UTC form, which the page parses as UTC');
+});

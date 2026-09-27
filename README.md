@@ -486,6 +486,8 @@ at its word and not retried.
 The queue lists everything still waiting for a person — proposals not yet acted
 on, and ones whose send failed, which carry the reason. `?status=` on
 `/api/ol-contributions` narrows it to any set of states.
+`/api/ol-contributions/status` adds `coverage`: `books` with an ISBN, how many
+are `checked` and `unchecked`, and `last_checked` (UTC).
 
 Approving one runs it **twice**: first with `?preview=true`, which parses,
 validates and runs Open Library's own duplicate matching without saving. If the
@@ -500,8 +502,13 @@ genuinely create something proceeds to the real import.
 
 ### Using it
 
-**↑ Give back** → **Look for gaps** checks your books (most recently updated
-first) against Open Library, one request per book, and queues what it finds.
+**↑ Give back** opens the queue; it does not search by itself. **Look for gaps**
+checks 25 of your books (never-checked first, then least recently checked)
+against Open Library, one request per book, and queues what it finds. Its result
+stays on screen, and beneath it the dialog says how many books have been checked
+and how lately, how many never have, and how many contributions have been sent.
+When every row left has been tried and refused, a note says there is nothing new
+to send, so a queue holding only refusals does not look like a broken search.
 Each row names the book, the edition it would edit, the field, and the exact
 value that would be sent. **Send** submits it; **Skip** retires it.
 

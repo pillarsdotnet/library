@@ -717,9 +717,19 @@ router.get('/api/ol-contributions/attempts', (req, res) => {
 
 router.get('/api/ol-contributions/status', (_req, res) => {
   const counts = db.prepare('SELECT status, COUNT(*) AS n FROM ol_contributions GROUP BY status').all();
+  // How much of the library has been compared, and how lately. Without it, a
+  // queue holding only rows Open Library refused looks like a sweep that is
+  // broken, when every other gap has in fact been found and sent. Counted over
+  // the same editions a sweep considers: those with an ISBN.
+  const coverage = db.prepare(`
+    SELECT COUNT(*) AS books,
+           COUNT(ol_checked_at) AS checked,
+           MAX(ol_checked_at) AS last_checked
+    FROM editions WHERE COALESCE(isbn13, isbn_text) IS NOT NULL AND COALESCE(isbn13, isbn_text) <> ''`).get();
   res.json({
     configured: haveCredentials(),
     counts: Object.fromEntries(counts.map((c) => [c.status, c.n])),
+    coverage: { ...coverage, unchecked: coverage.books - coverage.checked },
   });
 });
 

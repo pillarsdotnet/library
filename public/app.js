@@ -1772,6 +1772,8 @@ attachCombo(shelfForm.elements.bookcase, () => META.bookcases);
 const contributeDialog = $('#contributeDialog');
 
 async function openContribute() {
+  // A result line left over from last time would describe a sweep nobody just ran.
+  $('#contributeSummary').textContent = '';
   contributeDialog.showModal();
   await renderContributions();
 }
@@ -1790,9 +1792,13 @@ async function renderContributions() {
       + 'Gaps can still be collected — see the README for the account setup.';
   }
 
-  const sent = status.counts.sent || 0;
-  $('#contributeSummary').textContent = sent ? `${sent} already contributed.` : '';
+  // The standing picture, on a line of its own. It used to share the result
+  // line with a sweep, and replaced "found 0 gaps" the moment the list redrew,
+  // so a sweep that found nothing looked like a click that did nothing.
+  $('#contributeCoverage').textContent = coverageText(status.coverage, status.counts.sent || 0);
   $('#contributeEmpty').hidden = rows.length > 0;
+  // Only refused rows left is the queue being done, not the sweep being broken.
+  $('#contributeBlocked').hidden = !rows.length || rows.some((r) => r.status !== 'failed');
 
   list.innerHTML = rows.map((r) => `
     <div class="contrib" data-id="${r.id}">
@@ -1807,6 +1813,39 @@ async function renderContributions() {
       </div>
       <div class="contrib-actions">${contribActions(r, status)}</div>
     </div>`).join('');
+}
+
+// "316 of 323 books checked against Open Library, most recently 3 days ago."
+// Plus what a sweep will do next, and what has already gone.
+function coverageText(c, sent) {
+  if (!c || !c.books) return '';
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const parts = [];
+  if (!c.checked) {
+    parts.push(`None of your ${plural(c.books, 'book')} checked against Open Library yet.`);
+  } else {
+    const when = c.last_checked ? `, most recently ${timeAgo(c.last_checked)}` : '';
+    parts.push(c.unchecked
+      ? `${c.checked} of ${plural(c.books, 'book')} checked against Open Library${when}.`
+      : `All ${plural(c.books, 'book')} checked against Open Library${when}.`);
+    if (c.unchecked) parts.push(`${c.unchecked} not yet: Look for gaps checks those first.`);
+  }
+  if (sent) parts.push(`${plural(sent, 'contribution')} sent.`);
+  return parts.join(' ');
+}
+
+// SQLite's datetime('now') is UTC with no zone marker, which Date would read
+// as local time and put hours out.
+function timeAgo(sqliteUtc) {
+  const then = new Date(`${sqliteUtc.replace(' ', 'T')}Z`);
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (Number.isNaN(mins)) return 'at an unknown time';
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
 // What the row is about. A cover is a picture, so show the picture: for the

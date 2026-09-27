@@ -352,8 +352,11 @@
     <div class="dialog-actions">
       <button type="button" id="contributeScanBtn">⟳ Look for gaps</button>
       <button type="button" id="contributeScanCoversBtn" title="Check the books you have photographed, however long ago they were catalogued">⟳ Check my photos</button>
-      <span id="contributeSummary" class="hint"></span>
+      <span id="contributeSummary" class="hint" role="status"></span>
     </div>
+    <p id="contributeCoverage" class="hint"></p>
+    <p id="contributeBlocked" class="msg warn" hidden>Nothing new to send. Every row below
+      has been tried and refused; each stays here until it goes through or you skip it.</p>
     <div id="contributeList" class="contrib-list"></div>
     <p id="contributeEmpty" class="empty" hidden>Nothing waiting. Tap <strong>Look for gaps</strong> to check your books against Open Library.</p>
     <div class="dialog-actions">

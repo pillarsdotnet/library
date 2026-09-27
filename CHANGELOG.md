@@ -5,9 +5,22 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [4.5.0] — 2026-09-27
+
+### Added
+
+- **The Give-back dialog says how much of the library has been checked.** A
+  standing line gives the books checked against Open Library, how lately, how
+  many never have been, and how many contributions have been sent. When every
+  row left has been refused, a note says there is nothing new to send. A queue
+  holding only the rows Open Library refuses (#13708) had read as a search that
+  was not working, when every other gap had been found and sent.
 
 ### Fixed
+
+- **A search's result no longer vanishes.** "Checked 25 books, found 0 gaps"
+  was overwritten by the sent count the moment the list redrew, so a search
+  that found nothing looked like a click that did nothing.
 
 Four failover bugs, all found by the first handoff that actually moved the
 database since the code that broke went in.

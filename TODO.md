@@ -3,6 +3,22 @@
 Deferred decisions. Each carries the date it was raised and the date to revisit,
 so a "wait and see" does not quietly become "forgot about it".
 
+## 2026-09-27 — rotate the Google Books API key
+
+**Do by 2026-10-04**, sooner is better.
+
+The `GOOGLE_BOOKS_API_KEY` in `/etc/home-library.env` was printed in full in a
+Claude Code session transcript on 2026-09-27, while checking the lines next to
+it. Treat it as exposed.
+
+1. Google Cloud console → APIs & Services → Credentials: create a new API key,
+   restricted to the Books API.
+2. Replace `GOOGLE_BOOKS_API_KEY=` in `/etc/home-library.env` on **both**
+   racknerd and homelab (root, mode 600), without printing the file.
+3. `sudo systemctl restart home-library` on racknerd, the active node, and
+   confirm an ISBN lookup still fills in a book.
+4. Delete the old key in the console.
+
 ## 2026-09-22 — decide whether to allow fixing a write-blocking defect
 
 **Revisit on or after 2026-09-29** (a week out), or sooner if Open Library

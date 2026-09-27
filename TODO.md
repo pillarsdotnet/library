@@ -34,6 +34,14 @@ exception if #13708 goes unanswered — but it does **not** change the shape of
 what to build or the instinct to prefer the upstream fix. Still wait out the
 week first.
 
+**Update 2026-09-27: five records now, eight blocked rows.** Two more with the
+same `\"--` ending to a description: the work `OL19332309W` (series for "A call
+to arms", whose edition `OL27190384M` is already listed) and the edition
+`OL27268134M` ("The Escape Room"). These eight `failed` rows are now the *only*
+open rows in the queue: every other gap found in the 316 books checked has been
+sent. So the Give-back dialog shows nothing else, which reads as a bug but is
+the queue being empty apart from this one class.
+
 ### If we do build it
 
 Do **not** relax rule 1 in general. "This value is wrong" is a judgment, and a
@@ -62,8 +70,8 @@ makes it 200 — not an opinion about the text. Constraints that must hold:
 
 ### If it stays a handful of cases
 
-Even with a few (so far `OL27239756M`, `OL27190384M`, and the work
-`OL19754718W`), building machinery may be more than it is worth. The by-hand
+Even with a few (so far `OL27239756M`, `OL27190384M`, `OL27268134M`, and the works
+`OL19754718W` and `OL19332309W`), building machinery may be more than it is worth. The by-hand
 path still works: strip the trailing quote-and-dashes from each description in
 the browser, re-run that record's field sends, and leave rule 1 as it is.
 Reserve building the exception for when the by-hand list is long enough to be a

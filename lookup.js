@@ -325,7 +325,7 @@ export async function lookupIsbn(isbn, opts = {}) {
   let throttled = false;
 
   const consult = async (name, run) => {
-    let data = null;
+    let data;
     try { data = await run(); } catch (err) {
       if (err instanceof RateLimitError) { throttled = true; return; }
       throw err;

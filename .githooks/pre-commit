@@ -6,6 +6,16 @@ npm run lint || {
   exit 1
 }
 
+# No commit ships a known vulnerability or a deprecated package. This asks the
+# npm registry, so it needs the network; CI runs the same check.
+echo "Checking dependencies…"
+npm run -s check:deps || {
+  echo ""
+  echo "✖ Dependency check failed (see above). Offline? Commit with --no-verify;"
+  echo "  CI runs the same check before anything merges."
+  exit 1
+}
+
 # Assets are served with ?v=<version from package.json>, so the version is what
 # makes a browser fetch them again. Change a stylesheet without moving the
 # version and the fix reaches the server but not the phone that reported the

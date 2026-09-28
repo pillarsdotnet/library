@@ -385,7 +385,7 @@ function onCoverFile(e) {
 
   const probe = new Image();
   probe.onload = () => {
-    let auto = null;
+    let auto;
     try { auto = window.AutoCrop && window.AutoCrop.autoCrop(probe); } catch { auto = null; }
     cropDetectedQuad = auto ? auto.quad : null;
     cropSourceData = shrinkToDataUrl(probe);

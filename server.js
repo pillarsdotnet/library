@@ -634,7 +634,7 @@ async function reviewAgainstOpenLibrary(book, counts) {
     // Library's own, and uploading that back to them proposes nothing.
     // proposalsFor only asks whether there IS one, so the filename answers it.
     book.cover_url = book.copy_cover;
-    let edition = null;
+    let edition;
     try { edition = await fetchEdition(book.isbn); } catch { edition = null; }
     counts.scanned += 1;
     // Stamped whatever the answer was. A book Open Library has never heard of

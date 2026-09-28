@@ -37,7 +37,8 @@ both iOS Safari and Android Chrome.
   by due date** (soonest first, undated last), or to **overdue only** — the list
   answers "what do I owe the library, and when" rather than making you hunt.
 - **Search & filter** by text, status, library/overdue, format, genre, series, room,
-  bookcase, or shelf (incl. "Unshelved"). Filters compose.
+  bookcase, or shelf (incl. "Unshelved"). Filters compose. While filtering to a
+  shelf, **Add book** starts with that shelf chosen.
 - **Give back to Open Library** — measurements, binding, page count and cover
   photos from your own copies can fill gaps in Open Library's records, through a
   review queue where you approve each one, sent under your own Open Library keys.

@@ -7,7 +7,8 @@ so a "wait and see" does not quietly become "forgot about it".
 
 **Revisit on or after 2026-09-29** (a week out), or sooner if Open Library
 responds to [issue #13708](https://github.com/internetarchive/openlibrary/issues/13708)
-or to the fix proposed for it, [PR #13730](https://github.com/internetarchive/openlibrary/pull/13730).
+or to the two fixes proposed for it, [PR #13730](https://github.com/internetarchive/openlibrary/pull/13730)
+and [PR #13739](https://github.com/internetarchive/openlibrary/pull/13739).
 
 ### The decision
 
@@ -53,6 +54,15 @@ staff to merge, since the ruleset lives in their private `olsystem` repo. If it
 merges and deploys, all five records go through untouched: re-run their field
 sends, and this decision is moot. An author's `bio` is not covered, so a record
 blocked only by its bio would still need the by-hand path.
+
+**Update 2026-09-28: a second upstream PR,
+[#13739](https://github.com/internetarchive/openlibrary/pull/13739), stops new
+MARC imports creating more of these.** `read_description` drops a trailing `--`
+(and the whitespace around it) from each `520 $a`, leaving the quote before it
+and any `--` mid-text alone. It does not touch records already imported, so it
+does not unblock the five above: only #13730 or the by-hand path does that. It
+does mean the class stops growing once it deploys, which weakens the case for
+building the exception here.
 
 ### If we do build it
 

@@ -1400,12 +1400,15 @@ test('the phone header is two lines: title with the count, then one row of butto
       countSharesVersionLine: count.top < version.bottom && version.top < count.bottom,
       countAfterVersion: count.left >= version.right,
       countBottom: count.bottom,
-      buttons: ['#unitToggle', '#contributeBtn', '#addBtn']
+      buttons: ['#unitToggle', '#contributeBtn', '#accountBtn', '#addBtn']
         .map((s) => ({ id: s, top: Math.round(box(s).top), bottom: Math.round(box(s).bottom) })),
       addBtnAccent: getComputedStyle(document.querySelector('#addBtn')).backgroundColor
         === getComputedStyle(document.querySelector('header')).backgroundColor,
       // The row stays right-aligned even though it now wraps onto its own line.
       rightGap: Math.round(box('header').right - box('#addBtn').right),
+      // Room left in the row. The CI runner's fonts are wider than a desktop's,
+      // so a row that only just fits here wraps there.
+      slack: Math.round(box('header').width - 32 - box('.header-actions').width),
       overflows: document.documentElement.scrollWidth > window.innerWidth,
     };
   });
@@ -1419,8 +1422,9 @@ test('the phone header is two lines: title with the count, then one row of butto
   const rowBottom = Math.min(...header.buttons.map((b) => b.bottom));
   assert.ok(
     rowTop < rowBottom,
-    `all three header buttons share a line (got: ${header.buttons.map((b) => `${b.id} ${b.top}-${b.bottom}`).join(', ')})`,
+    `all the header buttons share a line (got: ${header.buttons.map((b) => `${b.id} ${b.top}-${b.bottom}`).join(', ')})`,
   );
+  assert.ok(header.slack >= 24, `the button row has room to spare for wider fonts (slack: ${header.slack}px)`);
   assert.ok(rowTop >= header.countBottom, 'the buttons are below the title, not beside it');
   assert.equal(header.addBtnAccent, false, 'Add book is a visible chip, not accent-on-accent');
   assert.equal(header.rightGap, 16, `the button row keeps the right edge (gap: ${header.rightGap}px)`);

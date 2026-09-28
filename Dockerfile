@@ -1,4 +1,4 @@
-FROM node:22-slim
+FROM node:24-slim
 
 # better-sqlite3 ships prebuilt binaries; build tools are a safety net for
 # platforms without one (e.g. some ARM homelab hosts).

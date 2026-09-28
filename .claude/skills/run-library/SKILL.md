@@ -19,7 +19,7 @@ Paths below are relative to the repository root.
 ## Prerequisites
 
 ```bash
-node --version          # v24.18.1 here; package.json requires >=20
+node --version          # v24.18.1 here; package.json requires >=24
 npm ci                  # ~6s
 google-chrome --version # any recent build; this box auto-updates (153.0.7979.3 dev)
 ```

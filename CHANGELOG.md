@@ -5,6 +5,20 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.0.1] — 2026-09-28
+
+### Fixed
+
+- **"+ Add book" wrapped onto its own line on a phone.** The ⚙ Account button
+  added in 5.0.0 left the header's button row 17px short of full at 412px,
+  so wider fonts pushed the last button down. The icon button is narrower and
+  the row's gaps tighter, and the header test now demands room to spare.
+
+### Changed
+
+- **Node.js 24.** The Docker image, CI and `engines` move from Node 20 and 22
+  to 24, and CI's actions move to their Node 24 releases.
+
 ## [5.0.0] — 2026-09-27
 
 ### Added

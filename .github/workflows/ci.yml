@@ -7,6 +7,7 @@ on:
 
 jobs:
   lint:
+    name: Lint and syntax check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -25,6 +26,7 @@ jobs:
           node --check public/app.js
 
   test:
+    name: Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

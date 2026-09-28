@@ -64,10 +64,10 @@ header h1 .version { font-size: 0.7rem; font-weight: 400; opacity: 0.65; margin-
    below the title: space-between has nothing to push against once they are the
    only thing on their line, and they slide back to the left without it. */
 .header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
-/* A one-glyph button needs no text-sized side padding. Four actions fill a
-   412px phone row with little to spare, and CI's fonts run wider than a
-   desktop's, so every pixel here keeps "+ Add book" off a line of its own. */
-.icon-btn { padding-left: 10px; padding-right: 10px; }
+/* Four actions fill a 412px phone row with little to spare, and CI's fonts run
+   wider than a desktop's, so the narrower side padding is what keeps
+   "+ Add book" off a line of its own. */
+.header-actions button { padding-left: 10px; padding-right: 10px; }
 /* Rides on the title line, so it keeps the buttons a row to themselves on a
    phone. Never breaks mid-count: "667" and "books" wrapping apart reads as two
    separate facts. */

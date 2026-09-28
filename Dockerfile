@@ -1,4 +1,7 @@
-FROM node:24-slim
+# Not a floating 24: from 24.19.0 on, Node can abort better-sqlite3 during
+# garbage collection (https://github.com/nodejs/node/issues/65446). Move on
+# once that is fixed, and keep CI's node-version in step.
+FROM node:24.18.1-slim
 
 # better-sqlite3 ships prebuilt binaries; build tools are a safety net for
 # platforms without one (e.g. some ARM homelab hosts).

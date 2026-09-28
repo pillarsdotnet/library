@@ -5,6 +5,19 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.0.2] — 2026-09-28
+
+### Fixed
+
+- **The phone header still wrapped on CI's wider fonts**, with 13px to spare
+  where 24px is asked for. Every header button, not only ⚙, now has narrower
+  side padding.
+- **Node 24.18.1, pinned.** Every 24.x release from 24.19.0 on can abort
+  `better-sqlite3` while freeing a statement during garbage collection
+  ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)). It crashed
+  a test file on CI's 24.21.0, and a floating `node:24-slim` would have shipped
+  it. The Docker image and CI stay on 24.18.1 until that is fixed.
+
 ## [5.0.1] — 2026-09-28
 
 ### Fixed

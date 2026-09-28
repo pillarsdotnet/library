@@ -40,7 +40,7 @@ const bookcaseForm = $('#bookcaseForm');
 
 let editingBookId = null;
 let editingShelfId = null;
-let editingBookcase = null; // { room, bookcase } the bookcase dialog renames
+let editingBookcase = null; // { room, bookcase } the bookcase dialog moves or copies
 let scanner = null;
 let shelvesCache = [];
 let genreTags = null;      // multi-select genres field (id-based)
@@ -802,14 +802,25 @@ function openEditBookcase(shelves, books) {
   bookcaseForm.elements.room.focus();
 }
 
+// Edit moves or renames the bookcase in place; Copy makes a new, empty one with
+// the same shelves.
 async function saveBookcase(e) {
   e.preventDefault();
+  await sendBookcase('PUT', 'Save');
+}
+
+async function copyBookcase() {
+  if (!bookcaseForm.reportValidity()) return;
+  await sendBookcase('POST', 'Copy');
+}
+
+async function sendBookcase(method, verb) {
   const data = Object.fromEntries(new FormData(bookcaseForm).entries());
   try {
-    await api('/bookcases', { method: 'PUT', headers: json(), body: JSON.stringify({ from: editingBookcase, ...data }) });
+    await api('/bookcases', { method, headers: json(), body: JSON.stringify({ from: editingBookcase, ...data }) });
     bookcaseDialog.close();
     await refresh();
-  } catch (err) { alert('Save failed: ' + err.message); }
+  } catch (err) { alert(`${verb} failed: ${err.message}`); }
 }
 
 // ---------------------------------------------------------------------------
@@ -1776,6 +1787,7 @@ $('#deleteShelfBtn').addEventListener('click', deleteShelf);
 shelfForm.addEventListener('submit', saveShelf);
 $('#closeBookcaseDialog').addEventListener('click', () => bookcaseDialog.close());
 $('#cancelBookcaseBtn').addEventListener('click', () => bookcaseDialog.close());
+$('#copyBookcaseBtn').addEventListener('click', copyBookcase);
 bookcaseForm.addEventListener('submit', saveBookcase);
 
 // Autocomplete for the free-text classification/location fields.

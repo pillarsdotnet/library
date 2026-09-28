@@ -21,9 +21,12 @@ both iOS Safari and Android Chrome.
 - **Genre / subgenre** with autocomplete from what you've already entered.
 - **Shelves as real objects** — model each shelf with room, bookcase, label, and
   dimensions (height × width × depth). Books are placed *on* a shelf.
-- **Move or rename a bookcase** — click a bookcase's name on the Shelves tab to
-  change its room or its name. Every shelf in it, and every book on them, goes
-  along; naming a bookcase that already exists in that room merges the two.
+- **Move, rename or copy a bookcase** — click a bookcase's name on the Shelves
+  tab and give it a room and a name. **Edit** moves or renames it: every shelf
+  in it, and every book on them, goes along, and naming a bookcase that already
+  exists in that room merges the two. **Copy** makes a new bookcase with the
+  same shelves (labels, dimensions, notes) and none of the books; the copy must
+  not already exist.
 - **Capacity & reorganizing help** — each shelf shows a fill bar, how much space
   is used vs. free, roughly how many more books fit, and warns about books that
   are **too tall** or **too deep** for the shelf. The book editor warns you if a
@@ -778,6 +781,8 @@ All endpoints are under `/api`:
 - `PUT /bookcases` — body `{ from: { room, bookcase }, room, bookcase }`: gives
   every shelf in that bookcase the new room and bookcase names. A blank name
   means none.
+- `POST /bookcases` — same body: copies every shelf in that bookcase, without
+  its books, under the new names. `409` if a bookcase by those names exists.
 - `GET /lookup/:isbn` — merged Open Library + Google Books metadata.
 - `GET /meta` — distinct rooms, bookcases, genres for autocomplete + counts.
 

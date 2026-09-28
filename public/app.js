@@ -35,9 +35,12 @@ const shelfDialog = $('#shelfDialog');
 const shelfForm = $('#shelfForm');
 const genreDialog = $('#genreDialog');
 const genreForm = $('#genreForm');
+const bookcaseDialog = $('#bookcaseDialog');
+const bookcaseForm = $('#bookcaseForm');
 
 let editingBookId = null;
 let editingShelfId = null;
+let editingBookcase = null; // { room, bookcase } the bookcase dialog renames
 let scanner = null;
 let shelvesCache = [];
 let genreTags = null;      // multi-select genres field (id-based)
@@ -204,7 +207,8 @@ function renderShelves() {
       const caseEl = document.createElement('div');
       caseEl.className = 'bookcase-group';
       const books = shelves.reduce((n, s) => n + (s.book_count || 0), 0);
-      caseEl.innerHTML = `<h3 class="bookcase-heading">${esc(bookcase)} <span class="group-count">${shelves.length} ${shelves.length === 1 ? 'shelf' : 'shelves'} · ${books} book${books === 1 ? '' : 's'}</span></h3>`;
+      caseEl.innerHTML = `<h3 class="bookcase-heading"><a href="#" class="bookcase-link" title="Rename or move this bookcase">${esc(bookcase)}</a> <span class="group-count">${shelves.length} ${shelves.length === 1 ? 'shelf' : 'shelves'} · ${books} book${books === 1 ? '' : 's'}</span></h3>`;
+      caseEl.querySelector('.bookcase-link').onclick = (e) => { e.preventDefault(); openEditBookcase(shelves, books); };
       const grid = document.createElement('div');
       grid.className = 'grid';
       for (const s of shelves) grid.appendChild(renderShelfCard(s));
@@ -780,6 +784,32 @@ async function deleteShelf() {
   await api('/shelves/' + editingShelfId, { method: 'DELETE' });
   shelfDialog.close();
   await refresh();
+}
+
+// ---------------------------------------------------------------------------
+// Bookcase dialog: a bookcase is the shelves sharing a room and bookcase name,
+// so renaming or moving one rewrites both names on all of them at once.
+// ---------------------------------------------------------------------------
+function openEditBookcase(shelves, books) {
+  const { room, bookcase } = shelves[0];
+  editingBookcase = { room: room || '', bookcase: bookcase || '' };
+  bookcaseForm.reset();
+  bookcaseForm.elements.room.value = editingBookcase.room;
+  bookcaseForm.elements.bookcase.value = editingBookcase.bookcase;
+  $('#bookcaseSummary').textContent = `${shelves.length} ${shelves.length === 1 ? 'shelf' : 'shelves'} · `
+    + `${books} book${books === 1 ? '' : 's'}`;
+  bookcaseDialog.showModal();
+  bookcaseForm.elements.room.focus();
+}
+
+async function saveBookcase(e) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(bookcaseForm).entries());
+  try {
+    await api('/bookcases', { method: 'PUT', headers: json(), body: JSON.stringify({ from: editingBookcase, ...data }) });
+    bookcaseDialog.close();
+    await refresh();
+  } catch (err) { alert('Save failed: ' + err.message); }
 }
 
 // ---------------------------------------------------------------------------
@@ -1744,6 +1774,9 @@ $('#closeShelfDialog').addEventListener('click', () => shelfDialog.close());
 $('#cancelShelfBtn').addEventListener('click', () => shelfDialog.close());
 $('#deleteShelfBtn').addEventListener('click', deleteShelf);
 shelfForm.addEventListener('submit', saveShelf);
+$('#closeBookcaseDialog').addEventListener('click', () => bookcaseDialog.close());
+$('#cancelBookcaseBtn').addEventListener('click', () => bookcaseDialog.close());
+bookcaseForm.addEventListener('submit', saveBookcase);
 
 // Autocomplete for the free-text classification/location fields.
 // Single multi-select genres field (id-based, backed by book_genres).
@@ -1763,6 +1796,8 @@ $('#deleteGenreBtn').addEventListener('click', deleteGenre);
 genreForm.addEventListener('submit', saveGenre);
 attachCombo(shelfForm.elements.room, () => META.rooms);
 attachCombo(shelfForm.elements.bookcase, () => META.bookcases);
+attachCombo(bookcaseForm.elements.room, () => META.rooms);
+attachCombo(bookcaseForm.elements.bookcase, () => META.bookcases);
 
 // ---------------------------------------------------------------------------
 // Giving back to Open Library. The queue is the review gate: approving a row

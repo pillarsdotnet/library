@@ -5,6 +5,15 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.1.0] — 2026-09-28
+
+### Added
+
+- **Move or rename a bookcase.** A bookcase's name on the Shelves tab is now a
+  link to a dialog that changes its room and name for all of its shelves at
+  once, through a new `PUT /api/bookcases`. Before, moving a bookcase meant
+  editing every shelf in it one by one.
+
 ## [5.0.2] — 2026-09-28
 
 ### Fixed

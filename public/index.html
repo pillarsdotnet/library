@@ -307,6 +307,27 @@
     </form>
   </dialog>
 
+  <!-- ============ BOOKCASE DIALOG ============ -->
+  <dialog id="bookcaseDialog">
+    <form id="bookcaseForm" method="dialog">
+      <div class="dialog-head">
+        <h2>Edit bookcase</h2>
+        <button type="button" class="icon" id="closeBookcaseDialog" aria-label="Close">✕</button>
+      </div>
+      <p class="hint" id="bookcaseSummary"></p>
+      <div class="two-col">
+        <label>Room <input name="room" autocomplete="off" /></label>
+        <label>Bookcase <input name="bookcase" autocomplete="off" /></label>
+      </div>
+      <p class="hint">Changes apply to every shelf in this bookcase. Naming a bookcase that already exists in that room merges the two.</p>
+      <div class="dialog-actions">
+        <span class="grow"></span>
+        <button type="button" id="cancelBookcaseBtn">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- ============ DUPLICATE-ISBN DIALOG ============ -->
   <dialog id="dupDialog" class="pad-dialog">
     <div class="dialog-head"><h2>Already in your library</h2></div>

@@ -21,6 +21,9 @@ both iOS Safari and Android Chrome.
 - **Genre / subgenre** with autocomplete from what you've already entered.
 - **Shelves as real objects** — model each shelf with room, bookcase, label, and
   dimensions (height × width × depth). Books are placed *on* a shelf.
+- **Move or rename a bookcase** — click a bookcase's name on the Shelves tab to
+  change its room or its name. Every shelf in it, and every book on them, goes
+  along; naming a bookcase that already exists in that room merges the two.
 - **Capacity & reorganizing help** — each shelf shows a fill bar, how much space
   is used vs. free, roughly how many more books fit, and warns about books that
   are **too tall** or **too deep** for the shelf. The book editor warns you if a
@@ -772,6 +775,9 @@ All endpoints are under `/api`:
 - `GET/POST /shelves`, `GET/PUT/DELETE /shelves/:id` — list includes computed
   capacity stats (`used_width_mm`, `free_width_mm`, `fill_pct`, `est_additional`,
   `overfull`, `too_tall`, `too_deep`, `unknown_thickness`).
+- `PUT /bookcases` — body `{ from: { room, bookcase }, room, bookcase }`: gives
+  every shelf in that bookcase the new room and bookcase names. A blank name
+  means none.
 - `GET /lookup/:isbn` — merged Open Library + Google Books metadata.
 - `GET /meta` — distinct rooms, bookcases, genres for autocomplete + counts.
 

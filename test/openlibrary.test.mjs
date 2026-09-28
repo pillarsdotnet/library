@@ -379,6 +379,18 @@ test('a refusal from the front door is reported as one, and carries what it said
   assert.equal(blocked.status, 403, 'the status is kept for the log');
   assert.match(blocked.detail, /nginx/, 'along with what came back');
 
+  // The filter matches more than the adjacent `"--`: a space may come between,
+  // as on the work OL19754718W, and a single quote trips it too. A fix that
+  // trims only `"--` would leave these blocked, so the diagnosis must name them.
+  for (const value of ['Brought to light." --Publisher.', "The captain's orders'--"]) {
+    const variant = { ...record, description: { type: '/type/text', value } };
+    const err = await sendField('OL1M', 'physical_dimensions', '20 x 13 x 2 centimeters', 'c', 'session=x',
+      async (url, opts) => (opts?.method === 'PUT'
+        ? { ok: false, status: 403, text: async () => nginx403 }
+        : { ok: true, json: async () => variant })).then(() => null, (e) => e);
+    assert.match(err.message, /front end refused this record/, `blames the record for ${value}`);
+  }
+
   // The same status without that signature is still attributed to the front
   // door, but not blamed on a record that did not cause it.
   const plain = { ...record, description: { type: '/type/text', value: 'An ordinary summary.' } };

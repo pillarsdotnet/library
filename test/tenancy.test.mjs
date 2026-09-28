@@ -197,6 +197,7 @@ test('another library\'s ids are not found, and nothing is changed through them'
     ['shelf edit', await B.put(`/api/shelves/${a.shelf.id}`, { label: 'Hijacked' })],
     ['shelf delete', await B.del(`/api/shelves/${a.shelf.id}`)],
     ['bookcase move', await B.put('/api/bookcases', { from: { room: 'A room', bookcase: '' }, room: 'Hijacked' })],
+    ['bookcase copy', await B.post('/api/bookcases', { from: { room: 'A room', bookcase: '' }, room: 'Stolen' })],
     ['series books', await B.get(`/api/series/${a.series.id}/books`)],
     ['series place', await B.post(`/api/series/${a.series.id}/books`, { book_id: id, order: 2 })],
     ['series remove', await B.del(`/api/series/${a.series.id}/books/${id}`)],
@@ -210,6 +211,7 @@ test('another library\'s ids are not found, and nothing is changed through them'
   assert.equal(book.series.title, 'Alpha Saga');
   assert.equal((await A.get(`/api/shelves/${a.shelf.id}`)).data.label, 'A shelf');
   assert.equal((await A.get(`/api/shelves/${a.shelf.id}`)).data.room, 'A room');
+  assert.deepEqual((await B.get('/api/shelves')).data, [], 'no shelves copied across');
   assert.ok((await A.get('/api/genres')).data.some((g) => g.name === 'Alpha Only Genre'));
 });
 

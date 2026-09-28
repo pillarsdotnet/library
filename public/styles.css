@@ -381,6 +381,8 @@ dialog::backdrop { background: rgba(20, 15, 30, 0.55); }
   color: var(--ink);
   margin: 0 0 8px;
 }
+.bookcase-link { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
+.bookcase-link:hover { color: var(--accent); text-decoration-style: solid; }
 .group-count { font-weight: 400; font-size: 0.78rem; color: var(--muted); }
 
 /* Genres tab */

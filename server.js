@@ -978,27 +978,61 @@ router.put('/api/shelves/:id', (req, res) => {
   res.json(oneShelf(req.params.id, req.library.id));
 });
 
-// Move or rename a bookcase: every shelf in the group `from` names gets the new
-// room and bookcase at once. A bookcase is only the shelves that share both
-// names, so this is how one moves between rooms without editing each shelf.
-// Body: { from: { room, bookcase }, room, bookcase }. A blank name matches, and
-// becomes, no room or no bookcase. Moving onto an existing bookcase merges them.
-router.put('/api/bookcases', (req, res) => {
-  const name = (v) => (v == null ? '' : String(v).trim());
+// A bookcase is only the shelves that share a room and a bookcase name, so the
+// bookcase routes act on every such shelf at once. Both take
+// { from: { room, bookcase }, room, bookcase }: the bookcase to act on and the
+// names to give the result. A blank name matches, and becomes, no room or no
+// bookcase.
+const bookcaseName = (v) => (v == null ? '' : String(v).trim());
+function bookcaseRequest(req, res) {
   const { from } = req.body;
-  if (!from || typeof from !== 'object') return res.status(400).json({ error: 'from is required' });
+  if (!from || typeof from !== 'object') {
+    res.status(400).json({ error: 'from is required' });
+    return null;
+  }
+  return {
+    lib: req.library.id,
+    fromRoom: bookcaseName(from.room),
+    fromBookcase: bookcaseName(from.bookcase),
+    room: bookcaseName(req.body.room) || null,
+    bookcase: bookcaseName(req.body.bookcase) || null,
+  };
+}
+const IN_BOOKCASE = 'library_id = @lib AND COALESCE(room, \'\') = @fromRoom AND COALESCE(bookcase, \'\') = @fromBookcase';
+
+// Move or rename a bookcase, so it moves between rooms without editing each
+// shelf. Moving onto an existing bookcase merges them.
+router.put('/api/bookcases', (req, res) => {
+  const params = bookcaseRequest(req, res);
+  if (!params) return;
   const info = db.prepare(`
     UPDATE shelves SET room = @room, bookcase = @bookcase, updated_at = datetime('now')
-    WHERE library_id = @lib AND COALESCE(room, '') = @fromRoom AND COALESCE(bookcase, '') = @fromBookcase`)
-    .run({
-      lib: req.library.id,
-      fromRoom: name(from.room),
-      fromBookcase: name(from.bookcase),
-      room: name(req.body.room) || null,
-      bookcase: name(req.body.bookcase) || null,
-    });
+    WHERE ${IN_BOOKCASE}`).run(params);
   if (info.changes === 0) return res.status(404).json({ error: 'No such bookcase' });
   res.json({ moved: info.changes });
+});
+
+// Copy a bookcase: a new shelf for each of its shelves, with the same label,
+// dimensions and notes, under the new names. The books stay where they are. The
+// copy must be a new bookcase: copying onto one that exists, itself included,
+// would leave two shelves of every label in it.
+router.post('/api/bookcases', (req, res) => {
+  const params = bookcaseRequest(req, res);
+  if (!params) return;
+  const copy = db.transaction(() => {
+    const exists = db.prepare(`SELECT 1 FROM shelves WHERE library_id = @lib
+      AND COALESCE(room, '') = COALESCE(@room, '') AND COALESCE(bookcase, '') = COALESCE(@bookcase, '')`).get(params);
+    if (exists) return { status: 409, error: 'That bookcase already exists' };
+    const info = db.prepare(`
+      INSERT INTO shelves (library_id, room, bookcase, label, height_mm, width_mm, depth_mm, notes)
+      SELECT library_id, @room, @bookcase, label, height_mm, width_mm, depth_mm, notes
+      FROM shelves WHERE ${IN_BOOKCASE} ORDER BY id`).run(params);
+    if (info.changes === 0) return { status: 404, error: 'No such bookcase' };
+    return { copied: info.changes };
+  });
+  const result = copy();
+  if (result.status) return res.status(result.status).json({ error: result.error });
+  res.status(201).json(result);
 });
 
 router.delete('/api/shelves/:id', (req, res) => {

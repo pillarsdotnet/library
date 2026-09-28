@@ -5,6 +5,16 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.2.0] — 2026-09-28
+
+### Added
+
+- **Copy a bookcase.** The bookcase dialog's Save button is now two: **Edit**,
+  which moves or renames the bookcase as before, and **Copy**, which makes a
+  new bookcase with the same shelves under the room and name given, leaving the
+  books where they are. It refuses to copy onto a bookcase that already exists.
+  Through a new `POST /api/bookcases`.
+
 ## [5.1.0] — 2026-09-28
 
 ### Added

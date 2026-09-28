@@ -319,11 +319,12 @@
         <label>Room <input name="room" autocomplete="off" /></label>
         <label>Bookcase <input name="bookcase" autocomplete="off" /></label>
       </div>
-      <p class="hint">Changes apply to every shelf in this bookcase. Naming a bookcase that already exists in that room merges the two.</p>
+      <p class="hint"><b>Edit</b> renames or moves every shelf in this bookcase; naming a bookcase that already exists in that room merges the two. <b>Copy</b> makes a new, empty bookcase with the same shelves under the new names.</p>
       <div class="dialog-actions">
         <span class="grow"></span>
         <button type="button" id="cancelBookcaseBtn">Cancel</button>
-        <button type="submit" class="primary">Save</button>
+        <button type="button" id="copyBookcaseBtn">Copy</button>
+        <button type="submit" class="primary">Edit</button>
       </div>
     </form>
   </dialog>

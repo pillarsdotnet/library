@@ -849,6 +849,31 @@ test('series position is editable when editing a book', { skip }, async () => {
   await page.close();
 });
 
+test('Add book defaults the shelf to the shelf filter, and to none without one', { skip }, async () => {
+  const r = await fetch(`${BASE}/api/shelves`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ room: 'Den', bookcase: 'Filtered', label: `F${Date.now()}` }),
+  });
+  const { id } = await r.json();
+
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  const openAdd = async () => {
+    await page.click('#addBtn');
+    await page.waitForSelector('#editDialog[open]');
+    const v = await page.$eval('#shelfSelect', (el) => el.value);
+    await page.click('#cancelBtn');
+    return v;
+  };
+
+  assert.equal(await openAdd(), '', 'no shelf without a filter');
+  await page.select('#filterShelf', String(id));
+  assert.equal(await openAdd(), String(id), 'shelf filter becomes the default');
+  await page.select('#filterShelf', '');
+  assert.equal(await openAdd(), '', 'clearing the filter clears the default');
+  await page.close();
+});
+
 test('Shelves tab nests shelves by room → bookcase → shelf, each sorted', { skip }, async () => {
   const stamp = String(Date.now()).slice(-6);
   const mk = (room, bookcase, label) => fetch(`${BASE}/api/shelves`, {

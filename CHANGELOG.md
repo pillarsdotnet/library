@@ -5,6 +5,14 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.3.0] — 2026-09-28
+
+### Changed
+
+- **Add book starts on the filtered shelf.** With the Books tab filtered to a
+  shelf, the Add book dialog now opens with that shelf already chosen, instead
+  of Unshelved. With no shelf filter it still opens Unshelved.
+
 ## [5.2.0] — 2026-09-28
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "home-library",
-  "version": "5.2.0",
+  "version": "5.3.0",
   "description": "Catalogue books in a private library with ISBN scanning, location tracking, and SQLite storage.",
   "type": "module",
   "main": "server.js",

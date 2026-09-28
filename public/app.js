@@ -286,6 +286,8 @@ function openAddBook() {
   $('#seriesPosition').value = '';
   pendingSeries = null;
   bookSeriesOriginal = null;
+  // Filtering by a shelf usually means shelving books there: start with it.
+  bookForm.elements.shelf_id.value = $('#filterShelf').value;
   setScanUI('📷 Scan', null);
   syncBookFields();
   bookDialog.showModal();

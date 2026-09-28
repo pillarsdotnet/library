@@ -978,6 +978,29 @@ router.put('/api/shelves/:id', (req, res) => {
   res.json(oneShelf(req.params.id, req.library.id));
 });
 
+// Move or rename a bookcase: every shelf in the group `from` names gets the new
+// room and bookcase at once. A bookcase is only the shelves that share both
+// names, so this is how one moves between rooms without editing each shelf.
+// Body: { from: { room, bookcase }, room, bookcase }. A blank name matches, and
+// becomes, no room or no bookcase. Moving onto an existing bookcase merges them.
+router.put('/api/bookcases', (req, res) => {
+  const name = (v) => (v == null ? '' : String(v).trim());
+  const { from } = req.body;
+  if (!from || typeof from !== 'object') return res.status(400).json({ error: 'from is required' });
+  const info = db.prepare(`
+    UPDATE shelves SET room = @room, bookcase = @bookcase, updated_at = datetime('now')
+    WHERE library_id = @lib AND COALESCE(room, '') = @fromRoom AND COALESCE(bookcase, '') = @fromBookcase`)
+    .run({
+      lib: req.library.id,
+      fromRoom: name(from.room),
+      fromBookcase: name(from.bookcase),
+      room: name(req.body.room) || null,
+      bookcase: name(req.body.bookcase) || null,
+    });
+  if (info.changes === 0) return res.status(404).json({ error: 'No such bookcase' });
+  res.json({ moved: info.changes });
+});
+
 router.delete('/api/shelves/:id', (req, res) => {
   // Books on this shelf become unshelved (ON DELETE SET NULL).
   const info = db.prepare('DELETE FROM shelves WHERE id = ? AND library_id = ?').run(req.params.id, req.library.id);

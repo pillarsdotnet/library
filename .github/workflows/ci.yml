@@ -19,6 +19,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      - name: Refuse vulnerable or deprecated dependencies
+        run: npm run check:deps
       - name: Syntax-check sources
         run: |
           node --check server.js

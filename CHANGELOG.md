@@ -15,6 +15,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   books where they are. It refuses to copy onto a bookcase that already exists.
   Through a new `POST /api/bookcases`.
 
+### Changed
+
+- **No known vulnerabilities or deprecated packages.** `npm audit` reported 12
+  (7 high, 5 moderate) and `npm ci` warned that `prebuild-install` is
+  deprecated. `better-sqlite3` 13 ships its prebuilt binaries in the package and
+  no longer needs `prebuild-install`; `sharp` 0.35.5 fixes its libvips and
+  libheif advisories, and an override moves the scanner library's bundled
+  `sharp` onto it; `npm audit fix` updated `qs` under `express` and the linters'
+  dependencies. ESLint 9 turned out to be deprecated as well, which `npm ci`
+  never said: it is now ESLint 10, whose `no-useless-assignment` rule removed
+  four dead `= null` initialisers.
+- **A new `npm run check:deps`** refuses any vulnerability or deprecated
+  package. The `pre-commit` hook and CI both run it.
+
 ## [5.1.0] — 2026-09-28
 
 ### Added

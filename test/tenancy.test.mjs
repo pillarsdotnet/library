@@ -135,7 +135,7 @@ function client(session) {
       redirect: 'manual',
     });
     const text = await r.text();
-    let data = null;
+    let data;
     try { data = JSON.parse(text); } catch { data = text; }
     return { status: r.status, data };
   };

@@ -155,6 +155,23 @@ Semantic versioning, judged from the user's side: **patch** for a fix, **minor**
 for a feature, **major** when a database written by the new build can no longer
 be read by the old one.
 
+## Dependencies: no vulnerabilities, no deprecations
+
+`npm run check:deps` fails if `npm audit` reports a vulnerability of any
+severity, in runtime or development dependencies, or if any installed package
+version is deprecated. The `pre-commit` hook runs it, and so does CI's
+**Lint and syntax check** job, which the `main` branch ruleset requires.
+
+Deprecations are looked up in the npm registry for every version in
+`package-lock.json`, not taken from `npm ci`'s warnings. Those warnings only
+repeat what the lockfile recorded when a package was resolved, so a package
+deprecated later passes `npm ci` in silence. The lookup takes a second or two
+and needs the network; offline, commit with `--no-verify` and let CI check.
+
+`@ericblade/quagga2` bundles its own `sharp` for use under Node.js; the
+`overrides` entry in `package.json` moves it onto ours. The scanner never loads
+it — the browser gets the library's prebuilt `dist/` — but `npm audit` counts it.
+
 ## Access control
 
 With sign-in on (see [Signing in](#signing-in)), every page and API route needs a

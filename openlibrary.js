@@ -341,9 +341,52 @@ export async function login(creds, doFetch = globalThis.fetch) {
   return cookie;
 }
 
+// A quote, optional whitespace, then "--" at the very END of a text: the
+// source-attribution dash a MARC 520 summary carries (`…a killer?"--`). Open
+// Library's front end reads it as a SQL comment and refuses every PUT of a record
+// that contains one, whatever the edit (#13708), and a PUT always carries the
+// whole record. A "--" with text after it does not trip the filter and is left
+// alone, as is the quote itself.
+export const TRAILING_QUOTE_DASHES = /(['"])\s*--\s*$/;
+
+// The record with every such ending trimmed, and the dotted paths of the fields
+// that changed (`description.value`, `notes`). Every string at any depth is
+// looked at, because the filter reads the whole body: a bio or a note trips it
+// as surely as a description does. The record passed in is not modified.
+export function trimTrailingDashes(record) {
+  const trimmed = [];
+  const walk = (v, path) => {
+    if (typeof v === 'string') {
+      if (!TRAILING_QUOTE_DASHES.test(v)) return v;
+      trimmed.push(path);
+      return v.replace(TRAILING_QUOTE_DASHES, '$1');
+    }
+    if (Array.isArray(v)) return v.map((x, i) => walk(x, `${path}[${i}]`));
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, path ? `${path}.${k}` : k)]));
+    }
+    return v;
+  };
+  return { record: walk(record, ''), trimmed };
+}
+
+// What the edit comment adds when a send also trimmed an ending, so the record's
+// history says what changed besides the field, and why. Named by top-level
+// field: `description`, not `description.value`.
+export function trimComment(paths) {
+  const fields = [...new Set(paths.map((p) => p.split(/[.[]/)[0]))];
+  if (!fields.length) return '';
+  const list = fields.length === 1 ? fields[0] : `${fields.slice(0, -1).join(', ')} and ${fields.at(-1)}`;
+  return ` Also remove the trailing "--" from ${list}, which made Open Library refuse edits to this record (#13708).`;
+}
+
 // Add one field to an edition. Read-modify-write against the live record, and
 // refuse at the last moment if the blank has been filled since the proposal was
 // queued — a queue can sit for days, and someone else may have got there first.
+//
+// The one other change a send makes: a text ending in a quote and "--" is
+// trimmed (see trimTrailingDashes), because without that the write is refused
+// outright. Only that ending, and only on a record this send is editing anyway.
 export async function sendField(olid, field, value, comment, cookie, doFetch = globalThis.fetch,
   { attempts = RETRY_ATTEMPTS } = {}) {
   const spec = FIELDS.find((f) => f.name === field);
@@ -380,9 +423,12 @@ export async function sendField(olid, field, value, comment, cookie, doFetch = g
       throw new Error(`${olid} already has ${field} — not overwriting`);
     }
 
+    // Trimmed on every fresh read, so a retry sends what is there now.
+    const { record: sendable, trimmed } = trimTrailingDashes(record);
+    const note = trimComment(trimmed);
     const body = spec.apply
-      ? { ...spec.apply(record, value), _comment: comment }
-      : { ...record, [field]: field === 'number_of_pages' ? Number(value) : value, _comment: comment };
+      ? { ...spec.apply(sendable, value), _comment: comment + note }
+      : { ...sendable, [field]: field === 'number_of_pages' ? Number(value) : value, _comment: comment + note };
     const payload = JSON.stringify(body);
     putAttempted = true;
     let put;

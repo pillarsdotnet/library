@@ -552,6 +552,18 @@ Sending re-reads the live record first and refuses if the blank has been filled
 in the meantime — a queue can sit for days, and someone else may have got there
 first.
 
+Sending changes one other thing, and only on a record it is editing anyway: any
+text in the record that **ends** in a quote, optional whitespace and `--` loses
+the whitespace and dashes (the quote stays). That ending is the source
+attribution a MARC summary carries (`…a killer?"--`), and Open Library's front
+end reads it as a SQL comment and refuses every API edit of a record containing
+it ([#13708](https://github.com/internetarchive/openlibrary/issues/13708)). Every
+string in the record is checked, at any depth, since the whole record goes back
+on every edit; a `--` with text after it passes the filter and is left alone.
+The edit comment then says so: *"… Also remove the trailing "--" from
+description, which made Open Library refuse edits to this record (#13708)."* Rows
+that failed on this before can simply be sent again.
+
 ### On a server, as a systemd-managed container
 
 The intended deployment runs the app as a **Docker container managed by systemd**,

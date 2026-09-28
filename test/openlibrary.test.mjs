@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  proposalsFor, fetchEdition, sendField, FIELD_COMMENTS,
+  proposalsFor, fetchEdition, sendField, FIELD_COMMENTS, trimTrailingDashes, trimComment,
   importAllowed, importPayload, sendImport, sourcePrefix, sendCover,
 } from '../openlibrary.js';
 
@@ -219,6 +219,85 @@ test('a successful send PUTs the record back with the edit comment attached', as
   assert.equal(body.title, 'Kept', 'the rest of the record survives the edit');
   assert.match(body._comment, /highest explicitly numbered page/i);
   assert.equal(put.opts.headers.Cookie, 'sess=x');
+});
+
+// ─── the trailing quote-and-dashes a send trims (#13708) ─────────────────────
+
+test('a quote, optional whitespace and a trailing "--" are trimmed, and nothing else', () => {
+  const cases = [
+    ['…sacrifice along the way"--', '…sacrifice along the way"'],
+    ['…the widening gyre" --', '…the widening gyre"'],
+    ["…a novelist'-- ", "…a novelist'"],
+    ['…a killer?"--\n', '…a killer?"'],
+    // Left alone: the filter lets these through, so they are not ours to touch.
+    ['sacrifice along the way--', 'sacrifice along the way--'],
+    ['sacrifice along the way"-', 'sacrifice along the way"-'],
+    ['"--and then more', '"--and then more'],
+    ['plain text', 'plain text'],
+  ];
+  for (const [before, after] of cases) {
+    assert.equal(trimTrailingDashes({ description: before }).record.description, after, JSON.stringify(before));
+  }
+});
+
+test('every text in the record is looked at, at any depth, and the original is left as it was', () => {
+  const record = {
+    key: '/books/OL1M',
+    description: { type: '/type/text', value: 'a killer?"--' },
+    notes: "x' --",
+    excerpts: [{ excerpt: 'fine' }, { excerpt: 'also"--' }],
+    number_of_pages: 300,
+    covers: [1, 2],
+  };
+  const frozen = structuredClone(record);
+  const { record: out, trimmed } = trimTrailingDashes(record);
+  assert.deepEqual(trimmed, ['description.value', 'notes', 'excerpts[1].excerpt']);
+  assert.equal(out.description.value, 'a killer?"');
+  assert.equal(out.notes, "x'");
+  assert.equal(out.excerpts[1].excerpt, 'also"');
+  assert.equal(out.number_of_pages, 300, 'non-text values pass through');
+  assert.deepEqual(record, frozen, 'the record read from Open Library is not modified in place');
+  assert.match(trimComment(trimmed), /^ Also remove the trailing "--" from description, notes and excerpts, /);
+  assert.equal(trimComment([]), '', 'nothing trimmed, nothing added to the comment');
+});
+
+test('a record Open Library\'s filter was refusing now goes through, with the trim in the comment', async () => {
+  // A stand-in for the front end: it refuses a PUT whose body has a quote,
+  // optional whitespace and "--" at the end of a string, exactly as measured
+  // on openlibrary.org, and never lets it reach the catalogue.
+  const calls = [];
+  const doFetch = async (url, opts = {}) => {
+    calls.push({ url, opts });
+    if (opts.method === 'PUT') {
+      if (/(\\"|')\s*--\s*"/.test(opts.body)) {
+        return { ok: false, status: 403, text: async () => '<html><head><title>403 Forbidden</title></head><center>nginx</center></html>' };
+      }
+      return { ok: true, status: 200 };
+    }
+    return { ok: true, json: async () => ({
+      key: '/books/OL27268134M', title: 'The Escape Room',
+      description: { type: '/type/text', value: 'which one of them is a killer?"--' },
+    }) };
+  };
+  assert.equal(await sendField('OL27268134M', 'physical_format', 'Hardcover', FIELD_COMMENTS.physical_format, 'x', doFetch), true);
+  const body = JSON.parse(calls.find((c) => c.opts.method === 'PUT').opts.body);
+  assert.equal(body.physical_format, 'Hardcover', 'the field this send was for is filled');
+  assert.equal(body.description.value, 'which one of them is a killer?"', 'the dashes are gone and the quote is kept');
+  assert.equal(body._comment,
+    FIELD_COMMENTS.physical_format + ' Also remove the trailing "--" from description, which made Open Library refuse edits to this record (#13708).');
+});
+
+test('a clean record is sent with its comment unchanged', async () => {
+  const calls = [];
+  const doFetch = async (url, opts = {}) => {
+    calls.push({ url, opts });
+    if (opts.method === 'PUT') return { ok: true, status: 200 };
+    return { ok: true, json: async () => ({ key: '/books/OL1M', description: 'An ordinary summary.' }) };
+  };
+  await sendField('OL1M', 'number_of_pages', '342', FIELD_COMMENTS.number_of_pages, 'x', doFetch);
+  const body = JSON.parse(calls.find((c) => c.opts.method === 'PUT').opts.body);
+  assert.equal(body._comment, FIELD_COMMENTS.number_of_pages);
+  assert.equal(body.description, 'An ordinary summary.');
 });
 
 // Importing creates records rather than filling blanks, so the tests here are

@@ -5,6 +5,20 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.1.0] — 2026-09-28
+
+### Changed
+
+- **A send trims the trailing quote-and-dashes that blocks it.** Any text in
+  the record being edited that ends in a quote, optional whitespace and `--`
+  (the source dash on MARC summaries) loses the whitespace and dashes, keeping
+  the quote, and the edit comment says so. Open Library's front end refused
+  every API edit of such a record (#13708), so these sends failed however
+  unrelated the field; the rows that failed that way can now be sent again.
+  Only records being edited anyway are touched, and a `--` with text after it
+  is left alone. This complements the two upstream fixes: #13730, which relaxes
+  the filter, and #13739, which stops MARC imports creating more of these.
+
 ## [5.0.2] — 2026-09-28
 
 ### Fixed

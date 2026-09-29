@@ -14,6 +14,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ghcr.io/pillarsdotnet/library`, tagged `latest`, the `package.json`
   version, and `sha-<commit>`.
 
+### Changed
+
+- **Smaller Docker image: 654 MB to 287 MB.** `better-sqlite3` compiles from
+  source on every install, so the image carried the compiler toolchain
+  (`python3`, `make`, `g++`, about 280 MB) it needed only while building. A
+  two-stage build now compiles in the first stage and copies just
+  `node_modules` into a clean runtime image.
+
+### Fixed
+
+- The 5.2.0 entry says `better-sqlite3` 13 ships prebuilt binaries. It does
+  not: its install script is `node-gyp rebuild`, which always compiles.
+
 ## [5.3.0] — 2026-09-28
 
 ### Changed

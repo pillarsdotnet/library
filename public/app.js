@@ -2037,8 +2037,8 @@ async function renderMembers() {
   const list = await api('/library/members');
   $('#memberList').innerHTML = list.map((m) => `
     <li>
-      <span class="member-email">${esc(m.email)}${m.you ? ' <span class="hint">(you)</span>' : ''}</span>
-      ${m.you ? '' : `<button type="button" class="danger" data-remove="${m.id}" data-email="${esc(m.email)}">Remove</button>`}
+      <span class="member-email">${esc(m.email)}${m.you ? ' <span class="hint">(you)</span>' : ''}${m.owner ? ' <span class="hint">(owner)</span>' : ''}</span>
+      ${m.you || m.owner ? '' : `<button type="button" class="danger" data-remove="${m.id}" data-email="${esc(m.email)}">Remove</button>`}
     </li>`).join('');
 }
 

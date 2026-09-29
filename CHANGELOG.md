@@ -7,13 +7,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.4.0] — 2026-09-28
+
 ### Added
 
+- **The server's owner is a member of every library.** User 1, the first
+  account the database held, joins each library as it is created, and every
+  existing one on upgrade. Anyone with a Google account can start a library,
+  so the owner can now look into any of them. The Members screen marks the
+  owner, and nobody can remove them.
+- **The owner is emailed when a new library is created**, naming the library
+  and who started it. The app sends through Gmail (`smtp.gmail.com:587`,
+  STARTTLS required) with an app password in `SMTP_USER` / `SMTP_PASSWORD`;
+  with those unset, nothing is sent. A failed send is logged and never holds
+  up the sign-in that created the library.
 - **Published Docker image.** Every merge to `main` that passes the Code
   Checker workflow now builds the image and pushes it to
   `ghcr.io/pillarsdotnet/library`, tagged `latest`, the `package.json`
   version, and `sha-<commit>`.
-
 - **Four images per merge.** Debian slim and Alpine, each for `amd64` and
   `arm64`, built on native runners. Slim keeps the plain tags; Alpine takes
   the same tags ending `-alpine`. Pull requests build and check all four too.
@@ -44,6 +55,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no zoneinfo, so its C library ignored `TZ` and so did SQLite, while Node's own
   timezone data made the startup log name the right zone. The Alpine image
   installs `tzdata`.
+- A session from before libraries is now honoured for the **first** library,
+  the only one there was when it was issued. It used to be honoured for a
+  user's only library, which the owner, in every library, no longer has.
 - The 5.2.0 entry says `better-sqlite3` 13 ships prebuilt binaries. It does
   not: its install script is `node-gyp rebuild`, which always compiles.
 

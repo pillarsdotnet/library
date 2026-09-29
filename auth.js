@@ -17,8 +17,9 @@
 //      member ends that person's session on their next click; a session that
 //      outlived its permission is the thing membership is for.
 //   3. Signing in names a library. A name nobody has taken becomes a new
-//      library with the person signing in as its only member; a taken name
-//      admits its members and nobody else.
+//      library with the person signing in as its founding member, the owner
+//      beside them, and the owner is mailed about it; a taken name admits its
+//      members and nobody else.
 //   4. One library at a time. The session carries the library it was opened
 //      for; using another means signing in to that one.
 //
@@ -30,8 +31,9 @@ import express from 'express';
 import { secret } from './secrets.js';
 import {
   normalizeLibraryName, displayName, libraryById, libraryByName, firstLibrary, NAME_MAX,
-  findOrCreateUser, userByEmail, isMember, librariesOf, createLibrary,
+  findOrCreateUser, userByEmail, isMember, librariesOf, createLibrary, owner,
 } from './accounts.js';
+import { mailConfig, sendMail } from './mail.js';
 
 export { sessionSecretIsEphemeral } from './secrets.js';
 
@@ -148,10 +150,26 @@ export function sessionFromRequest(req) {
 // registered on the OAuth client character for character, so an explicit
 // setting wins; otherwise it is derived from the request, which is what lets
 // one image serve two hostnames without a per-host build.
+const publicOrigin = (req) => process.env.PUBLIC_ORIGIN || `${req.protocol}://${req.get('host')}`;
+
 function redirectUri(req, base) {
   if (process.env.OAUTH_REDIRECT_URI) return process.env.OAUTH_REDIRECT_URI;
-  const origin = process.env.PUBLIC_ORIGIN || `${req.protocol}://${req.get('host')}`;
-  return `${origin}${base}/auth/callback`;
+  return `${publicOrigin(req)}${base}/auth/callback`;
+}
+
+// Anyone with a Google account can create a library, so the owner hears of
+// each one. After the response, never before it: a slow or failing mail server
+// must not hold up, or break, somebody's first sign-in.
+function tellOwner(library, founder, url) {
+  const to = owner()?.email;
+  if (!to || !mailConfig()) return;
+  const name = displayName(library.name);
+  sendMail({
+    to,
+    subject: `New library: ${name}`,
+    text: `${founder} created ${name} and signed in to it.\n\n`
+      + `You are a member of it, as of every library on this server. Sign in to it at\n${url}\n`,
+  }).catch((e) => console.error(`✉️  could not tell ${to} about ${name}: ${e.message}`));
 }
 
 // Only ever bounce back to a path on this site. An open redirect here would
@@ -375,6 +393,7 @@ export function mountAuth(router, base = '', doFetch = globalThis.fetch) {
       // lets one create it, and the other is then an ordinary non-member.
       try {
         library = createLibrary(name, user.id);
+        res.on('finish', () => tellOwner(library, user.email, `${publicOrigin(req)}${base}/auth/login`));
       } catch (e) {
         if (!/UNIQUE/i.test(e.message)) throw e;
         library = libraryByName(name);
@@ -413,19 +432,16 @@ export function mountAuth(router, base = '', doFetch = globalThis.fetch) {
 // not a user, or a library the user is no longer a member of.
 //
 // A session from before libraries names no library. It stood for the only one
-// there was, so it is honoured for a user who belongs to exactly one library,
-// which carries the people signed in at the upgrade across it.
+// there was, which became the first library, so it is honoured for that one's
+// members: that carries the people signed in at the upgrade across it. The
+// first library rather than "the user's only library", because the owner
+// belongs to every library and has no only one.
 function signedIn(req) {
   const session = sessionFromRequest(req);
   if (!session) return null;
   const user = userByEmail(session.email);
   if (!user) return null;
-  let libraryId = session.lib;
-  if (libraryId == null) {
-    const mine = librariesOf(user.id);
-    if (mine.length !== 1) return null;
-    libraryId = mine[0].id;
-  }
+  const libraryId = session.lib ?? firstLibrary()?.id;
   const library = libraryById(libraryId);
   if (!library || !isMember(library.id, user.id)) return null;
   return { session, user, library };

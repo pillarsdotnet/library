@@ -7,9 +7,10 @@ import db from './db.js';
 import { canonicalIsbn } from './isbn.js';
 import { parseDataUrl, writeCover, coverPath, removeCover, mimeForFile } from './covers.js';
 import { lookupIsbn, RateLimitError } from './lookup.js';
+import { mailConfig } from './mail.js';
 import { authConfigured, mountAuth, requireAuth, sessionSecretIsEphemeral, sessionIdleDays } from './auth.js';
 import {
-  displayName, members, addMember, removeMember, librariesOf,
+  displayName, members, addMember, removeMember, librariesOf, OWNER_ID,
   olCredentials, olStatus, setOlCredentials, clearOlCredentials,
 } from './accounts.js';
 import { parseEpub } from './epub.js';
@@ -1478,5 +1479,8 @@ app.listen(PORT, () => {
     if (sessionSecretIsEphemeral()) {
       console.log('   SESSION_SECRET unset — sessions are signed with a new key each boot, so a restart signs everyone out');
     }
+    const mail = mailConfig();
+    console.log(mail ? `   new libraries are mailed to user ${OWNER_ID} via ${mail.user} at ${mail.host}:${mail.port}`
+      : '   SMTP_USER / SMTP_PASSWORD unset — nobody is told when a new library is created');
   }
 });

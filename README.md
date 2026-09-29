@@ -643,46 +643,55 @@ behind the node's nginx, served under a sub-path such as `/library/`.
 - port 3000 is published on `127.0.0.1:30800`, fronted by the node's nginx, which
   proxies `location /library/` (see [`deploy/nginx-library.conf`](./deploy/nginx-library.conf)).
 
-Deploy / update — one script builds locally, hands the image to the node over
-ssh (it does not pull the published image), restarts the unit, health-checks it, and prunes
-old images:
+Deploy / update — one script has the node pull the image CI published for this
+version, restarts the unit, health-checks it, and prunes old images:
 
 ```bash
 HOST=<node> deploy/deploy.sh          # deploy to a specific node
 deploy/deploy.sh                      # or to the default node set in the script
+VARIANT=alpine HOST=<node> deploy/deploy.sh   # the Alpine image (slim is the default)
+TAG=5.3.0 HOST=<node> deploy/deploy.sh        # a specific version, e.g. to roll back
+BUILD=local HOST=<node> deploy/deploy.sh      # build here and ship over ssh instead
 HEALTH_TIMEOUT=120 deploy/deploy.sh   # allow longer for the app to come up
 HEALTH_URL=http://127.0.0.1:30800/library/ deploy/deploy.sh   # non-default port/path
 ```
 
 `HOST` is an ssh destination — a `Host` alias from your `~/.ssh/config` is the
 easiest way to carry a non-standard port or username. The node needs Docker,
-`curl`, and passwordless `sudo`.
+`curl`, passwordless `sudo`, and a route to `ghcr.io` (the package is public, so
+no login).
 
-It tags the build with both the version and `:latest`. The unit runs `:latest`,
-so a release never needs the unit edited; the version tag stays alongside so you
-can tell what is on the node.
+**What is deployed is what CI published**: `ghcr.io/pillarsdotnet/library:<version>`,
+or `<version>-alpine`, with the version read from `package.json` in this checkout.
+Those tags exist only once the merge to `main` has passed every check, so an
+unmerged change, a local edit or a red build cannot reach a node. If the tag is
+not there yet — CI still running, or failed — the script says so and stops before
+touching the node. `BUILD=local` is the escape hatch for when `ghcr.io` cannot be
+reached: it builds this checkout and ships the image over ssh, as the script did
+before images were published.
+
+On the node the image is tagged `library.local/home-library:<tag>` and `:latest`.
+The unit runs `:latest`, so a release never needs the unit edited; the version tag
+stays alongside so you can tell what is on the node.
 
 After the restart the script **will not report success until the app answers**.
 Because the unit has `Restart=always`, `systemctl restart` exits 0 even when the
 container dies on startup and respawns forever — so the restart proves nothing on
 its own. The check polls `http://127.0.0.1:30800/library/` on the node (the port is
 loopback-only) until it returns 200, up to `HEALTH_TIMEOUT` seconds, and then
-confirms the running container really is the image just built, catching a restart
+confirms the running container really is the image just deployed, catching a restart
 that quietly kept older code. If either check fails the script prints
 `systemctl status` and the container log, exits non-zero, and **skips the prune**,
 so every previous image is still on the node to roll back to.
 
 Only once the check passes is every home-library image except the one just
 deployed pruned — the running container keeps a reference to its own image, so
-this can never remove what is in use. **Roll back** by checking out the tag and
-re-running the script:
+this can never remove what is in use. **Roll back** by deploying an older
+published version, which needs no checkout and no build:
 
 ```bash
-git checkout v2.1.0 && deploy/deploy.sh
+TAG=5.3.0 HOST=<node> deploy/deploy.sh
 ```
-
-Each release is tagged in git (`git tag -l 'v*'`), so a rollback is a name, not
-a commit hunt.
 
 Docker on the node needs `sudo`. To change a secret, edit
 `/etc/home-library.env` and restart the unit.

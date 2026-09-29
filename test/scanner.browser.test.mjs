@@ -154,6 +154,19 @@ test('every source value the app writes is selectable and survives an edit', { s
   await page.close();
 });
 
+// Answer the page's ISBN lookups here rather than from the live sources. The
+// server would otherwise ask Open Library, Google Books and Barnes & Noble,
+// and a slow answer from any of them timed tests out on CI. Enabled after the
+// page has loaded, so only the lookup call is affected.
+async function stubLookup(page, body = { source: 'openlibrary', title: 'Looked-up Title' }) {
+  await page.setRequestInterception(true);
+  page.on('request', (req) => {
+    if (req.url().includes('/api/lookup/')) {
+      req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    } else req.continue();
+  });
+}
+
 test('scanning a duplicate ISBN opens the choice dialog immediately (not only on save)', { skip }, async () => {
   const isbn = '9781783751068';
   const seed = await (await fetch(`${BASE}/api/books`, {
@@ -165,6 +178,7 @@ test('scanning a duplicate ISBN opens the choice dialog immediately (not only on
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
   await page.click('#addBtn');
   await page.waitForSelector('#editDialog[open]');
+  await stubLookup(page);
   // Drive the scan path: acceptScan() sets the ISBN then calls lookup(true).
   await page.evaluate((v) => { document.querySelector("#isbn").value = v; window.lookup(true); }, isbn);
 
@@ -187,6 +201,7 @@ test('scanning a duplicate ISBN opens the choice dialog immediately (not only on
   await p2.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
   await p2.click('#addBtn');
   await p2.waitForSelector('#editDialog[open]');
+  await stubLookup(p2);
   // Title first — once the modal duplicate dialog opens, the form behind it is inert.
   await p2.type('#bookForm [name="title"]', 'Foskett Second Copy');
   await p2.evaluate((v) => { document.querySelector('#isbn').value = v; window.lookup(true); }, isbn);

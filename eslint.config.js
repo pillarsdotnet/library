@@ -47,6 +47,26 @@ export default [
     rules: { 'no-unused-vars': noUnused },
   },
   {
+    // Benchmarks: Node ESM run by hand, not part of the app or the test suite.
+    files: ['bench/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: { ...globals.node },
+    },
+    rules: { 'no-unused-vars': noUnused },
+  },
+  {
+    // Benchmarks: Node ESM run by hand, not part of the app or the test suite.
+    files: ['bench/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: { ...globals.node },
+    },
+    rules: { 'no-unused-vars': noUnused },
+  },
+  {
     // Browser: classic script, plus globals from the vendored scanner library.
     files: ['public/**/*.js'],
     languageOptions: {

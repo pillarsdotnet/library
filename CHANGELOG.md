@@ -14,8 +14,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ghcr.io/pillarsdotnet/library`, tagged `latest`, the `package.json`
   version, and `sha-<commit>`.
 
+- **Four images per merge.** Debian slim and Alpine, each for `amd64` and
+  `arm64`, built on native runners. Slim keeps the plain tags; Alpine takes
+  the same tags ending `-alpine`. Pull requests build and check all four too.
+- **Checks inside each image.** CI runs the due-date tests, a new timezone
+  test and a new garbage-collection stress test inside every image before
+  publishing it. The timezone test compares SQLite's `localtime` with Node's
+  own timezone data; the stress test frees 300,000 prepared statements under
+  allocation pressure.
+
 ### Changed
 
+- **Node is no longer pinned to 24.18.1.** The pin guarded against
+  [nodejs/node#65446](https://github.com/nodejs/node/issues/65446), which
+  aborts an addon built on `node::ObjectWrap` when garbage collection frees one
+  of its objects. `better-sqlite3` 11 was such an addon; 12 onwards uses
+  `Napi::ObjectWrap` and is not affected. The new stress test aborts on
+  `better-sqlite3` 11.10.0 with Node 24.21.0 and passes on 13, on both Debian
+  and Alpine. The Docker image and CI now follow `node:24`.
 - **Smaller Docker image: 654 MB to 287 MB.** `better-sqlite3` compiles from
   source on every install, so the image carried the compiler toolchain
   (`python3`, `make`, `g++`, about 280 MB) it needed only while building. A
@@ -24,6 +40,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The Alpine image would have judged due dates in UTC.** `node:alpine` ships
+  no zoneinfo, so its C library ignored `TZ` and so did SQLite, while Node's own
+  timezone data made the startup log name the right zone. The Alpine image
+  installs `tzdata`.
 - The 5.2.0 entry says `better-sqlite3` 13 ships prebuilt binaries. It does
   not: its install script is `node-gyp rebuild`, which always compiles.
 

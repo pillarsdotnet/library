@@ -205,13 +205,35 @@ Then open `http://<your-server>:3000`. The SQLite database is stored in the
 `library-data` Docker volume, so it survives rebuilds. To back it up, copy
 `/data/library.db` out of the volume.
 
-Or skip the build and run the published image. Every merge to `main` that
-passes the Code Checker workflow pushes it to the GitHub Container Registry,
-tagged `latest`, the `package.json` version, and `sha-<commit>`:
+Or skip the build and run a published image. Every merge to `main` that
+passes the Code Checker workflow pushes two to the GitHub Container Registry,
+each for both `amd64` and `arm64`, so Docker picks the right one for the
+machine:
+
+| Base | Tags |
+|---|---|
+| Debian slim (the default) | `latest`, the `package.json` version, `sha-<commit>` |
+| Alpine (about 60 MB smaller) | the same, ending `-alpine`: `latest-alpine`, `5.3.0-alpine` |
 
 ```bash
-docker run -d -p 3000:3000 -v library-data:/data ghcr.io/pillarsdotnet/library:latest
+docker run -d -p 3000:3000 -v library-data:/data -e TZ=America/New_York \
+  ghcr.io/pillarsdotnet/library:latest
 ```
+
+To build the Alpine image yourself, pass `--build-arg VARIANT=alpine`.
+
+Before any of the four is published, CI runs three checks inside it:
+
+- **Due dates follow `TZ`.** SQLite's `localtime` compares with Node's own
+  timezone data in four zones. Alpine lacks the zoneinfo files unless the image
+  adds `tzdata`; without them, overdue books are judged in UTC while the
+  startup log names the right zone.
+- **Garbage collection does not abort Node.** 300,000 prepared statements are
+  freed under allocation pressure. From Node 24.19.0, this aborts any addon
+  built on the older `node::ObjectWrap`
+  ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)), which
+  `better-sqlite3` 11 was.
+- **The due-date tests** run against that image's own server.
 
 ### With Node directly
 

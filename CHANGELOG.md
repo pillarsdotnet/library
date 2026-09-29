@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A flaky browser test stopped CI publishing images.** The duplicate-scan
+  test waited on a live lookup against Open Library, Google Books and Barnes &
+  Noble, and timed out when they were slow; that failed the 5.4.0 merge, so
+  nothing was published. The test now answers the lookup itself, like the
+  re-scan test beside it.
+
 ## [5.4.0] — 2026-09-28
 
 ### Added

@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Slim or Alpine? in the README.** A measured comparison of the two images:
+  size, memory and CPU, with slim under `MALLOC_ARENA_MAX=2` as a third column.
+  Alpine is 18% smaller to download and holds 46% less memory after heavy
+  imports, and spends 14–48% more CPU per request. The benchmarks that produced
+  it are in `bench/`: `memory.mjs` for memory, and `cpu.sh` with `cpu-micro.mjs`,
+  `cpu-http.mjs` and `cpu-report.mjs` for CPU.
+
 ### Changed
 
 - **Deploys pull the published image instead of building one.**

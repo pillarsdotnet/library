@@ -239,7 +239,7 @@ test('the allowlist file became the first library\'s members, and nobody else ge
   nextIdentity = { email: 'owner@gmail.com', email_verified: true };
 });
 
-test('naming an unused library creates it, with only the person signing in', async () => {
+test('naming an unused library creates it, with the person signing in and the owner', async () => {
   nextIdentity = { email: 'founder@gmail.com', email_verified: true };
   const made = await signIn('/', '  The   Reading Room  ');
   const session = sessionFrom(made.setCookies);
@@ -248,13 +248,18 @@ test('naming an unused library creates it, with only the person signing in', asy
   assert.equal(me.library.name, 'The Reading Room', 'whitespace is tidied, case kept');
   assert.equal(me.library.display, 'The Reading Room Library', 'shown with " Library" after it');
   const mine = await (await fetch(`${BASE}/api/library/members`, as(session))).json();
-  assert.deepEqual(mine.map((m) => m.email), ['founder@gmail.com'], 'its only member');
+  assert.deepEqual(mine.map((m) => [m.email, m.owner]), [['founder@gmail.com', false], ['owner@gmail.com', true]],
+    'its founder, and the owner, who is in every library');
   const genres = await (await fetch(`${BASE}/api/genres`, as(session))).json();
   assert.ok(genres.length > 10, 'it starts with the stock genres, its own copy');
 
-  nextIdentity = { email: 'owner@gmail.com', email_verified: true };
+  nextIdentity = { email: 'passerby@gmail.com', email_verified: true };
   const other = await signIn('/', 'the reading room');
   assert.equal(other.callback.status, 403, 'a second person naming it is not a founder, just a non-member');
+  nextIdentity = { email: 'owner@gmail.com', email_verified: true };
+  const owner = await signIn('/', 'the reading room');
+  assert.ok(sessionFrom(owner.setCookies), 'the owner gets in without being added');
+  nextIdentity = { email: 'owner@gmail.com', email_verified: true };
 });
 
 test('a member added from the Members screen gets in, and loses access when removed', async () => {
@@ -279,6 +284,9 @@ test('a member added from the Members screen gets in, and loses access when remo
 
   const self = await fetch(`${BASE}/api/library/members/${keeperRow.id}`, { method: 'DELETE', ...as(keeper) });
   assert.equal(self.status, 409, 'nobody removes themselves');
+  const ownerRow = list.find((m) => m.email === 'owner@gmail.com');
+  const ownerOut = await fetch(`${BASE}/api/library/members/${ownerRow.id}`, { method: 'DELETE', ...as(keeper) });
+  assert.equal(ownerOut.status, 409, 'nor the owner, who is in every library');
 
   const removed = await fetch(`${BASE}/api/library/members/${guestRow.id}`, { method: 'DELETE', ...as(keeper) });
   assert.equal(removed.status, 204);
@@ -313,8 +321,9 @@ test('the sign-in form remembers who signed in last, and to which library', asyn
 });
 
 test('a session from before libraries carries its member across', async () => {
-  // Minted the old way: no library in it. The owner belongs to one library, so
-  // that is the one it meant, and the refreshed cookie now says so.
+  // Minted the old way: no library in it. There was only one library then, the
+  // first, so that is the one it meant, and the refreshed cookie now says so.
+  // The owner is by now in several, so "their only library" would not do.
   const legacy = `hl_session=${sessionFor('owner@gmail.com')}`;
   const r = await fetch(`${BASE}/api/books`, { headers: { Cookie: legacy } });
   assert.equal(r.status, 200);

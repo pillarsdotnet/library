@@ -2,9 +2,11 @@
 //
 // Authorization is rows, not a file: a user may use a library exactly when
 // library_users links the two. Signing in names a library; naming one nobody
-// has taken yet creates it, with the person signing in as its only member.
+// has taken yet creates it, with the person signing in as its founding member.
+// The server's owner (OWNER_ID) is a member of every library besides, which
+// the database sees to (see db.js).
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import db, { seedGenres } from './db.js';
+import db, { seedGenres, OWNER_ID } from './db.js';
 import { derivedKey } from './secrets.js';
 
 // ─── library names ──────────────────────────────────────────────────────────────
@@ -35,6 +37,8 @@ export const firstLibrary = () => db.prepare('SELECT * FROM libraries ORDER BY i
 
 // ─── users and membership ───────────────────────────────────────────────────────
 
+export { OWNER_ID };
+export const owner = () => db.prepare('SELECT * FROM users WHERE id = ?').get(OWNER_ID);
 export const userByEmail = (email) => db.prepare('SELECT * FROM users WHERE email = ? COLLATE NOCASE').get(String(email));
 
 export function findOrCreateUser(email) {
@@ -54,20 +58,22 @@ export function librariesOf(userId) {
 
 // A new library, its founding member and its starter genres, all or nothing.
 // A library that exists without a member is one nobody can ever sign in to.
+// OR IGNORE because the owner founding one is already in it, by trigger.
 export function createLibrary(name, userId) {
   return db.transaction(() => {
     const id = db.prepare('INSERT INTO libraries (name) VALUES (?)').run(name).lastInsertRowid;
-    db.prepare('INSERT INTO library_users (library_id, user_id) VALUES (?, ?)').run(id, userId);
+    db.prepare('INSERT OR IGNORE INTO library_users (library_id, user_id) VALUES (?, ?)').run(id, userId);
     seedGenres(id);
     return libraryById(id);
   })();
 }
 
 export function members(libraryId) {
-  return db.prepare(`SELECT u.id, u.email, lu.created_at AS added_at, a.email AS added_by
+  return db.prepare(`SELECT u.id, u.email, u.id = ${OWNER_ID} AS owner, lu.created_at AS added_at, a.email AS added_by
                      FROM library_users lu JOIN users u ON u.id = lu.user_id
                      LEFT JOIN users a ON a.id = lu.added_by
-                     WHERE lu.library_id = ? ORDER BY u.email`).all(libraryId);
+                     WHERE lu.library_id = ? ORDER BY u.email`).all(libraryId)
+    .map((m) => ({ ...m, owner: !!m.owner }));
 }
 
 export function addMember(libraryId, email, addedBy) {
@@ -78,10 +84,12 @@ export function addMember(libraryId, email, addedBy) {
 }
 
 // Refused for yourself — a slip of the finger would lock you out with nobody
-// signed in to let you back — and for the last member, which would leave a
-// library nobody can reach. Returns an error message, or null when done.
+// signed in to let you back — for the owner, who belongs to every library,
+// and for the last member, which would leave a library nobody can reach.
+// Returns an error message, or null when done.
 export function removeMember(libraryId, userId, actingUserId) {
   if (userId === actingUserId) return 'You cannot remove yourself.';
+  if (userId === OWNER_ID) return 'The server\'s owner is a member of every library.';
   if (!isMember(libraryId, userId)) return 'Not a member of this library.';
   const n = db.prepare('SELECT COUNT(*) AS n FROM library_users WHERE library_id = ?').get(libraryId).n;
   if (n <= 1) return 'A library must keep at least one member.';

@@ -185,7 +185,9 @@ Sign-in is what makes a public address possible. Even then:
 
 - **New libraries are open to anyone with a Google account.** Naming an unused
   library at sign-in creates it. That is by design, and it means strangers can
-  store books on your server; every library is isolated from the others.
+  store books on your server; every library is isolated from the others, except
+  that the server's owner is a member of all of them and is emailed about each
+  new one (see [Libraries and members](#libraries-and-members)).
 - **Open Library keys belong to people, not to the server.** Each user adds
   their own, and only someone with verified keys sees Give back, so nobody can
   write to a public catalogue under anybody else's account.
@@ -260,7 +262,11 @@ Environment variables:
 | `SESSION_SECRET` | _(new each boot)_ | Signs session cookies and encrypts users' Open Library keys; set it, or a restart signs everyone out and loses the keys |
 | `SESSION_IDLE_DAYS` | `10` | Sign-in expires after this long **without a visit**; every visit pushes it out (floored at 1 day) |
 | `OAUTH_REDIRECT_URI` | _(from the request)_ | Override when the public URL is not what the app sees |
-| `PUBLIC_ORIGIN` | _(from the request)_ | Scheme and host to build the redirect URI from |
+| `PUBLIC_ORIGIN` | _(from the request)_ | Scheme and host to build the redirect URI and emailed links from |
+| `SMTP_USER` | _(none)_ | Gmail address the new-library email is sent from; **setting this and the password turns it on** |
+| `SMTP_PASSWORD` | _(none)_ | A Gmail app password for `SMTP_USER` |
+| `SMTP_HOST` | `smtp.gmail.com` | Submission server; must offer STARTTLS |
+| `SMTP_PORT` | `587` | Submission port |
 | `TRUST_PROXY` | _(off)_ | `true` behind nginx, so `X-Forwarded-Proto` decides the Secure cookie flag |
 | `LOOKUP_TTL_DAYS` | `30` | How long a found lookup stays cached (floored at 1 day) |
 | `LOOKUP_NEGATIVE_TTL_HOURS` | `24` | How long a "not found" stays cached (floored at 24h) |
@@ -332,7 +338,7 @@ Bobbalisa library sees **📚 Bobbalisa Library**. (A name that already ends in
 "Library" is not given a second one.)
 
 - **A name nobody has used creates a library**, with the person signing in as
-  its only member and its own copy of the starter genres. Names are matched
+  its founding member and its own copy of the starter genres. Names are matched
   ignoring case and extra spaces, and are 1 to 60 characters.
 - **A name in use admits its members and nobody else.** The refusal names the
   address and the library, since the usual cause is the wrong Google account or
@@ -345,16 +351,25 @@ Bobbalisa library sees **📚 Bobbalisa Library**. (A name that already ends in
   the same account first. Signing out keeps it.
 - **Members are managed in the app.** The ⚙ Account screen lists the library's
   members; any member can add an address or remove someone else. Removing
-  yourself, or the last member, is refused. Membership is checked on every
-  request, so a removed member is out on their next click.
+  yourself, the owner, or the last member, is refused. Membership is checked on
+  every request, so a removed member is out on their next click.
+- **The owner is in every library.** User 1, the first account the database
+  held, is added to each library as it is created, and to every existing one.
+  The Members screen marks them **(owner)**.
+- **The owner hears of every new library.** With `SMTP_USER` and
+  `SMTP_PASSWORD` set, creating a library emails the owner its name, who
+  started it, and the sign-in link. The app submits to Gmail itself on port 587
+  and will not send the password unless the connection is upgraded with
+  STARTTLS and the certificate checks out. A failed send is logged; it never
+  holds up the sign-in. The startup log says whether this is on.
 
 The first library, **Bobbalisa**, is created automatically, and everything in a
 database from before libraries belongs to it. So do the addresses in
 `allowed-emails.txt` beside the database: they become its members, once, when
 it is created. The file is not read after that.
 
-A session from before libraries names none; it is honoured for a user who
-belongs to exactly one library, and re-issued naming it.
+A session from before libraries names none; it is honoured for members of the
+first library, the only one there was, and re-issued naming it.
 
 ### ISBN lookup sources & the Google Books quota
 

@@ -1,11 +1,18 @@
 #!/bin/sh
-# Deploy the current build to the homelab node and restart it.
+# Deploy a release to a node and restart it.
 #
-# There is no image registry, so the image travels over ssh. The version tag and
-# :latest are built together; the systemd unit runs :latest, so a release never
-# needs the unit edited. After the restart, old home-library images are pruned
-# from the node — rollback is `git checkout v<x.y.z>` and a rebuild, so stale
-# images are just disk. Every deploy leaves only what is running.
+# The image is the one CI published to ghcr.io/pillarsdotnet/library for this
+# version, which exists only once its merge to main has passed every check. So
+# what runs is exactly what was tested, and nothing unmerged or red can be
+# deployed. The node pulls it and tags it library.local/home-library:<tag> and
+# :latest; the systemd unit runs :latest, so a release never needs the unit
+# edited. After the restart, old home-library images are pruned from the node —
+# rollback is TAG=<older version> and another deploy, so stale images are just
+# disk. Every deploy leaves only what is running.
+#
+# BUILD=local builds from this checkout instead and ships the image over ssh, as
+# every deploy did before images were published: for when ghcr.io is down, or
+# for a node that cannot reach it.
 #
 # The restart is gated on a health check: nothing is pruned and no success is
 # reported until the app actually answers over HTTP. See the check below for why
@@ -13,25 +20,51 @@
 #
 # Usage:  deploy/deploy.sh            (deploys to host "homelab")
 #         HOST=myhost deploy/deploy.sh
+#         VARIANT=alpine HOST=myhost deploy/deploy.sh   (slim is the default)
+#         TAG=5.3.0 HOST=myhost deploy/deploy.sh        (a rollback)
+#         BUILD=local HOST=myhost deploy/deploy.sh
 #         HEALTH_TIMEOUT=120 deploy/deploy.sh
 set -eu
 
 HOST="${HOST:-homelab}"
 IMAGE=library.local/home-library
+REGISTRY_IMAGE=ghcr.io/pillarsdotnet/library
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-V=$(node -p "require('$ROOT/package.json').version")
+VARIANT="${VARIANT:-slim}"
+case "$VARIANT" in
+  slim|alpine) ;;
+  *) echo "✗ VARIANT must be slim or alpine, not '$VARIANT'" >&2; exit 1 ;;
+esac
+# The published tags: slim carries the plain version, alpine the same ending
+# -alpine. A local build is tagged the same way.
+SUFFIX=; [ "$VARIANT" = slim ] || SUFFIX="-$VARIANT"
+V="${TAG:-$(node -p "require('$ROOT/package.json').version")}"
+case "$V" in *"$SUFFIX") ;; *) V="$V$SUFFIX" ;; esac
 # Loopback-only publish port + BASE_PATH from the systemd unit, so the check has
 # to run on the node itself.
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:30800/library/healthz}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-60}"
 
-echo "→ building $IMAGE:$V (+ :latest)"
-docker build -t "$IMAGE:$V" -t "$IMAGE:latest" "$ROOT"
+if [ "${BUILD:-}" = local ]; then
+  echo "→ building $IMAGE:$V (+ :latest) from $ROOT on node:24-$VARIANT"
+  docker build --build-arg "VARIANT=$VARIANT" -t "$IMAGE:$V" -t "$IMAGE:latest" "$ROOT"
+  echo "→ shipping the image to $HOST"
+  docker save "$IMAGE:$V" "$IMAGE:latest" | ssh "$HOST" 'sudo docker load'
+else
+  # Asked here first, so a version CI has not published — still running, or
+  # failed — stops before anything on the node is touched.
+  if ! docker manifest inspect "$REGISTRY_IMAGE:$V" >/dev/null 2>&1; then
+    echo "✗ $REGISTRY_IMAGE:$V is not published." >&2
+    echo "  Its merge to main has not passed CI yet, or failed; see \`gh run list --branch main\`." >&2
+    echo "  BUILD=local deploys a local build instead." >&2
+    exit 1
+  fi
+  echo "→ pulling $REGISTRY_IMAGE:$V on $HOST"
+  ssh "$HOST" "sudo sh -c 'docker pull -q $REGISTRY_IMAGE:$V >/dev/null \
+    && docker tag $REGISTRY_IMAGE:$V $IMAGE:$V && docker tag $REGISTRY_IMAGE:$V $IMAGE:latest'"
+fi
 
 die_standby() { echo "✗ $*" >&2; exit 1; }
-
-echo "→ shipping the image to $HOST"
-docker save "$IMAGE:$V" "$IMAGE:latest" | ssh "$HOST" 'sudo docker load'
 
 # Two things in one round trip, because every ssh can cost a 1Password tap.
 #
@@ -67,7 +100,7 @@ if [ "$STANDBY" = yes ]; then
   # the whole point of deploying to a standby.
   got=$(ssh "$HOST" "sudo docker image inspect -f '{{.Id}}' $IMAGE:latest 2>/dev/null || echo none")
   [ "$got" = "$WANT_ID" ] || die_standby "image on $HOST is $got, expected $WANT_ID"
-  echo "  ✓ $IMAGE:latest on $HOST is the image just built"
+  echo "  ✓ $IMAGE:latest on $HOST is the image just deployed"
 else
 
 echo "→ restarting on $HOST"
@@ -110,15 +143,17 @@ then
   ssh "$HOST" 'sudo docker logs --tail 40 home-library 2>&1' >&2 || true
   exit 1
 fi
-echo "  ✓ HTTP 200, and the running container is the image just built"
+echo "  ✓ HTTP 200, and the running container is the image just deployed"
 fi
 
 echo "→ pruning old images on $HOST (keeping :$V and :latest)"
 # Remove every home-library image tag except the one just deployed and :latest,
-# then drop any now-dangling layers. The running container holds a reference to
-# its image, so this can never remove what is in use.
+# the pulled copies included, then drop any now-dangling layers. The running
+# container holds a reference to its image, so this can never remove what is in
+# use.
 ssh "$HOST" "sudo sh -c '
-  for ref in \$(docker images --format \"{{.Repository}}:{{.Tag}}\" $IMAGE | grep -v -e \":$V\$\" -e \":latest\$\"); do
+  for ref in \$(docker images --format \"{{.Repository}}:{{.Tag}}\" $IMAGE | grep -v -e \":$V\$\" -e \":latest\$\") \\
+             \$(docker images --format \"{{.Repository}}:{{.Tag}}\" $REGISTRY_IMAGE | grep -v -e \":$V\$\"); do
     docker rmi \"\$ref\" || true
   done
   docker image prune -f >/dev/null

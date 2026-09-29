@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Deploys pull the published image instead of building one.**
+  `deploy/deploy.sh` has the node pull `ghcr.io/pillarsdotnet/library:<version>`
+  (`VARIANT=alpine` for the Alpine image) and refuses a version CI has not
+  published, so only a merged, green build can be deployed. `TAG=` deploys an
+  older version, which makes a rollback a pull rather than a checkout and
+  rebuild. `BUILD=local` keeps the old build-and-ship-over-ssh path for when
+  `ghcr.io` cannot be reached.
+
 ### Fixed
 
 - **A flaky browser test stopped CI publishing images.** The duplicate-scan

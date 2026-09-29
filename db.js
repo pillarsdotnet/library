@@ -725,6 +725,9 @@ if (LEGACY_BOOKS) {
 // once, and the file is not read again.
 export const TENANT_TABLES = ['shelves', 'editions', 'copies', 'genres', 'series', 'ol_contributions'];
 export const FIRST_LIBRARY_NAME = 'Bobbalisa';
+// The server's owner: user 1, the first account this database ever held. A
+// member of every library, and the one told when a new library is created.
+export const OWNER_ID = 1;
 
 // Beside the database, where the allowlist always lived unless moved.
 function legacyAllowlist() {
@@ -802,6 +805,22 @@ function legacyAllowlist() {
     '(SELECT library_id FROM series WHERE id = NEW.series) IS NOT (SELECT library_id FROM editions WHERE id = NEW.edition)');
   trigger('ol_contributions_same_library', 'BEFORE', 'INSERT', 'ol_contributions',
     '(SELECT library_id FROM editions WHERE id = NEW.edition_id) IS NOT NEW.library_id');
+
+  // The owner, user 1, is a member of every library: of each new one as it is
+  // created, of every existing one when that user first appears, and of any
+  // that predate this rule, below. In the database rather than in createLibrary
+  // so that no way of making a library can leave the owner out of it.
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS libraries_owner_joins AFTER INSERT ON libraries FOR EACH ROW
+    WHEN EXISTS (SELECT 1 FROM users WHERE id = ${OWNER_ID})
+    BEGIN INSERT OR IGNORE INTO library_users (library_id, user_id) VALUES (NEW.id, ${OWNER_ID}); END;
+    CREATE TRIGGER IF NOT EXISTS users_owner_joins AFTER INSERT ON users FOR EACH ROW
+    WHEN NEW.id = ${OWNER_ID}
+    BEGIN INSERT OR IGNORE INTO library_users (library_id, user_id) SELECT id, NEW.id FROM libraries; END;
+  `);
+  const joined = db.prepare(`INSERT OR IGNORE INTO library_users (library_id, user_id)
+                             SELECT l.id, u.id FROM libraries l, users u WHERE u.id = ?`).run(OWNER_ID).changes;
+  if (joined) console.log(`👤 user ${OWNER_ID} is now a member of ${joined} more library(ies)`);
 }
 
 // ─── the `books` compatibility view ─────────────────────────────────────────────

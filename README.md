@@ -215,12 +215,88 @@ machine:
 | Base | Tags |
 |---|---|
 | Debian slim (the default) | `latest`, the `package.json` version, `sha-<commit>` |
-| Alpine (about 60 MB smaller) | the same, ending `-alpine`: `latest-alpine`, `5.3.0-alpine` |
+| Alpine (about 56 MiB smaller) | the same, ending `-alpine`: `latest-alpine`, `5.4.0-alpine` |
 
 ```bash
 docker run -d -p 3000:3000 -v library-data:/data -e TZ=America/New_York \
   ghcr.io/pillarsdotnet/library:latest
 ```
+
+#### Slim or Alpine?
+
+**Alpine is smaller and holds far less memory after heavy work, but spends
+more CPU on every request.** The two images run the same app on the same Node;
+the difference is the C library. Alpine's `musl` hands freed memory back to the
+system, while Debian's `glibc` keeps it for reuse and is faster at allocating
+it. JavaScript that stays on V8's own heap costs the same on both. The price
+lands wherever native code allocates: SQLite, the encryption behind sessions
+and stored Open Library keys, image resizing.
+
+| 5.4.0, `amd64` | slim | slim, `MALLOC_ARENA_MAX=2` | Alpine |
+|---|---:|---:|---:|
+| **Image**, download (compressed) | 99.9 MiB | *same image* | 81.8 MiB (−18%) |
+| **Image**, on disk | 276.6 MiB | *same image* | 220.7 MiB (−20%) |
+| **RAM**, idle | 95 MB | 94 MB | 100 MB |
+| **RAM**, after 2,000 books added and 3,000 reads | 160 MB | 158 MB | 148 MB |
+| **RAM**, peak during 300 EPUB imports | 460 MB | 443 MB | 413 MB (−10%) |
+| **RAM**, held 30 s after the imports | 414 MB | 429 MB | **225 MB (−46%)** |
+| **CPU** per request, book list (`/api/books`) | 901 µs | 900 µs | 1,163 µs (+29%) |
+| **CPU** per request, `/api/meta` | 194 µs | 195 µs | 287 µs (+48%) |
+| **CPU** per request, genre list | 146 µs | 146 µs | 182 µs (+25%) |
+| **CPU** per request, the page itself (`/`) | 88 µs | 89 µs | 100 µs (+14%) |
+| **Throughput**, book list | 1,125 req/s | 1,124 req/s | 875 req/s (−22%) |
+| **CPU** to start | 146 ms | 149 ms | 175 ms (+20%) |
+
+Where Alpine's extra CPU goes, from the same runs (time for a fixed amount of
+work, Alpine ÷ slim; `MALLOC_ARENA_MAX=2` matched slim within 1% throughout):
+
+| Work | Alpine ÷ slim |
+|---|---:|
+| `malloc`/`free` of 16 KB buffers, directly | 3.20× |
+| AES-256-GCM seal and open | 1.47× |
+| HMAC-SHA256 | 1.31× |
+| SQLite: read the whole `books` view | 1.24× |
+| JSON round trip of the book list | 1.21× |
+| SQLite: 100,000 inserts | 1.17× |
+| `sharp`: decode, resize and encode a cover | 1.10× |
+| `zlib` deflate and inflate | 1.09× |
+| `fflate` zip and unzip (pure JavaScript) | 1.04× |
+| The app's own title sort (pure JavaScript) | 1.00× |
+| Allocating objects on V8's heap | 0.98× |
+
+**Which to run.** For a household library either is ample: a book list costs
+about a millisecond of CPU on either. **Alpine** suits a small server where
+memory is the tighter limit, and after a burst of imports it gives back about
+190 MB that slim keeps. **Slim** suits a busy or CPU-bound server, and imports
+many EPUBs faster. `MALLOC_ARENA_MAX=2`, the usual setting for trimming
+`glibc`'s memory, changed neither memory nor CPU here, so it is not a way to
+get Alpine's memory on slim. `MALLOC_TRIM_THRESHOLD_` and
+`MALLOC_MMAP_THRESHOLD_` might be; they are untested.
+
+How it was measured, so it can be repeated:
+
+- **Images**: the published `5.4.0` (`sha256:66b43c6046a8…`) and `5.4.0-alpine`
+  (`sha256:a3b7446f5112…`), `amd64`, on 2026-09-28. Sizes are the sum of the
+  layers in the registry manifest, and `docker image inspect`'s `Size`.
+- **RAM**: [`bench/memory.mjs`](bench/memory.mjs), on a 16-core workstation
+  (Ubuntu 26.04, cgroup v2): each run a fresh container limited to 2 CPUs and
+  1 GB, taking 2,000 books, 3,000 mixed reads, then 300 EPUB imports with
+  2400×3600 covers, sampled every 500 ms. Figures are node's resident memory
+  (`VmRSS`; the peak is `VmHWM`), medians of 3 runs of each image, in turn.
+  Run it with `node bench/memory.mjs <image[,KEY=VALUE...]>...`.
+- **CPU**: [`bench/cpu.sh`](bench/cpu.sh), on an Intel i9-14900K, with the
+  server pinned to two performance cores and the load generator to three
+  others. Each run takes the app's own work out of the image
+  ([`bench/cpu-micro.mjs`](bench/cpu-micro.mjs)), then serves a real
+  689-book library to 8 clients for 10 s per endpoint
+  ([`bench/cpu-http.mjs`](bench/cpu-http.mjs)), reading the server's CPU time
+  from its cgroup. Figures are medians of 5 rounds with the order rotated each
+  round. The per-request and micro-benchmark figures agreed within 5% from
+  round to round; startup varied more, by up to 44%. Run it with
+  `SEED_DB=<library.db> bench/cpu.sh <image[,KEY=VALUE...]>...`, then
+  `node bench/cpu-report.mjs bench-cpu.jsonl`.
+
+Absolute figures depend on the machine; the ratios are what carry over.
 
 To build the Alpine image yourself, pass `--build-arg VARIANT=alpine`.
 

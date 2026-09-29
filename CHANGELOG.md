@@ -5,6 +5,15 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Published Docker image.** Every merge to `main` that passes the Code
+  Checker workflow now builds the image and pushes it to
+  `ghcr.io/pillarsdotnet/library`, tagged `latest`, the `package.json`
+  version, and `sha-<commit>`.
+
 ## [5.3.0] — 2026-09-28
 
 ### Changed

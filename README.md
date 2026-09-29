@@ -205,6 +205,14 @@ Then open `http://<your-server>:3000`. The SQLite database is stored in the
 `library-data` Docker volume, so it survives rebuilds. To back it up, copy
 `/data/library.db` out of the volume.
 
+Or skip the build and run the published image. Every merge to `main` that
+passes the Code Checker workflow pushes it to the GitHub Container Registry,
+tagged `latest`, the `package.json` version, and `sha-<commit>`:
+
+```bash
+docker run -d -p 3000:3000 -v library-data:/data ghcr.io/pillarsdotnet/library:latest
+```
+
 ### With Node directly
 
 ```bash
@@ -599,7 +607,7 @@ behind the node's nginx, served under a sub-path such as `/library/`.
   proxies `location /library/` (see [`deploy/nginx-library.conf`](./deploy/nginx-library.conf)).
 
 Deploy / update — one script builds locally, hands the image to the node over
-ssh (there is no image registry), restarts the unit, health-checks it, and prunes
+ssh (it does not pull the published image), restarts the unit, health-checks it, and prunes
 old images:
 
 ```bash

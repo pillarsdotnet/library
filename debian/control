@@ -4,6 +4,7 @@ Priority: optional
 Maintainer: Robert August Vincent II (Bob) <pillarsdotnet@gmail.com>
 Build-Depends: debhelper-compat (= 13),
                dh-apache2,
+               dh-sequence-installsysusers,
                libnode-dev (>= 24),
                libvips-dev (>= 8.18.7),
                node-gyp,

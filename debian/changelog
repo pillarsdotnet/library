@@ -1,5 +1,14 @@
-home-library (5.4.0+git20261002.67feb9e-1~ppa1~ubuntu26.04.1) resolute; urgency=medium
+home-library (5.4.0+git20261002.c0846c3-1~ppa2~ubuntu26.04.1) resolute; urgency=medium
+
+  * Install the sysusers.d file. Compat 13 does not run
+    dh_installsysusers, so ~ppa1 shipped none and its postinst failed
+    creating the home-library user. Build-Depend on
+    dh-sequence-installsysusers.
+
+ -- Robert August Vincent II (Bob) <pillarsdotnet@gmail.com>  Sat, 03 Oct 2026 00:06:53 -0400
+
+home-library (5.4.0+git20261002.c0846c3-1~ppa1~ubuntu26.04.1) resolute; urgency=medium
 
   * Initial package: the app behind nginx or Apache over a Unix socket.
 
- -- Robert August Vincent II (Bob) <pillarsdotnet@gmail.com>  Fri, 02 Oct 2026 22:13:51 -0400
+ -- Robert August Vincent II (Bob) <pillarsdotnet@gmail.com>  Fri, 02 Oct 2026 23:12:30 -0400

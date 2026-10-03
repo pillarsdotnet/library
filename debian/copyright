@@ -5,14 +5,11 @@ Source: https://github.com/pillarsdotnet/library
 
 Files: *
 Copyright: 2025-2026 Robert August Vincent II <pillarsdotnet@gmail.com>
-License: TO-BE-DECIDED
-Comment: THE REPOSITORY HAS NO LICENSE FILE. The author must choose a license
- before this package is distributed; until then this field is a placeholder,
- not a grant.
+License: GPL-3+
 
 Files: debian/*
 Copyright: 2026 Robert August Vincent II <pillarsdotnet@gmail.com>
-License: TO-BE-DECIDED
+License: GPL-3+
 
 Files: node-modules/@ericblade/quagga2/*
 Copyright: 2014 Christoph Oberhofer, (c) 2019 Eric Blade and all other contributors
@@ -432,5 +429,19 @@ License: MIT
  FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  DEALINGS IN THE SOFTWARE.
 
-License: TO-BE-DECIDED
- No license has been chosen. See the comment on "Files: *".
+License: GPL-3+
+ This program is free software: you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the Free
+ Software Foundation, either version 3 of the License, or (at your option)
+ any later version.
+ .
+ This program is distributed in the hope that it will be useful, but WITHOUT
+ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ more details.
+ .
+ You should have received a copy of the GNU General Public License along
+ with this program. If not, see <https://www.gnu.org/licenses/>.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ version 3 can be found in "/usr/share/common-licenses/GPL-3".

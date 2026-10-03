@@ -1,0 +1,23 @@
+# Settings for home-library-failover, home-library-failover-peer and
+# home-library-db-sync. Both nodes need this file; the values differ only in
+# PEER. Nothing happens until `home-library-failover enable`.
+
+# The other node's hostname (a MagicDNS short name is fine) and sshd port.
+PEER=
+#PEER_PORT=65432
+
+# The node that reclaims the library when it boots. The same on both nodes.
+PREFERRED=
+
+# The floating address, without a prefix length, advertised over Tailscale
+# by whichever node is active. The same on both nodes.
+VIP=192.168.144.1
+#VIP_DEV=lo
+
+# ssh keys, root-only. KEY is pinned in the peer's authorized_keys to
+# home-library-failover-peer; SYNC_KEY to rrsync -wo .../standby.
+#KEY=/root/id_homelibrary
+#SYNC_KEY=/root/id_homelibrary_sync
+
+# Timestamped database snapshots kept before each replacement.
+#KEEP=10

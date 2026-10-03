@@ -1,0 +1,12 @@
+# 17 past the hour, not 0: nothing else here runs on the hour, and a snapshot
+# that collides with another job's disk burst is slower for no reason.
+[Unit]
+Description=Hourly Home Library disaster copy to the failover node
+Documentation=file:/usr/share/doc/home-library-failover/README.Debian
+
+[Timer]
+OnCalendar=*-*-* *:17:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target

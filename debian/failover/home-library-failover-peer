@@ -1,0 +1,193 @@
+#!/bin/sh
+# Forced command for the Home Library failover key. Named in the root
+# authorized_keys of BOTH nodes:
+#
+#   restrict,command="/usr/sbin/home-library-failover-peer" ssh-ed25519 AAAA...
+#
+# ssh runs this INSTEAD of whatever the client asked for, putting the request
+# in $SSH_ORIGINAL_COMMAND. Everything below treats that request as untrusted
+# input: it selects one of a fixed list of verbs and nothing else. There is no
+# path through here to a shell.
+#
+# Two rules keep this a real boundary, not a speed bump:
+#   * No verb takes a path, a host, an address or a command. The only
+#     arguments accepted anywhere are owner-set's node name and generation,
+#     and both are pattern-checked.
+#   * The VIP and every path are fixed HERE, server-side, from this node's own
+#     /etc/default/home-library-failover. If the client could name the VIP it
+#     could advertise an arbitrary route into the tailnet; if it could name a
+#     file it could read or clobber anything as root.
+set -eu
+
+CONF=/etc/default/home-library-failover
+VIP=192.168.144.1
+VIP_DEV=lo
+KEEP=10
+# Only these two settings are taken from the file, and only as values.
+if [ -r "$CONF" ]; then
+  _v=$(sed -n 's/^VIP=\([0-9.]*\)$/\1/p' "$CONF" | tail -n 1)
+  [ -n "$_v" ] && VIP=$_v
+  _k=$(sed -n 's/^KEEP=\([0-9]*\)$/\1/p' "$CONF" | tail -n 1)
+  [ -n "$_k" ] && KEEP=$_k
+fi
+
+SERVICE=home-library.service
+SOCKET=home-library.socket
+APP_USER=home-library
+DATA_DIR=/var/lib/home-library
+DB=$DATA_DIR/library.db
+COVERS_DIR=$DATA_DIR/covers
+OWNER_FILE=$DATA_DIR/OWNER
+APP_SOCK=/run/home-library/home-library.sock
+# Must match ACTIVE_FLAG in home-library-failover: the app, socket and vip
+# units will not start without it.
+ACTIVE_FLAG=/run/home-library-active
+
+deny() { echo "home-library-failover-peer: refused: $*" >&2; exit 111; }
+as_app() { runuser -u "$APP_USER" -- "$@"; }
+
+# Split the request into a verb and its arguments. Deliberately not `eval`:
+# the verb is matched literally below.
+# shellcheck disable=SC2086  # word splitting is the point
+set -- ${SSH_ORIGINAL_COMMAND:-}
+verb="${1:-}"; arg="${2:-}"
+
+# Exact arity per verb, so `vip-up 10.0.0.0/8` is refused rather than run with
+# its argument silently dropped.
+case "$verb" in
+  owner-set) [ $# -eq 3 ] || deny "owner-set takes exactly two arguments: <node> <generation>" ;;
+  *)         [ $# -eq 1 ] || deny "$verb takes no arguments" ;;
+esac
+
+case "$verb" in
+  hostname)   hostname -s ;;
+
+  owner-get)  cat "$OWNER_FILE" 2>/dev/null || echo none ;;
+
+  owner-set)
+    # The only client-supplied values that reach a file, both checked against
+    # anchored character classes and written with printf.
+    gen="${3:-}"
+    case "$arg" in
+      "" ) deny "owner-set needs a node name" ;;
+      *[!A-Za-z0-9._-]* ) deny "owner-set: illegal node name" ;;
+    esac
+    case "$gen" in
+      "" ) deny "owner-set needs a generation" ;;
+      *[!0-9]* ) deny "owner-set: generation must be digits only" ;;
+    esac
+    printf '%s %s\n' "$arg" "$gen" > "$OWNER_FILE"
+    ;;
+
+  # Newest mtime across the database and its WAL; the main file's mtime lags
+  # in WAL mode.
+  db-mtime)
+    { stat -c %Y "$DB" 2>/dev/null || echo 0
+      stat -c %Y "$DB-wal" 2>/dev/null || echo 0
+    } | sort -rn | head -1
+    ;;
+
+  # Fold the WAL into the main file so one file is a complete copy, and refuse
+  # to report success on a corrupt database. Run as the app's user, so no
+  # root-owned -wal or -shm is left behind for the app to trip over.
+  db-checkpoint)
+    [ -f "$DB" ] || exit 0
+    as_app sqlite3 "$DB" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null
+    r=$(as_app sqlite3 "$DB" 'PRAGMA integrity_check;')
+    [ "$r" = ok ] || { echo "integrity_check: $r" >&2; exit 1; }
+    ;;
+
+  # A timestamped COPY, so a bad handoff is recoverable: `.backup` is
+  # consistent against an open database, which `cp` is not.
+  db-snapshot)
+    [ -f "$DB" ] || exit 0
+    as_app sqlite3 "$DB" ".backup '$DB.$(date -u +%Y%m%dT%H%M%SZ)'"
+    ls -1t "$DB".*Z 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r old; do rm -f "$old"; done
+    ;;
+
+  db-send)    [ -f "$DB" ] || deny "no database here"; cat "$DB" ;;
+
+  # Covers are files beside the database and worthless apart from it, so a
+  # handoff moves both. Still no path from the client: the directory is fixed.
+  covers-send)
+    [ -d "$COVERS_DIR" ] || exit 0
+    tar -C "$DATA_DIR" -cf - "$(basename "$COVERS_DIR")"
+    ;;
+
+  # Unpacked into a staging directory and swapped in, so an interrupted
+  # transfer cannot leave a half-populated covers directory. Paths inside the
+  # archive still reach a filesystem: extraction refuses absolute names, and
+  # symlinks are dropped rather than followed out of the staging area.
+  covers-recv)
+    staging=$DATA_DIR/.covers.incoming
+    rm -rf "$staging"
+    mkdir -p "$staging"
+    tar -C "$staging" --no-same-owner -xf -
+    if [ ! -d "$staging/covers" ]; then
+      rm -rf "$staging"
+      deny "no covers directory in the archive"
+    fi
+    find "$staging" -type l -delete
+    chown -R "$APP_USER:$APP_USER" "$staging/covers"
+    rm -rf "$COVERS_DIR.old"
+    if [ -d "$COVERS_DIR" ]; then mv "$COVERS_DIR" "$COVERS_DIR.old"; fi
+    mv "$staging/covers" "$COVERS_DIR"
+    rm -rf "$staging" "$COVERS_DIR.old"
+    ;;
+
+  # A stale -wal or -shm beside a replaced database is not untidiness: SQLite
+  # can apply a WAL that belongs to the previous file. Clear both on the swap.
+  db-recv)
+    cat > "$DB.incoming"
+    [ -s "$DB.incoming" ] || { rm -f "$DB.incoming"; deny "received an empty database"; }
+    chown "$APP_USER:$APP_USER" "$DB.incoming"
+    chmod 640 "$DB.incoming"
+    mv -f "$DB.incoming" "$DB"
+    rm -f "$DB-wal" "$DB-shm"
+    ;;
+
+  # Bring this node fully up as the active one, through its OWN units, so
+  # systemd's view matches reality and its next shutdown hands back properly.
+  #
+  # If the db unit is already active -- the usual case for a standby, whose
+  # db-claim at boot chose standby and exited 0 -- starting it again runs
+  # nothing, and the flag would never be written. Run the claim directly then;
+  # the initiator has already made this node the owner, so the claim keeps
+  # the local copy it just received.
+  takeover)
+    if systemctl is-active --quiet home-library-db.service; then
+      /usr/sbin/home-library-failover db-claim
+    fi
+    systemctl start home-library-db.service
+    systemctl start home-library-vip.service
+    ;;
+
+  # Stop serving here. The flag goes first, so a request reaching the socket
+  # while it shuts down cannot start the app again.
+  svc-stop)
+    rm -f "$ACTIVE_FLAG"
+    systemctl stop home-library-vip.service 2>/dev/null || true
+    systemctl stop "$SOCKET" "$SERVICE"
+    systemctl reset-failed "$SERVICE" 2>/dev/null || true
+    ;;
+
+  health)
+    curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+         --unix-socket "$APP_SOCK" http://localhost/library/healthz || true
+    ;;
+
+  vip-up)
+    ip addr show dev "$VIP_DEV" | grep -q "inet $VIP/32" || ip addr add "$VIP/32" dev "$VIP_DEV"
+    tailscale set --advertise-routes="$VIP/32"
+    ;;
+  vip-down)
+    tailscale set --advertise-routes= 2>/dev/null || true
+    ip addr del "$VIP/32" dev "$VIP_DEV" 2>/dev/null || true
+    ;;
+
+  vip-state)
+    if ip addr show dev "$VIP_DEV" | grep -q "inet $VIP/32"; then echo assigned; else echo no; fi
+    ;;
+
+  *) deny "unknown verb '${verb:-<empty>}'" ;;
+esac

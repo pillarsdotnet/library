@@ -939,3 +939,8 @@ All endpoints are under `/api`:
 - Deleting a shelf keeps its books; they become "Unshelved".
 - ISBN dimension data is sparse in both APIs — when it's missing, measure the
   book and enter height/width/thickness by hand to enable shelf-fit calculations.
+
+## License
+
+GNU General Public License, version 3 or (at your option) any later
+version; see [`LICENSE`](LICENSE).

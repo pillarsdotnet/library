@@ -20,7 +20,8 @@ Rules-Requires-Root: no
 
 Package: home-library
 Architecture: any
-Depends: nodejs (>= 24),
+Depends: libvips42t64 (>= 8.18.7),
+         nodejs (>= 24),
          tzdata,
          ${misc:Depends},
          ${shlibs:Depends},

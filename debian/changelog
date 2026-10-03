@@ -1,3 +1,18 @@
+home-library (5.4.0+git20261003.48582bb-1~ppa5~ubuntu26.04.1) resolute; urgency=medium
+
+  * home-library-failover: create /var/lib/home-library/standby in `enable`
+    and in every db-claim. The peer's hourly sync writes there through
+    rrsync, which cannot create it, so on a node without it every sync
+    failed and the disaster copy was never made.
+  * home-library-failover: keep the hourly sync timer running. The db unit
+    Wants= it, and to-local and takeover start it, so a stopped timer
+    comes back with the next claim instead of staying off.
+  * home-library-failover: the vip unit Wants= the app's socket instead of
+    BindsTo= it, so a home-library upgrade, which restarts the socket, no
+    longer drops and re-advertises the floating address.
+
+ -- Robert August Vincent II (Bob) <pillarsdotnet@gmail.com>  Sat, 03 Oct 2026 18:49:21 -0400
+
 home-library (5.4.0+git20261003.48582bb-1~ppa4~ubuntu26.04.1) resolute; urgency=medium
 
   * home-library-failover: do not stop the units when the package is

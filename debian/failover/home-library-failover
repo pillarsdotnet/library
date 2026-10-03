@@ -88,6 +88,7 @@ OWNER_FILE=$DATA_DIR/OWNER
 APP_SOCK=/run/home-library/home-library.sock
 LOCK=/run/home-library-failover.lock
 DROPIN_SRC=/usr/share/home-library-failover/dropins
+STANDBY_DIR=$DATA_DIR/standby
 
 # "This node should be running the app." Lives in /run, so a reboot clears it
 # and db-claim decides afresh every boot. The app, socket and vip units test
@@ -313,6 +314,13 @@ wait_healthy() {   # $1 = "local" | "peer"
   return 1
 }
 
+# The peer's hourly sync writes here through `rrsync -wo`, which cannot create
+# the directory it is confined to: without it every sync fails. Both nodes
+# need it, since either can be the standby.
+ensure_standby_dir() {
+  install -d -m 0700 -o "$APP_USER" -g "$APP_USER" "$STANDBY_DIR"
+}
+
 # ─── enable / disable ──────────────────────────────────────────────────────────
 # Installing the package changes nothing: a lone home-library keeps working.
 # `enable` is the explicit step that gates the app on the activity flag.
@@ -322,6 +330,7 @@ UNITS="home-library-db.service home-library-vip.service home-library-db-sync.tim
 case "${1:-}" in
 enable)
   need_config
+  ensure_standby_dir
   for d in $DROPINS; do
     install -D -m 0644 "$DROPIN_SRC/$d" "/etc/systemd/system/$d"
   done
@@ -387,6 +396,7 @@ case "$1" in
 # Boot, before the app can start: put the right database in place.
 db-claim)
   log "db-claim on $ME (peer $PEER_NAME)"
+  ensure_standby_dir
   raw_local=$(owner_raw_local)
   o_local=$(owner_node "$raw_local")
 
@@ -518,6 +528,9 @@ to-local)
   # the socket and claims the address once the app answers.
   systemctl start home-library-db.service
   systemctl start home-library-vip.service
+  # The db unit Wants= the timer, but only a db unit that was NOT already
+  # active pulls it in; after a standby boot it was.
+  systemctl start home-library-db-sync.timer
   ;;
 
 to-remote)

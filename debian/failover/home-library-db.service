@@ -18,6 +18,10 @@ Documentation=file:/usr/share/doc/home-library-failover/README.Debian
 After=network-online.target tailscaled.service
 Wants=network-online.target
 Before=home-library.service home-library-vip.service
+# Every start of this unit -- boot, to-local, takeover -- brings the hourly
+# sync back, so nothing that stops it (an upgrade, a manual stop) can leave
+# the disaster copy silently stale. It does nothing on a standby.
+Wants=home-library-db-sync.timer
 ConditionPathExists=/etc/default/home-library-failover
 
 [Service]

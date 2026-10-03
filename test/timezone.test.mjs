@@ -1,10 +1,10 @@
 // SQLite's date('now','localtime') decides what is overdue, and it takes the
 // timezone from the C library, which reads TZ against /usr/share/zoneinfo.
 // Node's Intl carries its own timezone data and never looks there. So an image
-// without the zoneinfo files, such as node:alpine without tzdata, logs the right
-// timezone at startup while judging due dates in UTC. This compares the two in
-// each zone and fails when they disagree. The Docker build runs it inside each
-// image.
+// without the zoneinfo files (a base image that leaves out tzdata) logs the
+// right timezone at startup while judging due dates in UTC. This compares the
+// two in each zone and fails when they disagree. CI also runs it inside the
+// Docker image.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

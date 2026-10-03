@@ -20,7 +20,6 @@
 #
 # Usage:  deploy/deploy.sh            (deploys to host "homelab")
 #         HOST=myhost deploy/deploy.sh
-#         VARIANT=alpine HOST=myhost deploy/deploy.sh   (slim is the default)
 #         TAG=5.3.0 HOST=myhost deploy/deploy.sh        (a rollback)
 #         BUILD=local HOST=myhost deploy/deploy.sh
 #         HEALTH_TIMEOUT=120 deploy/deploy.sh
@@ -30,24 +29,15 @@ HOST="${HOST:-homelab}"
 IMAGE=library.local/home-library
 REGISTRY_IMAGE=ghcr.io/pillarsdotnet/library
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-VARIANT="${VARIANT:-slim}"
-case "$VARIANT" in
-  slim|alpine) ;;
-  *) echo "✗ VARIANT must be slim or alpine, not '$VARIANT'" >&2; exit 1 ;;
-esac
-# The published tags: slim carries the plain version, alpine the same ending
-# -alpine. A local build is tagged the same way.
-SUFFIX=; [ "$VARIANT" = slim ] || SUFFIX="-$VARIANT"
 V="${TAG:-$(node -p "require('$ROOT/package.json').version")}"
-case "$V" in *"$SUFFIX") ;; *) V="$V$SUFFIX" ;; esac
 # Loopback-only publish port + BASE_PATH from the systemd unit, so the check has
 # to run on the node itself.
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:30800/library/healthz}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-60}"
 
 if [ "${BUILD:-}" = local ]; then
-  echo "→ building $IMAGE:$V (+ :latest) from $ROOT on node:24-$VARIANT"
-  docker build --build-arg "VARIANT=$VARIANT" -t "$IMAGE:$V" -t "$IMAGE:latest" "$ROOT"
+  echo "→ building $IMAGE:$V (+ :latest) from $ROOT"
+  docker build -t "$IMAGE:$V" -t "$IMAGE:latest" "$ROOT"
   echo "→ shipping the image to $HOST"
   docker save "$IMAGE:$V" "$IMAGE:latest" | ssh "$HOST" 'sudo docker load'
 else

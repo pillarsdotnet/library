@@ -1,3 +1,15 @@
+home-library (5.4.0+git20261003.48582bb-1~ppa4~ubuntu26.04.1) resolute; urgency=medium
+
+  * home-library-failover: do not stop the units when the package is
+    upgraded. With --no-start alone, debhelper stopped them in preinst and
+    never started them again, and stopping home-library-db on the active
+    node runs db-release: upgrading racknerd to ~ppa3 handed the library to
+    homelab. Pass --no-stop-on-upgrade.
+  * home-library-failover: README.Debian says that removing the package
+    from the active node hands the library over, and how to avoid that.
+
+ -- Robert August Vincent II (Bob) <pillarsdotnet@gmail.com>  Sat, 03 Oct 2026 14:06:23 -0400
+
 home-library (5.4.0+git20261003.48582bb-1~ppa3~ubuntu26.04.1) resolute; urgency=medium
 
   * home-library-failover: point public DNS at the active node. When

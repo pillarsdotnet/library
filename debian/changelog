@@ -1,3 +1,15 @@
+home-library (5.4.0+git20261003.48582bb-1~ppa3~ubuntu26.04.1) resolute; urgency=medium
+
+  * home-library-failover: point public DNS at the active node. When
+    DDNS_HOSTNAME is set, vip-claim updates that name through Hurricane
+    Electric's dynamic DNS once the app is healthy, from the node's own
+    public address, so a handoff moves the public site as well as the VIP.
+    Failures are logged and never stop the node serving.
+  * home-library-failover: `enable` also starts the hourly sync timer,
+    instead of leaving it for the next boot.
+
+ -- Robert August Vincent II (Bob) <pillarsdotnet@gmail.com>  Sat, 03 Oct 2026 13:09:11 -0400
+
 home-library (5.4.0+git20261003.48582bb-1~ppa2~ubuntu26.04.1) resolute; urgency=medium
 
   * New binary package home-library-failover: hands the library between two

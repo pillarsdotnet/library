@@ -64,6 +64,15 @@ One-time setup, on BOTH nodes
 4. Web server. Both nodes' sites `include snippets/home-library.conf;` and
    should answer on the VIP as well as on their own names.
 
+   Optional, public DNS that follows the active node: on a record hosted at
+   dns.he.net, enable dynamic DNS and generate its key, store the key alone
+   in /root/home-library-ddns.key (root, mode 600) on both nodes, and set
+   DDNS_HOSTNAME in /etc/default/home-library-failover. Whenever a node
+   becomes active and healthy it points that name at its own public address;
+   behind NAT, that is the router's address, so forward 80 and 443 to it.
+   Clients follow within the record's TTL. A failed update is logged and
+   never stops the node serving.
+
 5. Turn it on, on both nodes:
 
      home-library-failover enable

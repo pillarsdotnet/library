@@ -72,6 +72,11 @@ VIP_DEV="${VIP_DEV:-lo}"
 # would pull the database from a perfectly healthy preferred node.
 PREFERRED="${PREFERRED:-}"
 KEEP="${KEEP:-10}"
+# Public DNS follows the active node: when set, vip-claim points this name at
+# the node through Hurricane Electric's dynamic DNS. Empty leaves DNS alone.
+DDNS_HOSTNAME="${DDNS_HOSTNAME:-}"
+DDNS_KEY_FILE="${DDNS_KEY_FILE:-/root/home-library-ddns.key}"
+DDNS_URL="${DDNS_URL:-https://dyn.dns.he.net/nic/update}"
 
 SERVICE=home-library.service
 SOCKET=home-library.socket
@@ -256,6 +261,41 @@ vip_down_local() {
 }
 vip_down_peer() { on_peer vip-down; }
 
+# ─── public DNS ────────────────────────────────────────────────────────────────
+# Point DDNS_HOSTNAME at this node. No address is sent: HE records the address
+# the request came from, which is the node's public one even behind NAT, so
+# nothing here has to discover it. -4, because the record is an A record and
+# an IPv6 source would not belong in it. The key is read from its file by
+# curl, so it never appears on a command line or in a log.
+#
+# Never fatal. The floating address and this node's own names work whatever
+# DNS says, and a node that refused to serve because a DNS provider was slow
+# would turn an inconvenience into an outage. The failure is logged instead.
+ddns_claim() {
+  [ -n "$DDNS_HOSTNAME" ] || return 0
+  if [ ! -r "$DDNS_KEY_FILE" ]; then
+    log "WARNING: DDNS_HOSTNAME is $DDNS_HOSTNAME but $DDNS_KEY_FILE is missing; public DNS still points elsewhere"
+    return 0
+  fi
+  _try=0
+  while [ $_try -lt 5 ]; do
+    _r=$(curl -4 -s --max-time 20 "$DDNS_URL" \
+           --data-urlencode "hostname=$DDNS_HOSTNAME" \
+           --data-urlencode "password@$DDNS_KEY_FILE" || true)
+    case "$_r" in
+      good\ *|nochg\ *)
+        log "public DNS: $DDNS_HOSTNAME -> ${_r#* } ($_r)"
+        return 0 ;;
+      badauth*|nohost*|notfqdn*|abuse*)
+        # Retrying cannot fix these.
+        log "WARNING: HE refused the DNS update for $DDNS_HOSTNAME: $_r"
+        return 0 ;;
+    esac
+    _try=$((_try + 1)); sleep 6
+  done
+  log "WARNING: could not update public DNS for $DDNS_HOSTNAME (last answer: ${_r:-none})"
+}
+
 # /healthz, not /, because the app requires a signed-in address once Google
 # credentials are configured, and a probe has no account. The request goes to
 # the socket, so on the active node it also starts the app if nothing has yet.
@@ -288,6 +328,9 @@ enable)
   systemctl daemon-reload
   # shellcheck disable=SC2086  # a list of unit names
   systemctl enable $UNITS
+  # The timer only ever acts on the active node, so it is safe to run on
+  # both, and it must run without waiting for the next boot.
+  systemctl start home-library-db-sync.timer
   log "failover enabled on $ME (peer $PEER, preferred $PREFERRED)"
   log "nothing was started: run 'home-library-failover to-local' on the node that"
   log "should serve now, or reboot, and the preferred node will claim the library"
@@ -420,6 +463,7 @@ vip-claim)
   wait_healthy local || die "app did not become healthy; leaving the VIP unassigned"
   vip_up_local
   log "active on $ME at http://$VIP/library/"
+  ddns_claim
   ;;
 
 # Shutdown, before the app stops: stop advertising immediately.

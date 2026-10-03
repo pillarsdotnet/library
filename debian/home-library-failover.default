@@ -21,3 +21,10 @@ VIP=192.168.144.1
 
 # Timestamped database snapshots kept before each replacement.
 #KEEP=10
+
+# Public DNS follows the active node. When DDNS_HOSTNAME is set, the node that
+# becomes active points it at itself through Hurricane Electric's dynamic DNS
+# (dns.he.net: enable dynamic DNS on the record and generate its key). The key
+# file is root-only and holds the key alone. Empty leaves DNS alone.
+#DDNS_HOSTNAME=library.example.org
+#DDNS_KEY_FILE=/root/home-library-ddns.key

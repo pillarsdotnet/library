@@ -102,6 +102,15 @@ library.db.<UTC time>Z beside it, keeping the newest ten. The hourly copy in
 /var/lib/home-library/standby is a disaster copy: restoring it is a manual
 step.
 
+Upgrading and removing
+----------------------
+
+Upgrading the package leaves the units running: nothing is handed over.
+Removing it stops them, and stopping home-library-db on the active node is
+an orderly shutdown, so it hands the library to the peer first. Run
+`home-library-failover disable` before removing the package from a node
+that should keep serving on its own.
+
 Turning it off
 --------------
 

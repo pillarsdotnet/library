@@ -40,6 +40,6 @@
     "@ericblade/quagga2": {
       "sharp": "$sharp"
     },
-    "braces": "git+https://github.com/pillarsdotnet/braces.git#82d539e412aa2f6034dabdf3d51f5ee36036cfe7"
+    "braces": "git+https://github.com/pillarsdotnet/braces.git#40748d305d656d5bcd323439346298b9ff24a771"
   }
 }

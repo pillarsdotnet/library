@@ -38,6 +38,7 @@
   "overrides": {
     "@ericblade/quagga2": {
       "sharp": "$sharp"
-    }
+    },
+    "braces": "git+https://github.com/pillarsdotnet/braces.git#82d539e412aa2f6034dabdf3d51f5ee36036cfe7"
   }
 }

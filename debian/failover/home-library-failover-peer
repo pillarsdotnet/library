@@ -160,6 +160,7 @@ case "$verb" in
     fi
     systemctl start home-library-db.service
     systemctl start home-library-vip.service
+    systemctl start home-library-db-sync.timer
     ;;
 
   # Stop serving here. The flag goes first, so a request reaching the socket

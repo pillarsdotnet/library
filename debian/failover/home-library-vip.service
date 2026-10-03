@@ -1,0 +1,31 @@
+# Owns the floating address, and only while the local app actually answers.
+# It also pulls in the app's socket: the socket is skipped at early boot,
+# before db-claim has created the activity flag, and this unit is what brings
+# it up once the right database is in place.
+#
+# After= the db unit and the socket, the mirror of the db unit's Before=:
+#   * at boot this runs LAST, so the VIP is advertised only once the app
+#     responds, and never points at a node that cannot serve;
+#   * at shutdown it runs FIRST, withdrawing the route before anything else.
+[Unit]
+Description=Home Library floating IP
+Documentation=file:/usr/share/doc/home-library-failover/README.Debian
+# Skipped, not failed, on a standby: only the active node has the flag.
+ConditionPathExists=/run/home-library-active
+After=home-library-db.service home-library.socket
+Requisite=home-library-db.service
+Wants=home-library.socket
+# If the socket goes away, the VIP should not keep pointing here.
+BindsTo=home-library.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Waits for the app's health check (up to about a minute) before claiming.
+TimeoutStartSec=180
+TimeoutStopSec=120
+ExecStart=/usr/sbin/home-library-failover vip-claim
+ExecStop=/usr/sbin/home-library-failover vip-release
+
+[Install]
+WantedBy=multi-user.target

@@ -1,3 +1,21 @@
+home-library (5.4.0+git20261003.48582bb-1~ppa2~ubuntu26.04.1) resolute; urgency=medium
+
+  * New binary package home-library-failover: hands the library between two
+    nodes with the native package, replacing the container-era scripts in
+    deploy/. It keeps their ownership generations and refusal to promote
+    on a guess, and adds:
+    - checkpoints and snapshots with sqlite3 as the home-library user,
+      instead of inside the container image;
+    - health checks through the app's Unix socket;
+    - drop-ins that gate home-library.socket as well as the service on the
+      activity flag, so a request cannot start the app on a standby;
+    - a manual to-local that works on the non-preferred node, and with
+      FORCE=1 when the owner is unreachable;
+    - the hourly disaster copy as a systemd timer instead of cron.
+    Installing it changes nothing until `home-library-failover enable`.
+
+ -- Robert August Vincent II (Bob) <pillarsdotnet@gmail.com>  Sat, 03 Oct 2026 01:47:55 -0400
+
 home-library (5.4.0+git20261003.48582bb-1~ppa1~ubuntu26.04.1) resolute; urgency=medium
 
   * New upstream snapshot, rebased on main at 8620825 (Docker image

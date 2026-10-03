@@ -1,0 +1,500 @@
+#!/bin/sh
+# Hand the live Home Library between two nodes, moving the SQLite database and
+# its covers with it, so exactly one node is ever writable.
+#
+#   home-library-failover status      show who owns the app
+#   home-library-failover to-local    take over here     (manual)
+#   home-library-failover to-remote   hand to the peer   (manual)
+#   home-library-failover enable      turn failover on for this node
+#   home-library-failover disable     turn it off again: a standalone install
+#
+# At boot and shutdown systemd drives the four hook modes instead -- db-claim,
+# vip-claim, vip-release, db-release -- through home-library-db.service and
+# home-library-vip.service. Never run the hook modes by hand while those units
+# are enabled; use to-local and to-remote, which sequence them safely.
+#
+# Settings are in /etc/default/home-library-failover. See README.Debian in
+# /usr/share/doc/home-library-failover for the one-time setup.
+#
+# WHY AN OWNER MARKER
+# The obvious version of this -- "on startup, copy the peer's database here" --
+# silently destroys data. If this node died without running its shutdown hook,
+# the peer never took over, so the peer's copy is STALE, and copying it back
+# would overwrite newer local data. So ownership is explicit: OWNER_FILE names
+# the node that last took over, and a pull only happens when the *other* side
+# owns it. Whoever owns the database is the only node whose copy counts.
+#
+# WHAT THIS IS NOT
+# The shutdown half only runs on an orderly shutdown. A power cut or panic
+# leaves ownership with the dead node, and the peer will NOT promote itself --
+# deliberately, because a node that cannot be reached cannot be proven
+# quiescent either, and promoting on a guess is how both sides end up writable
+# and diverge. Recover by running `home-library-failover to-local` on the
+# survivor, which is an explicit decision.
+#
+# THE SOCKET
+# The package's app is socket-activated: home-library.socket listens and
+# starts home-library.service on the first request. On a standby node that
+# would serve the stale local copy to anyone who reached the socket, so
+# `enable` installs drop-ins that make both units conditional on the activity
+# flag, and the app additionally Requisite= on home-library-db.service. The
+# socket is NOT ordered after the db unit: it is ordered before sockets.target,
+# which comes long before the network the db unit waits for, and that ordering
+# would be a cycle. It is skipped at boot instead, and pulled in later by the
+# vip unit once db-claim has created the flag.
+#
+# THE FLOATING IP
+# Tailscale has no floating-address primitive, so the VIP is a /32 advertised
+# as a subnet route by whichever node is active, and withdrawn when it is not.
+# Two one-time prerequisites, or the VIP silently does not route:
+#   1. An autoApprovers entry for the route in the tailnet policy file.
+#      Approving by hand is not enough: approval is per node, so the standby's
+#      advertisement is unapproved and the address points nowhere.
+#   2. Clients must accept routes (`tailscale set --accept-routes`). Phones do
+#      by default; Linux desktops do not.
+set -eu
+
+CONF=/etc/default/home-library-failover
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+
+# ─── configuration ─────────────────────────────────────────────────────────────
+PEER="${PEER:-}"
+PEER_PORT="${PEER_PORT:-65432}"
+# The peer's authorized_keys pins this key to home-library-failover-peer via
+# command=, so this connection cannot run anything but that script's verbs.
+KEY="${KEY:-/root/id_homelibrary}"
+# Must match VIP in the peer's own settings: the peer ignores any address sent.
+VIP="${VIP:-192.168.144.1}"
+VIP_DEV="${VIP_DEV:-lo}"
+# Which node reclaims the service when it boots. Both nodes run identical
+# units, so something has to break the tie: without it a standby that reboots
+# would pull the database from a perfectly healthy preferred node.
+PREFERRED="${PREFERRED:-}"
+KEEP="${KEEP:-10}"
+
+SERVICE=home-library.service
+SOCKET=home-library.socket
+APP_USER=home-library
+DATA_DIR=/var/lib/home-library
+DB=$DATA_DIR/library.db
+COVERS_DIR=$DATA_DIR/covers
+OWNER_FILE=$DATA_DIR/OWNER
+APP_SOCK=/run/home-library/home-library.sock
+LOCK=/run/home-library-failover.lock
+DROPIN_SRC=/usr/share/home-library-failover/dropins
+
+# "This node should be running the app." Lives in /run, so a reboot clears it
+# and db-claim decides afresh every boot. The app, socket and vip units test
+# it with ConditionPathExists, which makes systemd SKIP them rather than fail
+# them: a standby boot is a normal outcome, not an error.
+ACTIVE_FLAG=/run/home-library-active
+mark_active()  { : > "$ACTIVE_FLAG"; }
+mark_standby() { rm -f "$ACTIVE_FLAG"; }
+
+ME="${ME:-$(hostname -s)}"
+log() { echo "[home-library-failover $(date -Is)] $*" >&2; }
+die() { log "FAILED: $*"; exit 1; }
+
+# The app runs as its own user, so everything that writes beside the database
+# runs as that user too. A checkpoint or snapshot run as root would leave a
+# root-owned -wal, -shm or snapshot behind, and the app could no longer write.
+as_app() { runuser -u "$APP_USER" -- "$@"; }
+
+# Every peer operation is one of home-library-failover-peer's verbs. Nothing
+# here builds a shell command for the far side, so nothing can become one.
+on_peer() {
+  ssh -i "$KEY" -p "$PEER_PORT" -o ConnectTimeout=10 -o BatchMode=yes \
+      -o StrictHostKeyChecking=accept-new "root@$PEER" "$@"
+}
+
+# Retried, because at boot tailscaled can be active while the tailnet is not
+# yet connected -- observed 8 s after it started and still failing -- so a
+# single attempt misreports a healthy peer as gone.
+peer_reachable() {
+  _i=0
+  while [ $_i -lt 10 ]; do
+    if on_peer hostname >/dev/null 2>&1; then return 0; fi
+    _i=$((_i + 1)); sleep 3
+  done
+  return 1
+}
+
+need_config() {
+  [ -n "$PEER" ] || die "PEER is not set in $CONF"
+  [ -n "$PREFERRED" ] || die "PREFERRED is not set in $CONF"
+  [ -r "$KEY" ] || die "failover key $KEY is missing"
+}
+
+# ─── database movement ─────────────────────────────────────────────────────────
+# Fold the WAL into the main file so a single file is a complete copy, and
+# refuse to call a corrupt database a good one. Skipping the checkpoint loses
+# every committed transaction still sitting in -wal.
+checkpoint_local() {
+  [ -f "$DB" ] || return 0
+  as_app sqlite3 "$DB" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null
+  r=$(as_app sqlite3 "$DB" 'PRAGMA integrity_check;')
+  [ "$r" = ok ] || die "integrity_check on $DB: $r"
+}
+checkpoint_peer() { on_peer db-checkpoint; }
+
+# Snapshot the destination's current database to a timestamped COPY before it
+# is replaced, so a bad handoff is recoverable. `.backup`, not `cp` and never
+# `ln`: it is consistent against a database something still has open, and a
+# hardlink is the same inode under another name, which SQLite writes in place.
+snapshot_local() {
+  [ -f "$DB" ] || return 0
+  as_app sqlite3 "$DB" ".backup '$DB.$(date -u +%Y%m%dT%H%M%SZ)'"
+  ls -1t "$DB".*Z 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r old; do rm -f "$old"; done
+}
+snapshot_peer() { on_peer db-snapshot; }
+
+# Newest mtime across the database AND its WAL: in WAL mode commits land in
+# -wal, and the main file's mtime can lag far behind the last write.
+db_mtime_local() {
+  { stat -c %Y "$DB" 2>/dev/null || echo 0; stat -c %Y "$DB-wal" 2>/dev/null || echo 0; } | sort -rn | head -1
+}
+db_mtime_peer() { on_peer db-mtime; }
+
+# Refuse to overwrite a copy that a LATER handoff produced. This is the real
+# interlock: generations only advance when ownership changes hands.
+# Set FORCE=1 to override deliberately.
+assert_generation_ok() {   # $1=src gen  $2=dst gen  $3=description
+  if [ "$2" -gt "$1" ]; then
+    log "REFUSING $3: destination generation $2 is newer than source generation $1"
+    log "  the destination was made authoritative by a later handoff than this copy"
+    [ "${FORCE:-0}" = 1 ] || die "$3 would overwrite newer data (set FORCE=1 to override)"
+    log "FORCE=1 set -- proceeding anyway"
+  fi
+}
+
+# mtime is a diagnostic, not a gate: merely opening a SQLite database updates
+# it. It is worth reporting when it DISAGREES with the generations, because
+# that means something wrote to a database outside a handoff.
+warn_if_mtime_disagrees() {   # $1=src mtime  $2=dst mtime  $3=description
+  if [ "$2" -gt "$1" ]; then
+    log "note: destination mtime $2 is newer than source $1 for $3"
+    log "      generations permit this, so something touched the standby outside a handoff"
+  fi
+}
+
+# Covers are files beside the database, and the two are worthless apart, so
+# every movement of one moves the other. A tar stream through a verb: the peer
+# names the directory, the caller cannot.
+push_covers() {
+  [ -d "$COVERS_DIR" ] || return 0
+  tar -C "$DATA_DIR" -cf - "$(basename "$COVERS_DIR")" | on_peer covers-recv
+}
+pull_covers() {
+  staging="$DATA_DIR/.covers.incoming"
+  rm -rf "$staging"; mkdir -p "$staging"
+  if on_peer covers-send | tar -C "$staging" --no-same-owner -xf - \
+     && [ -d "$staging/covers" ]; then
+    find "$staging" -type l -delete
+    chown -R "$APP_USER:$APP_USER" "$staging/covers"
+    rm -rf "$COVERS_DIR.old"
+    if [ -d "$COVERS_DIR" ]; then mv "$COVERS_DIR" "$COVERS_DIR.old"; fi
+    mv "$staging/covers" "$COVERS_DIR"
+    rm -rf "$COVERS_DIR.old"
+  else
+    # A peer with no covers yet is normal; it must not fail the handoff, and
+    # the local set is kept rather than emptied on a guess.
+    log "no covers received from $PEER_NAME -- keeping the local set"
+  fi
+  rm -rf "$staging"
+}
+
+push_db() {   # local -> peer; $1=src gen $2=dst gen $3=src mtime $4=dst mtime
+  assert_generation_ok "$1" "$2" "push to $PEER_NAME"
+  warn_if_mtime_disagrees "$3" "$4" "push to $PEER_NAME"
+  snapshot_peer
+  on_peer db-recv < "$DB"
+  push_covers
+}
+pull_db() {   # peer -> local; $1=src gen $2=dst gen $3=src mtime $4=dst mtime
+  assert_generation_ok "$1" "$2" "pull from $PEER_NAME"
+  warn_if_mtime_disagrees "$3" "$4" "pull from $PEER_NAME"
+  snapshot_local
+  on_peer db-send > "$DB.incoming"
+  [ -s "$DB.incoming" ] || { rm -f "$DB.incoming"; die "received an empty database from $PEER_NAME"; }
+  chown "$APP_USER:$APP_USER" "$DB.incoming"
+  chmod 640 "$DB.incoming"
+  mv -f "$DB.incoming" "$DB"
+  # A stale -wal/-shm beside a replaced database is not untidiness: SQLite
+  # can apply a WAL that belongs to the previous file.
+  rm -f "$DB-wal" "$DB-shm"
+  pull_covers
+}
+
+# ─── ownership ─────────────────────────────────────────────────────────────────
+# The marker is "<node> <generation>". Both nodes record the same value, so
+# "who owns this?" has one answer whichever node you ask, and the generation
+# increments on every handoff. The generation, not mtime, decides which copy
+# is authoritative. A marker with no second field reads as generation 0.
+owner_raw_local() { [ -f "$OWNER_FILE" ] && cat "$OWNER_FILE" || echo "none 0"; }
+owner_raw_peer()  { on_peer owner-get 2>/dev/null || echo "unknown 0"; }
+owner_node() { echo "$1" | awk '{ print $1 }'; }
+owner_gen()  { echo "$1" | awk '{ if ($2 == "") print 0; else print $2 }'; }
+
+set_owner() {   # $1 = owning node name
+  _gl=$(owner_gen "$(owner_raw_local)")
+  _gp=$(owner_gen "$(owner_raw_peer)")
+  _next=$(( _gl > _gp ? _gl + 1 : _gp + 1 ))
+  printf '%s %s\n' "$1" "$_next" > "$OWNER_FILE"
+  on_peer owner-set "$1" "$_next" || log "warning: could not update the owner marker on $PEER_NAME"
+  log "owner is now $1 (generation $_next)"
+}
+
+# ─── floating IP ───────────────────────────────────────────────────────────────
+vip_up_local() {
+  ip addr show dev "$VIP_DEV" | grep -q "inet $VIP/32" || ip addr add "$VIP/32" dev "$VIP_DEV"
+  tailscale set --advertise-routes="$VIP/32"
+}
+vip_down_local() {
+  tailscale set --advertise-routes= 2>/dev/null || true
+  ip addr del "$VIP/32" dev "$VIP_DEV" 2>/dev/null || true
+}
+vip_down_peer() { on_peer vip-down; }
+
+# /healthz, not /, because the app requires a signed-in address once Google
+# credentials are configured, and a probe has no account. The request goes to
+# the socket, so on the active node it also starts the app if nothing has yet.
+health_local() {
+  curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+       --unix-socket "$APP_SOCK" http://localhost/library/healthz || true
+}
+wait_healthy() {   # $1 = "local" | "peer"
+  i=0
+  while [ $i -lt 30 ]; do
+    if [ "$1" = local ]; then code=$(health_local); else code=$(on_peer health); fi
+    [ "$code" = 200 ] && return 0
+    i=$((i + 1)); sleep 2
+  done
+  return 1
+}
+
+# ─── enable / disable ──────────────────────────────────────────────────────────
+# Installing the package changes nothing: a lone home-library keeps working.
+# `enable` is the explicit step that gates the app on the activity flag.
+DROPINS="home-library.service.d/failover.conf home-library.socket.d/failover.conf"
+UNITS="home-library-db.service home-library-vip.service home-library-db-sync.timer"
+
+case "${1:-}" in
+enable)
+  need_config
+  for d in $DROPINS; do
+    install -D -m 0644 "$DROPIN_SRC/$d" "/etc/systemd/system/$d"
+  done
+  systemctl daemon-reload
+  # shellcheck disable=SC2086  # a list of unit names
+  systemctl enable $UNITS
+  log "failover enabled on $ME (peer $PEER, preferred $PREFERRED)"
+  log "nothing was started: run 'home-library-failover to-local' on the node that"
+  log "should serve now, or reboot, and the preferred node will claim the library"
+  exit 0
+  ;;
+disable)
+  # shellcheck disable=SC2086
+  systemctl disable --now $UNITS 2>/dev/null || true
+  for d in $DROPINS; do rm -f "/etc/systemd/system/$d"; done
+  rmdir /etc/systemd/system/home-library.service.d /etc/systemd/system/home-library.socket.d 2>/dev/null || true
+  systemctl daemon-reload
+  vip_down_local
+  mark_standby
+  systemctl start "$SOCKET"
+  log "failover disabled on $ME: home-library runs standalone here again"
+  exit 0
+  ;;
+""|-h|--help|help)
+  echo "usage: $0 {status|to-local|to-remote|enable|disable|db-claim|db-release|vip-claim|vip-release}" >&2
+  exit 2
+  ;;
+esac
+
+need_config
+
+# One handoff at a time: two overlapping runs could hand the database both
+# ways. Only the two steps that move the database take the lock. The manual
+# commands must not hold it themselves: they work through systemd, whose units
+# run these steps as separate processes that would find the lock taken by
+# their own caller and fail. vip-claim and vip-release touch nothing shared.
+case "$1" in
+db-claim|db-release)
+  exec 9>"$LOCK"
+  flock -n 9 || die "another failover is already running"
+  ;;
+esac
+
+PEER_NAME=$(on_peer hostname 2>/dev/null || echo "$PEER")
+
+case "$1" in
+# ─── systemd hook modes ────────────────────────────────────────────────────────
+# A hook must NEVER run `systemctl` against the local app and wait for it. The
+# first version of this script did, from a unit ordered After= the app, and it
+# deadlocked: systemd waited for the ExecStop, and the ExecStop waited for a
+# stop job systemd would not run until the ExecStop returned.
+#
+# systemd owns the app's lifecycle instead, and two units bracket it:
+#   home-library-db.service   Before= the app and the vip unit
+#                             -> starts first, stops LAST
+#   home-library-vip.service  After= the db unit and the socket; Wants= socket
+#                             -> starts last, stops FIRST
+# so at db-release the app is already stopped, and at vip-claim it is up.
+
+# Boot, before the app can start: put the right database in place.
+db-claim)
+  log "db-claim on $ME (peer $PEER_NAME)"
+  raw_local=$(owner_raw_local)
+  o_local=$(owner_node "$raw_local")
+
+  # A standby that reboots must leave a healthy active node completely alone:
+  # no VIP change, no stopping its app, no pulling its database. Only the
+  # preferred node reclaims on boot; the other comes up active only if it
+  # already owns the database, i.e. the preferred node handed over and has
+  # not come back.
+  # A manual to-local is an explicit decision and is not a boot, so it skips
+  # this rule.
+  if [ -z "${HOME_LIBRARY_FAILOVER_MANUAL:-}" ] \
+     && [ "$ME" != "$PREFERRED" ] && [ "$o_local" != "$ME" ]; then
+    log "standby boot: $o_local owns the database and $ME is not the preferred node"
+    log "staying standby -- the app, socket and vip units will be skipped"
+    mark_standby
+    exit 0
+  fi
+
+  vip_down_local
+
+  if ! peer_reachable; then
+    # Degraded path. Only the peer's marker can say whether it took over, so
+    # with the peer unreachable we must not guess.
+    log "WARNING: $PEER_NAME is unreachable"
+    case "$o_local" in
+      "$ME"|none)
+        # Our own marker says we hold it, so serving the local copy is right.
+        # Deliberately do NOT bump the generation: raising ours above a copy
+        # we never saw would defeat the guard and let a later push overwrite
+        # newer data.
+        log "local marker says $o_local owns it; keeping the local copy, generation unchanged"
+        checkpoint_local; snapshot_local
+        ;;
+      *)
+        # The peer owns it and we cannot reach it, so our copy may be stale.
+        # Only an explicit `FORCE=1 home-library-failover to-local` serves it.
+        # The generation is raised locally, so that when the peer returns its
+        # db-claim pulls this copy, which was live meanwhile, instead of
+        # pushing its own over it.
+        if [ -n "${HOME_LIBRARY_FAILOVER_MANUAL:-}" ] && [ "${FORCE:-0}" = 1 ]; then
+          g_local=$(owner_gen "$raw_local")
+          log "FORCE=1: serving the local copy although $o_local owns it; changes made on $o_local after its last sync are not here"
+          checkpoint_local; snapshot_local
+          printf '%s %s\n' "$ME" "$((g_local + 1))" > "$OWNER_FILE"
+          log "owner is now $ME (generation $((g_local + 1)), set locally only)"
+        else
+          die "the database is owned by $o_local, which is unreachable; refusing to serve a stale copy (FORCE=1 to-local overrides)"
+        fi
+        ;;
+    esac
+  else
+    raw_peer=$(owner_raw_peer)
+    o_peer=$(owner_node "$raw_peer"); g_peer=$(owner_gen "$raw_peer")
+    g_local=$(owner_gen "$raw_local")
+    m_peer=$(db_mtime_peer 2>/dev/null || echo 0); m_local=$(db_mtime_local)
+    log "ownership: peer=$o_peer gen(peer)=$g_peer gen(local)=$g_local | mtimes: local=$m_local peer=$m_peer"
+    vip_down_peer || true
+    on_peer svc-stop || log "warning: could not stop the app on $PEER_NAME"
+    if [ "$o_peer" = "$PEER_NAME" ]; then
+      checkpoint_peer && pull_db "$g_peer" "$g_local" "$m_peer" "$m_local"
+      log "pulled the database from $PEER_NAME"
+    else
+      log "peer does not own the database (owner=$o_peer); KEEPING the local copy"
+      checkpoint_local; snapshot_local
+    fi
+    set_owner "$ME"
+  fi
+  mark_active
+  ;;
+
+# Boot, after the db unit: claim the floating address once the app answers.
+# The health probe goes through the socket, which starts the app.
+vip-claim)
+  wait_healthy local || die "app did not become healthy; leaving the VIP unassigned"
+  vip_up_local
+  log "active on $ME at http://$VIP/library/"
+  ;;
+
+# Shutdown, before the app stops: stop advertising immediately.
+vip-release)
+  vip_down_local
+  log "released the VIP on $ME"
+  ;;
+
+# Shutdown, after the app has stopped: hand the database to the peer.
+db-release)
+  # Only the owner has anything to hand over. A standby's db unit is active
+  # too -- its db-claim chose standby and exited 0 -- so its shutdown runs
+  # this as well, and without this check it pushed its stale copy over the
+  # live database: every handoff writes the SAME generation to both nodes, so
+  # the generation guard lets an equal one through.
+  o_local=$(owner_node "$(owner_raw_local)")
+  if [ "$o_local" != "$ME" ]; then
+    log "db-release on $ME: $o_local owns the database; nothing to hand over"
+    mark_standby
+    exit 0
+  fi
+  # Drop the flag first. The socket may still be listening; with the flag
+  # gone, a request that reaches it cannot start the app, because the app's
+  # condition fails, so nothing writes to the database while it is copied.
+  mark_standby
+  log "db-release: handing over from $ME to $PEER_NAME"
+  g_local=$(owner_gen "$(owner_raw_local)"); g_peer=$(owner_gen "$(owner_raw_peer)")
+  m_local=$(db_mtime_local); m_peer=$(db_mtime_peer 2>/dev/null || echo 0)
+  log "generations: local=$g_local peer=$g_peer | mtimes: local=$m_local peer=$m_peer"
+  vip_down_local; vip_down_peer || true
+  checkpoint_local
+  push_db "$g_local" "$g_peer" "$m_local" "$m_peer"
+  set_owner "$PEER_NAME"
+  # Start the peer's OWN units rather than poking its app and address
+  # directly; otherwise its units stay inactive, and its next shutdown runs
+  # no ExecStop and hands nothing back.
+  on_peer takeover || die "$PEER_NAME failed to take over; the database is on both, VIP unassigned"
+  wait_healthy peer || die "$PEER_NAME did not come up; VIP unassigned, the database is on both"
+  log "active on $PEER_NAME"
+  ;;
+
+# ─── manual commands ───────────────────────────────────────────────────────────
+# systemctl is safe here: these run by hand, not inside a systemd job.
+to-local)
+  log "manual takeover on $ME"
+  HOME_LIBRARY_FAILOVER_MANUAL=1 "$0" db-claim
+  [ -e "$ACTIVE_FLAG" ] || die "db-claim left $ME standby"
+  # Bring the units up so systemd's view matches reality; otherwise the next
+  # shutdown runs no ExecStop and hands nothing back. If the db unit was
+  # inactive, starting it runs db-claim a second time, which keeps the local
+  # copy and costs one more checkpoint and generation. The vip unit pulls in
+  # the socket and claims the address once the app answers.
+  systemctl start home-library-db.service
+  systemctl start home-library-vip.service
+  ;;
+
+to-remote)
+  log "manual handover from $ME to $PEER_NAME"
+  systemctl stop home-library-vip.service || "$0" vip-release
+  mark_standby
+  systemctl stop "$SOCKET" "$SERVICE" || true
+  systemctl reset-failed "$SERVICE" 2>/dev/null || true
+  "$0" db-release
+  ;;
+
+status)
+  echo "this node:  $ME"
+  echo "peer:       $PEER_NAME"
+  echo "preferred:  $PREFERRED"
+  echo "owner here: $(owner_raw_local)"
+  echo "owner peer: $(owner_raw_peer)"
+  echo "active:     $([ -e "$ACTIVE_FLAG" ] && echo yes || echo no)"
+  echo "app here:   $(systemctl is-active "$SERVICE" 2>/dev/null) (socket $(systemctl is-active "$SOCKET" 2>/dev/null))"
+  echo "VIP $VIP here: $(ip addr show dev "$VIP_DEV" | grep -q "inet $VIP/32" && echo assigned || echo no)"
+  ;;
+
+*) echo "usage: $0 {status|to-local|to-remote|enable|disable|db-claim|db-release|vip-claim|vip-release}" >&2; exit 2 ;;
+esac

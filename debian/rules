@@ -1,0 +1,80 @@
+#!/usr/bin/make -f
+# The production node_modules tree comes in as the node-modules component
+# tarball, made from package-lock.json with no install scripts, no optional
+# packages and no prebuilt binaries. The two native modules are compiled here,
+# offline, against the system's Node headers and libvips.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+APP = debian/home-library/usr/lib/home-library
+GYP = node-gyp rebuild --release --nodedir=/usr/include/nodejs
+# better-sqlite3 and sharp each spawn the compiler through make.
+GYP_JOBS = $(or $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS))),1)
+
+%:
+	dh $@ --with apache2
+
+override_dh_auto_configure:
+	ln -sfn node-modules node_modules
+
+ADDONS = node-modules/better-sqlite3/build/Release/better_sqlite3.node \
+	node-modules/sharp/src/build/Release/sharp-*.node
+
+override_dh_auto_build:
+	cd node-modules/better-sqlite3 && $(GYP) --jobs=$(GYP_JOBS)
+	cd node-modules/sharp/src && $(GYP) --jobs=$(GYP_JOBS)
+	# Ubuntu's node-gyp links every addon against libnode. Both addons use
+	# only Node-API, which they find in whatever node process loads them, so
+	# the link only matters with a node that is not built on libnode, such as
+	# NodeSource's: there it would load a second Node runtime into the
+	# process. Drop it, and fail if any addon still asks for libnode.
+	for f in $(ADDONS); do \
+	  for lib in $$(readelf -d $$f | sed -n 's/.*(NEEDED).*\[\(libnode\.so[^]]*\)\]/\1/p'); do \
+	    patchelf --remove-needed $$lib $$f; \
+	  done; \
+	  if readelf -d $$f | grep -q 'libnode\.so'; then echo "$$f still needs libnode" >&2; exit 1; fi; \
+	done
+
+# test/scanner.browser.test.mjs drives a real browser through puppeteer-core,
+# a development dependency that is not in the production tree. Everything else
+# runs offline against the modules just built.
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	HOME=$(CURDIR)/debian/test-home node --test \
+	  $(filter-out test/scanner.browser.test.mjs,$(wildcard test/*.test.mjs))
+endif
+
+override_dh_auto_install:
+	install -d $(APP)
+	install -m 0644 package.json $(filter-out check-deps.js eslint.config.js,$(wildcard *.js)) $(APP)/
+	cp -a public $(APP)/
+	cp -a node-modules $(APP)/node_modules
+	# Keep each native module's loader and its built addon, nothing else of
+	# the build: sources, object files and gyp output have no use at runtime.
+	cd $(APP)/node_modules/better-sqlite3 && \
+	  mv build/Release/better_sqlite3.node . && rm -rf build deps src binding.gyp && \
+	  install -d build/Release && mv better_sqlite3.node build/Release/
+	cd $(APP)/node_modules/sharp/src && \
+	  mv build/Release/sharp-*.node .. && rm -rf build *.cc *.h binding.gyp && \
+	  install -d build/Release && mv ../sharp-*.node build/Release/
+	find $(APP)/node_modules \( -name '*.md' -o -name '*.markdown' -o -name '.*' \
+	  -o -name '*.ts' -o -name '*.map' -o -name 'CHANGELOG*' -o -name 'test' -o -name 'tests' \) \
+	  -prune -exec rm -rf {} +
+	# Never run here: node-addon-api is C++ headers, sharp/install compiles
+	# sharp, mime's build.js regenerates its type table, and the two command
+	# line tools are for npm's bin links, which this package does not make.
+	rm -rf $(APP)/node_modules/node-addon-api $(APP)/node_modules/sharp/install \
+	  $(APP)/node_modules/mime/src/build.js $(APP)/node_modules/mime/cli.js \
+	  $(APP)/node_modules/semver/bin
+	chmod -R u=rwX,go=rX $(APP)
+
+override_dh_installchangelogs:
+	dh_installchangelogs CHANGELOG.md
+
+override_dh_installsystemd:
+	dh_installsystemd home-library.socket
+	dh_installsystemd --no-enable home-library.service
+
+execute_after_dh_clean:
+	rm -f node_modules
+	rm -rf node-modules/better-sqlite3/build node-modules/sharp/src/build debian/test-home

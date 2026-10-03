@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = purge ]; then
+    rm -f /etc/home-library/secret.env
+    if dpkg-statoverride --list /etc/home-library/home-library.env >/dev/null; then
+        dpkg-statoverride --remove /etc/home-library/home-library.env
+    fi
+    # The library itself, /var/lib/home-library, is left in place: purging the
+    # package should not destroy the catalogue. Remove it by hand if you mean to.
+fi
+
+#DEBHELPER#
+
+exit 0

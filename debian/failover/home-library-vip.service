@@ -3,6 +3,13 @@
 # before db-claim has created the activity flag, and this unit is what brings
 # it up once the right database is in place.
 #
+# Wants=, not BindsTo=, the socket. BindsTo stopped this unit whenever the
+# socket stopped, and the home-library package restarts the socket on every
+# upgrade, so each upgrade dropped and re-advertised the VIP. It never meant
+# "the app is healthy" -- the socket keeps listening if the app crashes --
+# and every deliberate stop (to-remote, the peer's svc-stop, disable) stops
+# this unit first anyway.
+#
 # After= the db unit and the socket, the mirror of the db unit's Before=:
 #   * at boot this runs LAST, so the VIP is advertised only once the app
 #     responds, and never points at a node that cannot serve;
@@ -15,8 +22,6 @@ ConditionPathExists=/run/home-library-active
 After=home-library-db.service home-library.socket
 Requisite=home-library-db.service
 Wants=home-library.socket
-# If the socket goes away, the VIP should not keep pointing here.
-BindsTo=home-library.socket
 
 [Service]
 Type=oneshot

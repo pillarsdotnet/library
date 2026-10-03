@@ -47,22 +47,13 @@ jobs:
           PUPPETEER_EXECUTABLE_PATH: ${{ steps.chrome.outputs.chrome-path }}
 
   image:
-    name: Image ${{ matrix.variant }} ${{ matrix.arch }}
-    # Every variant on every architecture, on PRs too: each image is built on a
-    # native runner and checked from inside, where its better-sqlite3 was
-    # compiled and its zoneinfo either is or is not. On main it is also pushed,
-    # untagged; the publish job tags it only once everything has passed.
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [slim, alpine]
-        arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
+    # The name is a required status check on main; keep it as it is.
+    name: Image slim amd64
+    # The one image, Debian slim on amd64, on PRs too: it is built and checked
+    # from inside, where its better-sqlite3 was compiled and its zoneinfo lives.
+    # On main it is also pushed, untagged; the publish job tags it only once
+    # everything has passed.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -77,13 +68,12 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/${{ matrix.arch }}
-          build-args: VARIANT=${{ matrix.variant }}
+          platforms: linux/amd64
           labels: ${{ steps.meta.outputs.labels }}
           load: true
           tags: library:test
-          cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=slim-amd64
+          cache-to: type=gha,mode=max,scope=slim-amd64
       - name: Check the image from inside
         run: >-
           docker run --rm library:test node --test
@@ -101,11 +91,10 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/${{ matrix.arch }}
-          build-args: VARIANT=${{ matrix.variant }}
+          platforms: linux/amd64
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=slim-amd64
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           mkdir -p digests
@@ -115,20 +104,17 @@ jobs:
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v7
         with:
-          name: digest-${{ matrix.variant }}-${{ matrix.arch }}
+          name: digest-slim-amd64
           path: digests/*
           if-no-files-found: error
           retention-days: 1
 
   publish:
-    name: Publish ${{ matrix.variant }} image
-    # Only a merge to main publishes, and only once every check and every image
-    # has passed. Each variant gets one set of tags covering both architectures.
+    name: Publish image
+    # Only a merge to main publishes, and only once every check and the image
+    # have passed.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [lint, test, image]
-    strategy:
-      matrix:
-        variant: [slim, alpine]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -141,7 +127,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: digests
-          pattern: digest-${{ matrix.variant }}-*
+          pattern: digest-slim-amd64
           merge-multiple: true
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
@@ -153,16 +139,13 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
-          # slim is the default image and carries the plain tags; alpine
-          # carries the same tags with -alpine on the end.
           flavor: |
             latest=false
-            suffix=${{ matrix.variant == 'alpine' && '-alpine' || '' }}
           tags: |
             type=raw,value=latest
             type=raw,value=${{ steps.version.outputs.version }}
             type=sha
-      - name: Tag both architectures under one name
+      - name: Tag the pushed digest
         working-directory: digests
         run: |
           mapfile -t tags < <(jq -r '.tags[] | "-t", .' <<< "$DOCKER_METADATA_OUTPUT_JSON")

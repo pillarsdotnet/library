@@ -1,7 +1,7 @@
 #!/bin/sh
-# Compare the CPU cost of Docker images under the same work -- in practice the
-# slim and alpine variants, and slim with its allocator tuned. README.md compares
-# the variants, using its results; bench/memory.mjs is its memory counterpart.
+# Compare the CPU cost of Docker images under the same work -- for instance
+# two releases, or the image with and without its allocator tuned.
+# bench/memory.mjs is its memory counterpart.
 #
 # Usage: SEED_DB=<library.db> bench/cpu.sh <config> [<config> ...]
 #   where a config is an image, optionally with container environment:

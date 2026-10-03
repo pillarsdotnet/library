@@ -4,9 +4,10 @@
 // Napi::ObjectWrap and survives, which is what let the Node pin go. This fails
 // if a dependency change brings the crash back.
 //
-// Proven to fail: better-sqlite3 11.10.0 on Node 24.21.0 aborts here, on both
-// Debian and Alpine, while 13 passes. The Docker build runs this inside each
-// image, since what matters is the module as compiled there.
+// Proven to fail: better-sqlite3 11.10.0 on Node 24.21.0 aborts here, in both
+// the Debian image and the since-dropped Alpine one, while 13 passes. CI also
+// runs this inside the Docker image, since what matters is the module as
+// compiled there.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

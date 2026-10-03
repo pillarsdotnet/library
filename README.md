@@ -208,104 +208,29 @@ Then open `http://<your-server>:3000`. The SQLite database is stored in the
 `/data/library.db` out of the volume.
 
 Or skip the build and run a published image. Every merge to `main` that
-passes the Code Checker workflow pushes two to the GitHub Container Registry,
-each for both `amd64` and `arm64`, so Docker picks the right one for the
-machine:
-
-| Base | Tags |
-|---|---|
-| Debian slim (the default) | `latest`, the `package.json` version, `sha-<commit>` |
-| Alpine (about 56 MiB smaller) | the same, ending `-alpine`: `latest-alpine`, `5.4.0-alpine` |
+passes the Code Checker workflow pushes one to the GitHub Container Registry:
+Debian slim, for `amd64`, tagged `latest`, the `package.json` version and
+`sha-<commit>`.
 
 ```bash
 docker run -d -p 3000:3000 -v library-data:/data -e TZ=America/New_York \
   ghcr.io/pillarsdotnet/library:latest
 ```
 
-#### Slim or Alpine?
+Alpine and `arm64` images are no longer built. The `-alpine` tags and the
+`arm64` images already on `ghcr.io` stay where they are, but get no updates;
+move to the plain tags on `amd64`. A measured comparison of slim and Alpine
+(memory, CPU per request, image size) is what settled on slim; it is in the
+README as of commit `32b8709`, along with how it was measured. The scripts in
+[`bench/`](bench/) still compare any images, such as two releases, or slim with
+and without `MALLOC_ARENA_MAX=2`.
 
-**Alpine is smaller and holds far less memory after heavy work, but spends
-more CPU on every request.** The two images run the same app on the same Node;
-the difference is the C library. Alpine's `musl` hands freed memory back to the
-system, while Debian's `glibc` keeps it for reuse and is faster at allocating
-it. JavaScript that stays on V8's own heap costs the same on both. The price
-lands wherever native code allocates: SQLite, the encryption behind sessions
-and stored Open Library keys, image resizing.
-
-| 5.4.0, `amd64` | slim | slim, `MALLOC_ARENA_MAX=2` | Alpine |
-|---|---:|---:|---:|
-| **Image**, download (compressed) | 99.9 MiB | *same image* | 81.8 MiB (−18%) |
-| **Image**, on disk | 276.6 MiB | *same image* | 220.7 MiB (−20%) |
-| **RAM**, idle | 95 MB | 94 MB | 100 MB |
-| **RAM**, after 2,000 books added and 3,000 reads | 160 MB | 158 MB | 148 MB |
-| **RAM**, peak during 300 EPUB imports | 460 MB | 443 MB | 413 MB (−10%) |
-| **RAM**, held 30 s after the imports | 414 MB | 429 MB | **225 MB (−46%)** |
-| **CPU** per request, book list (`/api/books`) | 901 µs | 900 µs | 1,163 µs (+29%) |
-| **CPU** per request, `/api/meta` | 194 µs | 195 µs | 287 µs (+48%) |
-| **CPU** per request, genre list | 146 µs | 146 µs | 182 µs (+25%) |
-| **CPU** per request, the page itself (`/`) | 88 µs | 89 µs | 100 µs (+14%) |
-| **Throughput**, book list | 1,125 req/s | 1,124 req/s | 875 req/s (−22%) |
-| **CPU** to start | 146 ms | 149 ms | 175 ms (+20%) |
-
-Where Alpine's extra CPU goes, from the same runs (time for a fixed amount of
-work, Alpine ÷ slim; `MALLOC_ARENA_MAX=2` matched slim within 1% throughout):
-
-| Work | Alpine ÷ slim |
-|---|---:|
-| `malloc`/`free` of 16 KB buffers, directly | 3.20× |
-| AES-256-GCM seal and open | 1.47× |
-| HMAC-SHA256 | 1.31× |
-| SQLite: read the whole `books` view | 1.24× |
-| JSON round trip of the book list | 1.21× |
-| SQLite: 100,000 inserts | 1.17× |
-| `sharp`: decode, resize and encode a cover | 1.10× |
-| `zlib` deflate and inflate | 1.09× |
-| `fflate` zip and unzip (pure JavaScript) | 1.04× |
-| The app's own title sort (pure JavaScript) | 1.00× |
-| Allocating objects on V8's heap | 0.98× |
-
-**Which to run.** For a household library either is ample: a book list costs
-about a millisecond of CPU on either. **Alpine** suits a small server where
-memory is the tighter limit, and after a burst of imports it gives back about
-190 MB that slim keeps. **Slim** suits a busy or CPU-bound server, and imports
-many EPUBs faster. `MALLOC_ARENA_MAX=2`, the usual setting for trimming
-`glibc`'s memory, changed neither memory nor CPU here, so it is not a way to
-get Alpine's memory on slim. `MALLOC_TRIM_THRESHOLD_` and
-`MALLOC_MMAP_THRESHOLD_` might be; they are untested.
-
-How it was measured, so it can be repeated:
-
-- **Images**: the published `5.4.0` (`sha256:66b43c6046a8…`) and `5.4.0-alpine`
-  (`sha256:a3b7446f5112…`), `amd64`, on 2026-09-28. Sizes are the sum of the
-  layers in the registry manifest, and `docker image inspect`'s `Size`.
-- **RAM**: [`bench/memory.mjs`](bench/memory.mjs), on a 16-core workstation
-  (Ubuntu 26.04, cgroup v2): each run a fresh container limited to 2 CPUs and
-  1 GB, taking 2,000 books, 3,000 mixed reads, then 300 EPUB imports with
-  2400×3600 covers, sampled every 500 ms. Figures are node's resident memory
-  (`VmRSS`; the peak is `VmHWM`), medians of 3 runs of each image, in turn.
-  Run it with `node bench/memory.mjs <image[,KEY=VALUE...]>...`.
-- **CPU**: [`bench/cpu.sh`](bench/cpu.sh), on an Intel i9-14900K, with the
-  server pinned to two performance cores and the load generator to three
-  others. Each run takes the app's own work out of the image
-  ([`bench/cpu-micro.mjs`](bench/cpu-micro.mjs)), then serves a real
-  689-book library to 8 clients for 10 s per endpoint
-  ([`bench/cpu-http.mjs`](bench/cpu-http.mjs)), reading the server's CPU time
-  from its cgroup. Figures are medians of 5 rounds with the order rotated each
-  round. The per-request and micro-benchmark figures agreed within 5% from
-  round to round; startup varied more, by up to 44%. Run it with
-  `SEED_DB=<library.db> bench/cpu.sh <image[,KEY=VALUE...]>...`, then
-  `node bench/cpu-report.mjs bench-cpu.jsonl`.
-
-Absolute figures depend on the machine; the ratios are what carry over.
-
-To build the Alpine image yourself, pass `--build-arg VARIANT=alpine`.
-
-Before any of the four is published, CI runs three checks inside it:
+Before the image is published, CI runs three checks inside it:
 
 - **Due dates follow `TZ`.** SQLite's `localtime` compares with Node's own
-  timezone data in four zones. Alpine lacks the zoneinfo files unless the image
-  adds `tzdata`; without them, overdue books are judged in UTC while the
-  startup log names the right zone.
+  timezone data in four zones. Without the zoneinfo files in the image,
+  overdue books would be judged in UTC while the startup log named the right
+  zone.
 - **Garbage collection does not abort Node.** 300,000 prepared statements are
   freed under allocation pressure. From Node 24.19.0, this aborts any addon
   built on the older `node::ObjectWrap`
@@ -725,7 +650,6 @@ version, restarts the unit, health-checks it, and prunes old images:
 ```bash
 HOST=<node> deploy/deploy.sh          # deploy to a specific node
 deploy/deploy.sh                      # or to the default node set in the script
-VARIANT=alpine HOST=<node> deploy/deploy.sh   # the Alpine image (slim is the default)
 TAG=5.3.0 HOST=<node> deploy/deploy.sh        # a specific version, e.g. to roll back
 BUILD=local HOST=<node> deploy/deploy.sh      # build here and ship over ssh instead
 HEALTH_TIMEOUT=120 deploy/deploy.sh   # allow longer for the app to come up
@@ -738,7 +662,7 @@ easiest way to carry a non-standard port or username. The node needs Docker,
 no login).
 
 **What is deployed is what CI published**: `ghcr.io/pillarsdotnet/library:<version>`,
-or `<version>-alpine`, with the version read from `package.json` in this checkout.
+with the version read from `package.json` in this checkout.
 Those tags exist only once the merge to `main` has passed every check, so an
 unmerged change, a local edit or a red build cannot reach a node. If the tag is
 not there yet — CI still running, or failed — the script says so and stops before

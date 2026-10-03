@@ -26,6 +26,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rebuild. `BUILD=local` keeps the old build-and-ship-over-ssh path for when
   `ghcr.io` cannot be reached.
 
+### Removed
+
+- **The Alpine and `arm64` images.** CI builds, checks and publishes one image,
+  Debian slim for `amd64`, with the plain tags. The `Dockerfile` has no
+  `VARIANT` any more, and neither has `deploy/deploy.sh`. Images already
+  published as `-alpine` or for `arm64` stay on `ghcr.io` but get no updates.
+  The slim-or-Alpine comparison in the README is replaced by a pointer to the
+  commit that has it; the `bench/` scripts stay, and compare any images.
+
 ### Fixed
 
 - **A flaky browser test stopped CI publishing images.** The duplicate-scan

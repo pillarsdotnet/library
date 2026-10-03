@@ -1,6 +1,6 @@
 // CPU micro-benchmarks, run INSIDE an app image by bench/cpu.sh, so that the
 // image's own node_modules -- its compiled better-sqlite3 and sharp, and its
-// libc -- are what is timed. README.md compares the variants, using its results.
+// libc -- are what is timed.
 //
 // Each workload is a fixed amount of work; the best of REPS timings is reported,
 // with the CPU time the process used for that repetition. BENCH_DB is a copy of

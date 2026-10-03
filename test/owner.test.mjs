@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 3231;
+const PORT = 3234;
 const GOOGLE_PORT = 3232;
 const SMTP_PORT = 3233;
 const BASE = `http://127.0.0.1:${PORT}`;

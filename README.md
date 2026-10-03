@@ -197,6 +197,30 @@ Sign-in is what makes a public address possible. Even then:
 
 ## Run it
 
+### From the Ubuntu PPA
+
+On Ubuntu 26.04 (`resolute`) or 26.10 (`stonking`), install the Debian package
+from [`ppa:pillarsdotnet/ppa`](https://launchpad.net/~pillarsdotnet/+archive/ubuntu/ppa):
+
+```sh
+sudo add-apt-repository ppa:pillarsdotnet/ppa
+sudo apt install home-library
+```
+
+The package runs the app as a `systemd` service, started on demand through a
+Unix socket, and ships an nginx snippet and an Apache configuration that serve
+it under `/library/`. Its data lives in `/var/lib/home-library`, and its
+settings in `/etc/home-library/home-library.env`. The PPA also carries the
+newer libvips it needs, and on 26.04 the Node.js 24 that the archive lacks.
+`/usr/share/doc/home-library/README.Debian` covers the web server setup.
+
+To run one library on two machines, with exactly one of them accepting changes
+at a time, add `home-library-failover` (26.10 only for now). It hands the
+live database and covers between the two, moves a Tailscale floating address
+with them, and can point a public DNS name at whichever machine is serving.
+Nothing changes until `home-library-failover enable`; see
+`/usr/share/doc/home-library-failover/README.Debian`.
+
 ### With Docker (recommended for a self-hosted server)
 
 ```bash

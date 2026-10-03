@@ -1,0 +1,44 @@
+home-library for Debian and Ubuntu
+==================================
+
+How it runs
+-----------
+
+systemd owns the socket, /run/home-library/home-library.sock, and starts the
+app (home-library.service) on the first request. The socket belongs to the
+home-library user and group www-data, mode 0660, so nginx and Apache, which
+run as www-data, can connect and nothing else can. The app never listens on a
+TCP port.
+
+  Code      /usr/lib/home-library
+  Data      /var/lib/home-library (library.db and covers/)
+  Settings  /etc/home-library/home-library.env   (yours; root:home-library 0640)
+            /etc/home-library/secret.env         (generated SESSION_SECRET)
+
+The service sets BASE_PATH=/library and TRUST_PROXY=true, matching the web
+server configuration below. Set PUBLIC_ORIGIN in home-library.env if sign-in
+redirects or emailed links come out with the wrong scheme or host.
+
+Purging the package keeps /var/lib/home-library: the catalogue is yours to
+delete.
+
+Apache
+------
+
+The package enables mod_proxy, mod_proxy_http and mod_headers and the
+home-library configuration (/etc/apache2/conf-available/home-library.conf),
+which serves the app at /library/ on every virtual host. To limit it to one,
+disable the conf (a2disconf home-library) and Include the file inside that
+<VirtualHost>.
+
+nginx
+-----
+
+nginx has no way for a package to add a location to your site, so add one
+line inside the server { } block that should serve the library:
+
+    include snippets/home-library.conf;
+
+then reload nginx. Upgrades reload nginx for you once a site includes it.
+
+Camera scanning needs HTTPS: browsers only offer the camera to secure pages.

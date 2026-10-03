@@ -1,0 +1,436 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: home-library
+Upstream-Contact: Robert August Vincent II <pillarsdotnet@gmail.com>
+Source: https://github.com/pillarsdotnet/library
+
+Files: *
+Copyright: 2025-2026 Robert August Vincent II <pillarsdotnet@gmail.com>
+License: TO-BE-DECIDED
+Comment: THE REPOSITORY HAS NO LICENSE FILE. The author must choose a license
+ before this package is distributed; until then this field is a placeholder,
+ not a grant.
+
+Files: debian/*
+Copyright: 2026 Robert August Vincent II <pillarsdotnet@gmail.com>
+License: TO-BE-DECIDED
+
+Files: node-modules/@ericblade/quagga2/*
+Copyright: 2014 Christoph Oberhofer, (c) 2019 Eric Blade and all other contributors
+License: MIT
+
+Files: node-modules/@img/colour/*
+Copyright: 2012 Heather Arthur
+           2011-2016 Heather Arthur <fayearthur@gmail.com>.
+           2016-2021 Josh Junon <josh@junon.me>.
+License: MIT
+
+Files: node-modules/accepts/*
+Copyright: 2014 Jonathan Ong <me@jongleberry.com>
+           2015 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/array-flatten/*
+Copyright: 2014 Blake Embrey (hello@blakeembrey.com)
+License: MIT
+
+Files: node-modules/better-sqlite3/*
+Copyright: 2017 Joshua Wise
+License: MIT
+
+Files: node-modules/body-parser/*
+Copyright: 2014 Jonathan Ong <me@jongleberry.com>
+           2014-2015 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/bytes/*
+Copyright: 2012-2014 TJ Holowaychuk <tj@vision-media.ca>
+           2015 Jed Watson <jed.watson@me.com>
+License: MIT
+
+Files: node-modules/call-bind-apply-helpers/*
+Copyright: 2024 Jordan Harband
+License: MIT
+
+Files: node-modules/call-bound/*
+Copyright: 2024 Jordan Harband
+License: MIT
+
+Files: node-modules/content-disposition/*
+Copyright: 2014-2017 Douglas Christopher Wilson
+License: MIT
+
+Files: node-modules/content-type/*
+Copyright: 2015 Douglas Christopher Wilson
+License: MIT
+
+Files: node-modules/cookie/*
+Copyright: 2012-2014 Roman Shtylman <shtylman@gmail.com>
+           2015 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/cookie-signature/*
+Copyright: TJ Holowaychuk <tj@learnboost.com>
+License: MIT
+
+Files: node-modules/cropperjs/*
+Copyright: 2015-present Chen Fengyuan
+License: MIT
+
+Files: node-modules/debug/*
+Copyright: 2014 TJ Holowaychuk <tj@vision-media.ca>
+License: MIT
+
+Files: node-modules/depd/*
+Copyright: 2014-2018 Douglas Christopher Wilson
+License: MIT
+
+Files: node-modules/destroy/*
+Copyright: 2014 Jonathan Ong me@jongleberry.com
+           2015-2022 Douglas Christopher Wilson doug@somethingdoug.com
+License: MIT
+
+Files: node-modules/detect-libc/*
+Copyright: notice that is included in or attached to the work
+           license to reproduce, prepare Derivative Works of,
+           You must retain, in the Source form of any Derivative Works
+License: Apache-2.0
+
+Files: node-modules/dunder-proto/*
+Copyright: 2024 ECMAScript Shims
+License: MIT
+
+Files: node-modules/ee-first/*
+Copyright: 2014 Jonathan Ong me@jongleberry.com
+License: MIT
+
+Files: node-modules/encodeurl/*
+Copyright: 2016 Douglas Christopher Wilson
+License: MIT
+
+Files: node-modules/es-define-property/*
+Copyright: 2024 Jordan Harband
+License: MIT
+
+Files: node-modules/es-errors/*
+Copyright: 2024 Jordan Harband
+License: MIT
+
+Files: node-modules/es-object-atoms/*
+Copyright: 2024 Jordan Harband
+License: MIT
+
+Files: node-modules/escape-html/*
+Copyright: 2012-2013 TJ Holowaychuk
+           2015 Andreas Lubbe
+           2015 Tiancheng "Timothy" Gu
+License: MIT
+
+Files: node-modules/etag/*
+Copyright: 2014-2016 Douglas Christopher Wilson
+License: MIT
+
+Files: node-modules/express/*
+Copyright: 2009-2014 TJ Holowaychuk <tj@vision-media.ca>
+           2013-2014 Roman Shtylman <shtylman+expressjs@gmail.com>
+           2014-2015 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/fflate/*
+Copyright: 2026 Arjun Barrett
+License: MIT
+
+Files: node-modules/finalhandler/*
+Copyright: 2014-2022 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/forwarded/*
+Copyright: 2014-2017 Douglas Christopher Wilson
+License: MIT
+
+Files: node-modules/fresh/*
+Copyright: 2012 TJ Holowaychuk <tj@vision-media.ca>
+           2016-2017 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/function-bind/*
+Copyright: 2013 Raynos.
+License: MIT
+
+Files: node-modules/get-intrinsic/*
+Copyright: 2020 Jordan Harband
+License: MIT
+
+Files: node-modules/get-proto/*
+Copyright: 2025 Jordan Harband
+License: MIT
+
+Files: node-modules/gl-matrix/*
+Copyright: 2015-2025, Brandon Jones, Colin MacKenzie IV.
+License: MIT
+
+Files: node-modules/gopd/*
+Copyright: 2022 Jordan Harband
+License: MIT
+
+Files: node-modules/has-symbols/*
+Copyright: 2016 Jordan Harband
+License: MIT
+
+Files: node-modules/hasown/*
+Copyright: Jordan Harband and contributors
+License: MIT
+
+Files: node-modules/html5-qrcode/*
+Copyright: notice that is included in or attached to the work
+           license to reproduce, prepare Derivative Works of,
+           You must retain, in the Source form of any Derivative Works
+License: Apache-2.0
+
+Files: node-modules/http-errors/*
+Copyright: 2014 Jonathan Ong me@jongleberry.com
+           2016 Douglas Christopher Wilson doug@somethingdoug.com
+License: MIT
+
+Files: node-modules/iconv-lite/*
+Copyright: 2011 Alexander Shtuchkin
+License: MIT
+
+Files: node-modules/inherits/*
+Copyright: Isaac Z. Schlueter
+           notice and this permission notice appear in all copies.
+License: ISC
+
+Files: node-modules/ipaddr.js/*
+Copyright: 2011-2017 whitequark <whitequark@whitequark.org>
+License: MIT
+
+Files: node-modules/math-intrinsics/*
+Copyright: 2024 ECMAScript Shims
+License: MIT
+
+Files: node-modules/media-typer/*
+Copyright: 2014 Douglas Christopher Wilson
+License: MIT
+
+Files: node-modules/merge-descriptors/*
+Copyright: 2013 Jonathan Ong <me@jongleberry.com>
+           2015 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/methods/*
+Copyright: 2013-2014 TJ Holowaychuk <tj@vision-media.ca>
+           2015-2016 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/mime/*
+Copyright: 2010 Benjamin Thomas, Robert Kieffer
+License: MIT
+
+Files: node-modules/mime-db/*
+Copyright: 2014 Jonathan Ong <me@jongleberry.com>
+           2015-2022 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/mime-types/*
+Copyright: 2014 Jonathan Ong <me@jongleberry.com>
+           2015 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/ms/*
+Copyright: 2016 Zeit, Inc.
+License: MIT
+
+Files: node-modules/negotiator/*
+Copyright: 2012-2014 Federico Romero
+           2012-2014 Isaac Z. Schlueter
+           2014-2015 Douglas Christopher Wilson
+License: MIT
+
+Files: node-modules/node-addon-api/*
+Copyright: 2017 [Node.js API collaborators](https://github.com/nodejs/node-addon-api#collaborators)
+License: MIT
+
+Files: node-modules/object-inspect/*
+Copyright: 2013 James Halliday
+License: MIT
+
+Files: node-modules/on-finished/*
+Copyright: 2013 Jonathan Ong <me@jongleberry.com>
+           2014 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/parseurl/*
+Copyright: 2014 Jonathan Ong <me@jongleberry.com>
+           2014-2017 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/path-to-regexp/*
+Copyright: 2014 Blake Embrey (hello@blakeembrey.com)
+License: MIT
+
+Files: node-modules/proxy-addr/*
+Copyright: 2014-2016 Douglas Christopher Wilson
+License: MIT
+
+Files: node-modules/qs/*
+Copyright: 2014, Nathan LaFreniere and other [contributors](https://github.com/ljharb/qs/graphs/contributors)
+License: BSD-3-Clause
+
+Files: node-modules/range-parser/*
+Copyright: 2012-2014 TJ Holowaychuk <tj@vision-media.ca>
+           2015-2016 Douglas Christopher Wilson <doug@somethingdoug.com
+License: MIT
+
+Files: node-modules/raw-body/*
+Copyright: 2013-2014 Jonathan Ong <me@jongleberry.com>
+           2014-2022 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/safe-buffer/*
+Copyright: Feross Aboukhadijeh
+License: MIT
+
+Files: node-modules/safer-buffer/*
+Copyright: 2018 Nikita Skovoroda <chalkerx@gmail.com>
+License: MIT
+
+Files: node-modules/semver/*
+Copyright: Isaac Z. Schlueter and Contributors
+           notice and this permission notice appear in all copies.
+License: ISC
+
+Files: node-modules/send/*
+Copyright: 2012 TJ Holowaychuk
+           2014-2022 Douglas Christopher Wilson
+License: MIT
+
+Files: node-modules/send/node_modules/ms/*
+Copyright: 2020 Vercel, Inc.
+License: MIT
+
+Files: node-modules/serve-static/*
+Copyright: 2010 Sencha Inc.
+           2011 LearnBoost
+           2011 TJ Holowaychuk
+License: MIT
+
+Files: node-modules/setprototypeof/*
+Copyright: 2015, Wes Todd
+           notice and this permission notice appear in all copies.
+License: ISC
+
+Files: node-modules/sharp/*
+Copyright: 2013 Lovell Fuller and others
+License: Apache-2.0
+
+Files: node-modules/side-channel/*
+Copyright: 2019 Jordan Harband
+License: MIT
+
+Files: node-modules/side-channel-list/*
+Copyright: 2024 Jordan Harband
+License: MIT
+
+Files: node-modules/side-channel-map/*
+Copyright: 2024 Jordan Harband
+License: MIT
+
+Files: node-modules/side-channel-weakmap/*
+Copyright: 2019 Jordan Harband
+License: MIT
+
+Files: node-modules/statuses/*
+Copyright: 2014 Jonathan Ong <me@jongleberry.com>
+           2016 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/toidentifier/*
+Copyright: 2016 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/type-is/*
+Copyright: 2014 Jonathan Ong <me@jongleberry.com>
+           2014-2015 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/unpipe/*
+Copyright: 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
+License: MIT
+
+Files: node-modules/utils-merge/*
+Copyright: 2013-2017 Jared Hanson
+           HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+License: MIT
+
+Files: node-modules/vary/*
+Copyright: 2014-2017 Douglas Christopher Wilson
+License: MIT
+
+License: Apache-2.0
+ Licensed under the Apache License, Version 2.0 (the "License"); you may
+ not use this file except in compliance with the License.
+ .
+ On Debian systems, the complete text of the Apache License, Version 2.0
+ can be found in "/usr/share/common-licenses/Apache-2.0".
+
+License: BSD-3-Clause
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are met:
+ .
+ 1. Redistributions of source code must retain the above copyright notice,
+ this list of conditions and the following disclaimer.
+ .
+ 2. Redistributions in binary form must reproduce the above copyright notice,
+ this list of conditions and the following disclaimer in the documentation
+ and/or other materials provided with the distribution.
+ .
+ 3. Neither the name of the copyright holder nor the names of its
+ contributors may be used to endorse or promote products derived from this
+ software without specific prior written permission.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ POSSIBILITY OF SUCH DAMAGE.
+
+License: ISC
+ Permission to use, copy, modify, and/or distribute this software for any
+ purpose with or without fee is hereby granted, provided that the above
+ copyright notice and this permission notice appear in all copies.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a
+ copy of this software and associated documentation files (the "Software"),
+ to deal in the Software without restriction, including without limitation
+ the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ and/or sell copies of the Software, and to permit persons to whom the
+ Software is furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in
+ all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ DEALINGS IN THE SOFTWARE.
+
+License: TO-BE-DECIDED
+ No license has been chosen. See the comment on "Files: *".

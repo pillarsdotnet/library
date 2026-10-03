@@ -1,3 +1,10 @@
+home-library (5.4.0+git20261003.48582bb-1~ppa1~ubuntu26.04.1) resolute; urgency=medium
+
+  * New upstream snapshot, rebased on main at 8620825 (Docker image
+    build changes only; nothing in the package changes).
+
+ -- Robert August Vincent II (Bob) <pillarsdotnet@gmail.com>  Sat, 03 Oct 2026 00:57:24 -0400
+
 home-library (5.4.0+git20261002.c0846c3-1~ppa2~ubuntu26.04.1) resolute; urgency=medium
 
   * Install the sysusers.d file. Compat 13 does not run

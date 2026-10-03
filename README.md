@@ -249,7 +249,10 @@ Environment variables:
 
 | Variable    | Default              | Purpose                                             |
 |-------------|----------------------|-----------------------------------------------------|
-| `PORT`      | `3000`               | HTTP port                                           |
+| `PORT`      | `3000`               | HTTP port, when neither of the next two applies     |
+| `SOCKET_PATH` | _(none)_           | Listen on this Unix socket instead of `PORT`, for a web server in front; a stale socket file there is removed first |
+| `SOCKET_MODE` | _(umask)_          | Octal mode for that socket, e.g. `660` so the web server's group can connect |
+| `LISTEN_FDS` | _(set by `systemd`)_ | A socket handed over by `systemd` socket activation wins over both; the Debian package runs it this way |
 | `DB_PATH`   | `./data/library.db`  | SQLite file location                                |
 | `BASE_PATH` | `` (root)            | Sub-path to serve under, e.g. `/library`            |
 | `GOOGLE_BOOKS_API_KEY` | _(none)_  | Optional; raises the Google Books lookup quota      |

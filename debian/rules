@@ -76,7 +76,11 @@ override_dh_installsystemd:
 	dh_installsystemd -phome-library --no-enable home-library.service
 	# Failover changes nothing until `home-library-failover enable`, which
 	# enables these; installing the package only makes systemd see them.
-	dh_installsystemd -phome-library-failover --no-enable --no-start \
+	# --no-stop-on-upgrade is load-bearing: with --no-start alone, debhelper
+	# stops the units in preinst on every upgrade and never starts them again,
+	# and stopping home-library-db on the active node runs db-release, which
+	# hands the library to the peer. ~ppa3's upgrade did exactly that.
+	dh_installsystemd -phome-library-failover --no-enable --no-start --no-stop-on-upgrade \
 	  home-library-db.service home-library-vip.service \
 	  home-library-db-sync.service home-library-db-sync.timer
 

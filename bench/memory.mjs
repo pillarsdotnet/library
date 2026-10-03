@@ -1,6 +1,5 @@
-// Compare runtime memory of Docker images under the same workload -- in
-// practice the slim and alpine variants, and slim with its allocator tuned.
-// README.md compares the variants, using its results.
+// Compare runtime memory of Docker images under the same workload -- for
+// instance two releases, or the image with and without its allocator tuned.
 //
 // Usage: node bench/memory.mjs <config> [<config> ...]
 //   where a config is an image, optionally with container environment:

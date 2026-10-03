@@ -35,3 +35,26 @@ Description: catalogue the books in a private library, from any browser
  .
  The package runs the app as a systemd service behind nginx or Apache, which
  reach it over a Unix socket under /library/.
+
+Package: home-library-failover
+Architecture: all
+Depends: curl,
+         home-library (>= ${source:Version}),
+         iproute2,
+         openssh-client,
+         rsync,
+         sqlite3,
+         util-linux,
+         ${misc:Depends},
+Recommends: openssh-server,
+            tailscale,
+Description: hand Home Library between two nodes, one writable at a time
+ Moves the live SQLite database and its cover images between two machines
+ running home-library, so that exactly one of them serves the library and
+ accepts changes. Ownership is recorded with a generation counter, so a
+ stale copy can never overwrite a newer one, and a node whose peer cannot be
+ reached refuses to promote itself unless told to.
+ .
+ The active node advertises a floating address over Tailscale and copies its
+ database to the standby every hour. Nothing changes until
+ `home-library-failover enable` is run; see README.Debian.

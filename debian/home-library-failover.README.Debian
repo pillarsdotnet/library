@@ -1,0 +1,103 @@
+home-library-failover for Debian and Ubuntu
+===========================================
+
+Two nodes run home-library. Exactly one of them -- the active node -- serves
+the library and accepts changes; the other is a standby with a copy. A
+handoff moves the SQLite database and the covers directory together, and
+the active node advertises a floating address over Tailscale.
+
+Installing this package changes nothing. A lone home-library keeps working
+until `home-library-failover enable` is run.
+
+How it works
+------------
+
+  home-library-db.service    at boot, before the app: works out which node
+                             owns the database and pulls it here if this
+                             node is taking over. At shutdown, after the app
+                             has stopped: hands the database to the peer.
+  home-library-vip.service   at boot, after the db unit: starts the app's
+                             socket, waits for /library/healthz, then claims
+                             the floating address. At shutdown: withdraws it.
+  home-library-db-sync.timer hourly: the active node copies its database and
+                             covers to the peer's /var/lib/home-library/standby.
+
+`enable` also installs two drop-ins that make home-library.service and
+home-library.socket conditional on /run/home-library-active, the flag the db
+unit creates only on the node that should serve. A standby therefore never
+starts the app, even if a request reaches its socket.
+
+Which copy counts is recorded in /var/lib/home-library/OWNER as
+"<node> <generation>", identical on both nodes. The generation rises on
+every handoff, and a copy is never written over one a later handoff
+produced. A node whose peer is unreachable keeps serving only if it already
+owns the database; it never promotes itself on a guess.
+
+PREFERRED names the node that reclaims the library when it boots. The other
+node comes up active only if it owns the database already, i.e. the
+preferred node handed over and has not come back.
+
+One-time setup, on BOTH nodes
+-----------------------------
+
+1. Settings. In /etc/default/home-library-failover set PEER to the other
+   node and PREFERRED to the same node on both. VIP must match on both.
+
+2. Keys. Each node has two root-only keys, /root/id_homelibrary (handoffs)
+   and /root/id_homelibrary_sync (hourly copy):
+
+     ssh-keygen -t ed25519 -N '' -f /root/id_homelibrary -C "home-library failover $(hostname -s)"
+     ssh-keygen -t ed25519 -N '' -f /root/id_homelibrary_sync -C "home-library-db-sync@$(hostname -s)"
+
+   and the OTHER node's two public keys go in this node's
+   /root/.ssh/authorized_keys, pinned:
+
+     restrict,command="/usr/sbin/home-library-failover-peer" ssh-ed25519 AAAA... home-library failover <peer>
+     restrict,command="/usr/bin/rrsync -wo /var/lib/home-library/standby" ssh-ed25519 AAAA... home-library-db-sync@<peer>
+
+   sshd must permit root logins by key ("PermitRootLogin prohibit-password").
+
+3. Tailscale. Add the VIP route to autoApprovers in the tailnet policy file;
+   approving it by hand approves it for one node only. Clients that should
+   reach the VIP need `tailscale set --accept-routes`.
+
+4. Web server. Both nodes' sites `include snippets/home-library.conf;` and
+   should answer on the VIP as well as on their own names.
+
+5. Turn it on, on both nodes:
+
+     home-library-failover enable
+
+   Then run `home-library-failover to-local` on the node that should serve
+   now, or reboot the preferred node.
+
+Daily use
+---------
+
+  home-library-failover status      who owns it, and what runs where
+  home-library-failover to-remote   hand the library to the peer now
+  home-library-failover to-local    take it over here now
+
+A planned reboot of the active node hands over by itself. If the active node
+dies without shutting down, the standby will NOT take over on its own. To
+serve the standby's copy -- which may lack the last hour of changes -- run,
+on the standby:
+
+  FORCE=1 home-library-failover to-local
+
+When the other node comes back it sees the higher generation and pulls this
+copy rather than pushing its own.
+
+Before every replacement the receiving node snapshots its database to
+library.db.<UTC time>Z beside it, keeping the newest ten. The hourly copy in
+/var/lib/home-library/standby is a disaster copy: restoring it is a manual
+step.
+
+Turning it off
+--------------
+
+  home-library-failover disable
+
+removes the drop-ins and disables the units, so this node runs home-library
+on its own again. Do it on both nodes, and decide first which one keeps the
+library.

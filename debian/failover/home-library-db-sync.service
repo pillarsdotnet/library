@@ -1,0 +1,9 @@
+[Unit]
+Description=Home Library hourly disaster copy to the failover node
+Documentation=file:/usr/share/doc/home-library-failover/README.Debian
+After=network-online.target tailscaled.service
+ConditionPathExists=/run/home-library-active
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/home-library-db-sync

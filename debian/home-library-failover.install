@@ -1,0 +1,9 @@
+debian/failover/home-library-failover usr/sbin/
+debian/failover/home-library-failover-peer usr/sbin/
+debian/failover/home-library-db-sync usr/sbin/
+debian/failover/home-library-db.service usr/lib/systemd/system/
+debian/failover/home-library-vip.service usr/lib/systemd/system/
+debian/failover/home-library-db-sync.service usr/lib/systemd/system/
+debian/failover/home-library-db-sync.timer usr/lib/systemd/system/
+debian/failover/dropins/home-library.service.d usr/share/home-library-failover/dropins/
+debian/failover/dropins/home-library.socket.d usr/share/home-library-failover/dropins/

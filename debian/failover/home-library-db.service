@@ -1,0 +1,34 @@
+# Moves the SQLite database to whichever node is becoming active. Enabled by
+# `home-library-failover enable`, not by installing the package.
+#
+# Before= the app and the vip unit is load-bearing in BOTH directions:
+#   * at boot it runs first, so the right database is in place before the
+#     app can open it;
+#   * at shutdown it runs LAST, after systemd has stopped the app, so the
+#     database is quiescent and this unit never has to stop the app itself.
+# That is why it is a separate unit. An earlier design stopped the app from
+# its own ExecStop and deadlocked: systemd would not run that stop job until
+# the ExecStop it was waiting on returned.
+[Unit]
+Description=Home Library database handoff
+Documentation=file:/usr/share/doc/home-library-failover/README.Debian
+# tailscaled too: the peer is reached over the tailnet, and being ordered
+# only after network-online.target left it unreachable at boot. The script
+# also retries, because "tailscaled is active" is not "the tailnet is up".
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Before=home-library.service home-library-vip.service
+ConditionPathExists=/etc/default/home-library-failover
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# A handoff copies the whole database over ssh and waits for a health check
+# at the far end. Too short, and shutdown kills it mid-copy.
+TimeoutStartSec=600
+TimeoutStopSec=600
+ExecStart=/usr/sbin/home-library-failover db-claim
+ExecStop=/usr/sbin/home-library-failover db-release
+
+[Install]
+WantedBy=multi-user.target

@@ -72,8 +72,13 @@ override_dh_installchangelogs:
 	dh_installchangelogs CHANGELOG.md
 
 override_dh_installsystemd:
-	dh_installsystemd home-library.socket
-	dh_installsystemd --no-enable home-library.service
+	dh_installsystemd -phome-library home-library.socket
+	dh_installsystemd -phome-library --no-enable home-library.service
+	# Failover changes nothing until `home-library-failover enable`, which
+	# enables these; installing the package only makes systemd see them.
+	dh_installsystemd -phome-library-failover --no-enable --no-start \
+	  home-library-db.service home-library-vip.service \
+	  home-library-db-sync.service home-library-db-sync.timer
 
 execute_after_dh_clean:
 	rm -f node_modules

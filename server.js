@@ -19,10 +19,12 @@ import {
   envCredentials, FIELD_LABELS, FIELD_COMMENTS, ADOPT_COVER,
   importAllowed, importPayload, sendImport,
 } from './openlibrary.js';
+import { listenTarget, describeTarget, listen } from './listen.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 3000;
+// A systemd-passed socket, a Unix socket at SOCKET_PATH, or PORT; see listen.js.
+const LISTEN = listenTarget();
 // Sub-path the whole app is served under, e.g. "/library". Empty = root.
 const BASE = (process.env.BASE_PATH || '').replace(/\/+$/, '');
 
@@ -1452,18 +1454,18 @@ router.post('/api/import/epub', express.raw({ type: () => true, limit: '80mb' })
 
 app.use(BASE || '/', router);
 
-app.listen(PORT, () => {
+listen(app, LISTEN, () => {
   // Due dates are compared against the local civil date, so the timezone is part of
   // the app's behaviour, not just cosmetics. Stating it makes a container running on
   // the default UTC obvious instead of subtly shifting what counts as overdue.
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  console.log(`📚 Home Library on http://localhost:${PORT}${BASE}/`);
+  console.log(`📚 Home Library on ${describeTarget(LISTEN, BASE)}`);
   console.log(`   timezone ${tz}${tz === 'UTC' ? ' (set TZ if that is not intended — due dates use it)' : ''}`);
   // Who can reach this is not a detail to leave implicit in a config file. Say
   // it on every boot, so an install that is open to the world is open on
   // purpose rather than because a variable went missing in a deploy.
   if (!authConfigured()) {
-    console.log('   sign-in OFF — anyone who can reach this port can edit the library');
+    console.log('   sign-in OFF — anyone who can reach this server can edit the library');
     console.log('   (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to require a Google account)');
   } else {
     const n = db.prepare('SELECT (SELECT COUNT(*) FROM libraries) AS libraries, (SELECT COUNT(*) FROM users) AS users').get();

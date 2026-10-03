@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Listening on a Unix socket.** `SOCKET_PATH` serves on a socket file
+  instead of `PORT`, for a web server in front, and `SOCKET_MODE` sets who may
+  connect to it. A socket handed over by `systemd` socket activation
+  (`LISTEN_FDS`) wins over both, which is how the Debian package runs the app:
+  the socket's owner, group and mode are then set in its `.socket` unit. With
+  none of them set the app listens on `PORT` as before, so the Docker image is
+  unchanged. `listen.js` chooses; `test/listen.test.mjs` covers the choice and
+  serves a request over a socket.
 - **Slim or Alpine? in the README.** A measured comparison of the two images:
   size, memory and CPU, with slim under `MALLOC_ARENA_MAX=2` as a third column.
   Alpine is 18% smaller to download and holds 46% less memory after heavy

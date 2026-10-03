@@ -1,0 +1,35 @@
+Source: home-library
+Section: web
+Priority: optional
+Maintainer: Robert August Vincent II (Bob) <pillarsdotnet@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               dh-apache2,
+               libnode-dev (>= 24),
+               libvips-dev (>= 8.18.7),
+               node-gyp,
+               patchelf,
+               nodejs (>= 24),
+               pkgconf,
+               python3,
+               tzdata <!nocheck>,
+Standards-Version: 4.7.3
+Homepage: https://github.com/pillarsdotnet/library
+Vcs-Browser: https://github.com/pillarsdotnet/library
+Vcs-Git: https://github.com/pillarsdotnet/library.git
+Rules-Requires-Root: no
+
+Package: home-library
+Architecture: any
+Depends: nodejs (>= 24),
+         tzdata,
+         ${misc:Depends},
+         ${shlibs:Depends},
+Recommends: nginx | apache2,
+Description: catalogue the books in a private library, from any browser
+ A self-hosted web app for one or more private libraries: scan ISBN barcodes
+ with a phone's camera, fill in titles, authors and covers from Open Library
+ and Google Books, and track which shelf each book is on and how much room
+ every shelf has left. Data lives in SQLite.
+ .
+ The package runs the app as a systemd service behind nginx or Apache, which
+ reach it over a Unix socket under /library/.

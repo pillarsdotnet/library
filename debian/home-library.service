@@ -1,0 +1,51 @@
+[Unit]
+Description=Home Library web app
+Documentation=file:/usr/share/doc/home-library/README.Debian
+Requires=home-library.socket
+After=home-library.socket network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=home-library
+Group=home-library
+ExecStart=/usr/bin/node /usr/lib/home-library/server.js
+WorkingDirectory=/var/lib/home-library
+StateDirectory=home-library
+StateDirectoryMode=0750
+# Defaults for this layout; both files below override them. secret.env is
+# written once by the package and holds the generated SESSION_SECRET;
+# home-library.env is yours.
+Environment=NODE_ENV=production
+Environment=DB_PATH=/var/lib/home-library/library.db
+Environment=BASE_PATH=/library
+Environment=TRUST_PROXY=true
+EnvironmentFile=-/etc/home-library/secret.env
+EnvironmentFile=-/etc/home-library/home-library.env
+Restart=on-failure
+
+# Hardening. Node's JIT needs writable, executable memory, so
+# MemoryDenyWriteExecute stays off.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0027
+
+[Install]
+Also=home-library.socket

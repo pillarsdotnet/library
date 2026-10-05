@@ -1,0 +1,140 @@
+#!/bin/bash
+# Copyright (c) 2026 Robert August Vincent II <pillarsdotnet@gmail.com>
+# Co-author: Claude Code.
+#
+# Build signed source packages of HEAD for every supported Ubuntu series and
+# upload them to the PPA, where Launchpad builds them.
+#
+# Usage: .github/ppa-upload [--dry-run]
+#
+# The upstream version is the package.json version plus the commit's UTC
+# time and hash, so every push sorts above the one before it. The changelog
+# entry lists the commits since the version Launchpad last published; it is
+# written into the build tree only, never committed.
+#
+# The source package has two upstream tarballs:
+#
+#   home-library_<ver>.orig.tar.xz               the repository, without debian/
+#   home-library_<ver>.orig-node-modules.tar.xz  the production node_modules
+#
+# Launchpad's builders have no network, so the modules travel with the source.
+# The tree is what package-lock.json pins, with no install scripts, no
+# development or optional packages, and no prebuilt binaries: debian/rules
+# compiles the two native modules against the system's Node and libvips.
+#
+# Needs the full git history, Node 24 with npm, dpkg-dev, devscripts and dput,
+# and, unless --dry-run, DEBSIGN_KEYID naming a secret key in gpg that
+# Launchpad knows. --dry-run builds the unsigned source packages and uploads
+# nothing. DPUT_TARGET names the dput host to upload to; it defaults to the
+# PPA by FTP.
+set -euo pipefail
+
+SOURCE=home-library
+PPA_OWNER=pillarsdotnet
+PPA_NAME=ppa
+# Not noble: it has Node 18, and the PPA carries Node 24 and libvips 8.18 for
+# the newer series only.
+SERIES="resolute:26.04 stonking:26.10"
+
+dry_run=false
+[ "${1:-}" = --dry-run ] && dry_run=true
+
+repo="$(git rev-parse --show-toplevel)"
+cd "$repo"
+
+sha="$(git rev-parse --short=7 HEAD)"
+stamp="$(TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M%S HEAD)"
+base="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
+upstream="$base+git$stamp.$sha"
+
+# The newest home-library in the PPA, published or still building.
+last="$(curl -fsS "https://api.launchpad.net/1.0/~$PPA_OWNER/+archive/ubuntu/$PPA_NAME?ws.op=getPublishedSources&source_name=$SOURCE&exact_match=true&order_by_date=true" |
+  python3 -c 'import json, sys; e = json.load(sys.stdin)["entries"]; print(e[0]["source_package_version"] if e else "")')"
+last_sha="$(sed -n 's/^.*+git[0-9]*\.\([0-9a-f]\{7,\}\)-.*$/\1/p' <<<"$last")"
+echo "newest in the PPA: ${last:-nothing}; this commit: $upstream" >&2
+
+if [ -n "$last_sha" ] && git cat-file -e "$last_sha^{commit}" 2>/dev/null; then
+  if git merge-base --is-ancestor HEAD "$last_sha"; then
+    echo "$sha is already in the PPA, or older than what is; nothing to upload" >&2
+    exit 0
+  fi
+  range="$last_sha..HEAD"
+else
+  range="HEAD^!"
+fi
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+subjects="$work/subjects"
+git log --no-merges --format=%s "$range" >"$subjects"
+
+# Both tarballs are made reproducibly, stamped with the commit's time.
+tar_xz() {
+  tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$(git show -s --format=%ct HEAD)" \
+    -c "$@" | xz -9 -T0
+}
+
+tree="$work/$SOURCE-$upstream"
+mkdir "$tree"
+git archive HEAD ':!debian' | tar -x -C "$tree"
+tar_xz -C "$work" "$SOURCE-$upstream" >"$work/${SOURCE}_$upstream.orig.tar.xz"
+
+modules="$work/modules"
+mkdir "$modules"
+git archive HEAD package.json package-lock.json | tar -x -C "$modules"
+(cd "$modules" && npm ci --omit=dev --omit=optional --ignore-scripts --no-audit --no-fund >&2)
+mv "$modules/node_modules" "$modules/node-modules"
+# better-sqlite3 ships prebuilt addons for other platforms; none is used.
+find "$modules/node-modules" -type d -name prebuilds -prune -exec rm -rf {} +
+if find "$modules/node-modules" -name '*.node' | grep .; then
+  echo "prebuilt addons left in node-modules" >&2
+  exit 1
+fi
+tar_xz -C "$modules" node-modules >"$work/${SOURCE}_$upstream.orig-node-modules.tar.xz"
+cp -a "$modules/node-modules" "$tree/"
+
+git archive HEAD debian | tar -x -C "$tree"
+cp "$tree/debian/changelog" "$work/changelog.committed"
+
+maintainer="$(sed -n 's/^Maintainer: //p' debian/control)"
+date="$(date -R)"
+failed=""
+
+for entry in $SERIES; do
+  series="${entry%%:*}"
+  version="$upstream-1~ppa1~ubuntu${entry#*:}.1"
+  python3 - "$tree/debian/changelog" "$work/changelog.committed" "$subjects" \
+    "$SOURCE" "$version" "$series" "$sha" "$stamp" "$maintainer" "$date" <<'EOF'
+import sys
+import textwrap
+
+path, committed, subjects, source, version, series, sha, stamp, maintainer, date = sys.argv[1:]
+day = f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}"
+lines = [f"{source} ({version}) {series}; urgency=medium", ""]
+lines.append(f"  * New upstream snapshot, from git {sha} ({day}).")
+for subject in open(subjects).read().splitlines():
+    # Subjects here read as sentences already, some led by the binary package
+    # they touch ("home-library-failover: ..."), so they go in as they are.
+    lines += textwrap.wrap(subject, 74, initial_indent="    - ", subsequent_indent="      ")
+lines += ["", f" -- {maintainer}  {date}", "", ""]
+open(path, "w").write("\n".join(lines) + open(committed).read())
+EOF
+  (cd "$tree" && dpkg-buildpackage -S -sa -d -nc -us -uc >"$work/$version.log" 2>&1) || {
+    cat "$work/$version.log" >&2
+    exit 1
+  }
+  changes="$work/${SOURCE}_${version}_source.changes"
+  if $dry_run; then
+    echo "built $changes (dry run: not signed or uploaded)" >&2
+    head -12 "$tree/debian/changelog" >&2
+    continue
+  fi
+  debsign -k"$DEBSIGN_KEYID" --no-re-sign "$changes"
+  # One series failing to upload should not hold back the others.
+  dput "${DPUT_TARGET:-ppa:$PPA_OWNER/$PPA_NAME}" "$changes" || failed="$failed $series"
+done
+
+if [ -n "$failed" ]; then
+  echo "upload failed for:$failed" >&2
+  exit 1
+fi

@@ -5,6 +5,18 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.4] — 2026-10-18
+
+### Fixed
+
+- **Spine centering holds for every text.** `width: fit-content` still
+  inherited the engine's estimate of how many lines the rotated text needs,
+  and for some texts ("Brigands & Breadknives") that is a whole line more
+  than the breaks produce — the phantom column defeated the centering. After
+  the font settles, each cell's text box is now pinned to its measured ink
+  extent (the union of its line rectangles), which cannot disagree with the
+  actual lines. Runs on cached and freshly fitted spines alike.
+
 ## [5.6.3] — 2026-10-18
 
 ### Fixed

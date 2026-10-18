@@ -21,6 +21,17 @@ const SOURCE_LABELS = { openlibrary: 'Open Library', googlebooks: 'Google Books'
 // A spine with no cover photo, or one whose cover's pixels cannot be read
 // (a cross-origin image without CORS taints the canvas), is drawn grey.
 const SPINE_GREY = '#888888';
+// No spine text smaller than this, ever — calibrated just under the ~3.7px
+// that "Violet Thistlewaite is Not a Villain Anymore" fits at on its real
+// 28mm spine, the smallest a reader called acceptable (a 7mm spine's ~2.3px
+// was not, even at full zoom). A spine whose text cannot fit at this size
+// keeps the size, loses its cellpadding, and is ellipsized instead (down to
+// a bare "…" on a spine too thin for any glyph); the full text stays on the
+// tooltip.
+const MIN_SPINE_FONT = 3.4;
+// Antialiasing bleeds roughly a pixel past the measured ink; fitting flush
+// against the cell let 4px type kiss and cross the edge.
+const INK_MARGIN = 0.75;
 // When this library has no catalogued book of a type to average, fall back to
 // the averages measured over the Bobbalisa library (2026-10-18).
 const FALLBACK_DIMS = {
@@ -536,10 +547,16 @@ function fitSpineText(spine) {
   const fits = (f) => cells.every((cell) => {
     const ink = spineInkRect(cell);
     if (!ink) return true;
-    return (ink.bottom - ink.top) <= cell.clientWidth - 0.3 * f
-      && (ink.right - ink.left) <= cell.clientHeight - 0.3 * f;
+    return (ink.bottom - ink.top) <= cell.clientWidth - 0.3 * f - INK_MARGIN
+      && (ink.right - ink.left) <= cell.clientHeight - 0.3 * f - INK_MARGIN;
   });
-  let lo = 0.5, hi = 14;
+  let lo = MIN_SPINE_FONT, hi = 14;
+  spine.style.fontSize = lo.toFixed(2) + 'px';
+  if (!fits(lo)) {
+    // Below the readable minimum lies nothing worth rendering: keep the
+    // minimum and let polishSpineText ellipsize what cannot fit.
+    return lo;
+  }
   spine.style.fontSize = hi + 'px';
   if (!fits(hi)) {
     for (let i = 0; i < 7; i++) {
@@ -552,7 +569,7 @@ function fitSpineText(spine) {
   }
   // A little below the maximum that fits, so antialiasing and subpixel
   // rounding can never shave the last letter at the cell edge.
-  const final = Math.max(0.5, lo * 0.97);
+  const final = Math.max(MIN_SPINE_FONT, lo * 0.97);
   spine.style.fontSize = final.toFixed(2) + 'px';
   return final;
 }
@@ -564,10 +581,44 @@ function fitSpineText(spine) {
 // computed from the ink's own rectangle — no engine model of vertical text
 // anchoring is involved at all.
 function polishSpineText(spine) {
+  // The readable floor holds at render time too: a cached font is normalised
+  // to the bookcase's scale, so on a smaller viewport it can land below the
+  // minimum — it is clamped up here, and whatever then no longer fits is
+  // ellipsized rather than shrunk.
+  let f = parseFloat(spine.style.fontSize) || MIN_SPINE_FONT;
+  if (f < MIN_SPINE_FONT) {
+    f = MIN_SPINE_FONT;
+    spine.style.fontSize = f.toFixed(2) + 'px';
+  }
   for (const cell of spine.querySelectorAll('.spine-cell')) {
     const text = cell.firstElementChild;
     if (!text.style.width) laySpineTextFlat(cell);
     text.style.transform = '';
+    // The untruncated text, restored first so a re-render can grow back.
+    if (text.dataset.full === undefined) text.dataset.full = text.textContent;
+    else if (text.textContent !== text.dataset.full) text.textContent = text.dataset.full;
+
+    const inside = (pad) => {
+      const ink = spineInkRect(cell);
+      return !ink || ((ink.bottom - ink.top) <= cell.clientWidth - pad - INK_MARGIN
+        && (ink.right - ink.left) <= cell.clientHeight - pad - INK_MARGIN);
+    };
+    if (!inside(0.3 * f)) {
+      // Too much text for this spine at the readable minimum: give up the
+      // cellpadding, then the tail of the text — longest prefix that fits
+      // with an ellipsis, found against real layout. The tooltip keeps the
+      // whole of it.
+      const full = text.dataset.full;
+      let lo = 0, hi = full.length;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        text.textContent = full.slice(0, mid).trimEnd() + '…';
+        if (inside(0)) lo = mid; else hi = mid - 1;
+      }
+      text.textContent = lo > 0 ? full.slice(0, lo).trimEnd() + '…' : '…';
+      if (lo === 0 && !inside(0)) text.textContent = '';
+    }
+
     const ink = spineInkRect(cell);
     if (!ink) continue;
     const x = cell.clientWidth / 2 + (ink.top + ink.bottom) / 2;

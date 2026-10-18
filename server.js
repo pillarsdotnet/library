@@ -113,6 +113,10 @@ router.use(express.static(join(__dirname, 'public'), { index: false }));
 router.use('/vendor/html5-qrcode', express.static(join(__dirname, 'node_modules/html5-qrcode')));
 router.use('/vendor/quagga', express.static(join(__dirname, 'node_modules/@ericblade/quagga2/dist')));
 router.use('/vendor/cropper', express.static(join(__dirname, 'node_modules/cropperjs/dist')));
+// The spine font. Bundled and pinned so the visual shelf view measures and
+// draws the SAME glyphs on every device — system-ui differs between a phone
+// and a laptop, and with it every fitted size, wrap and truncation.
+router.use('/vendor/fonts/roboto-condensed', express.static(join(__dirname, 'node_modules/@fontsource/roboto-condensed/files')));
 
 const DEFAULT_THICKNESS_MM = 30; // fallback when estimating remaining shelf capacity
 const DEFAULT_PAGE = 20;         // books per page unless the client asks otherwise

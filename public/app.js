@@ -536,21 +536,25 @@ function spineInkRect(cell) {
   return { left: left - c.left, right: right - c.left, top: top - c.top, bottom: bottom - c.top };
 }
 
-// The text lies horizontally in a box as wide as the cell is TALL (so lines
-// wrap along the spine's run), unrotated and untransformed while measuring.
-function laySpineTextFlat(cell) {
+// The text lies horizontally in a box spanning the cell's HEIGHT (so lines
+// wrap along the spine's run) minus the padding in force, unrotated and
+// untransformed while measuring. The box must be exactly the length the fit
+// allows: wider, and a line can lay out just past the limit WITHOUT wrapping
+// — failing a fit that a wrap would have passed, and ellipsizing text that
+// fit fine ("The curse of the House of Foskett", by 0.1px).
+function laySpineTextFlat(cell, pad) {
   const text = cell.firstElementChild;
   text.style.transform = '';
-  text.style.width = cell.clientHeight + 'px';
+  text.style.width = Math.max(4, cell.clientHeight - pad - INK_MARGIN).toFixed(2) + 'px';
 }
 
 function fitSpineText(spine) {
   const cells = [...spine.querySelectorAll('.spine-cell')];
   if (!cells.length) return null;
-  for (const cell of cells) laySpineTextFlat(cell);
   // Strict: the measured ink, once rotated, must clear the cell by the
   // 0.15em-per-side cellpadding the candidate font implies, both ways.
   const fits = (f) => cells.every((cell) => {
+    laySpineTextFlat(cell, 0.3 * f);
     const ink = spineInkRect(cell);
     if (!ink) return true;
     return (ink.bottom - ink.top) <= cell.clientWidth - 0.3 * f - INK_MARGIN
@@ -597,13 +601,13 @@ function polishSpineText(spine) {
   }
   const cells = [...spine.querySelectorAll('.spine-cell')];
   const inside = (cell, pad) => {
+    laySpineTextFlat(cell, pad);
     const ink = spineInkRect(cell);
     return !ink || ((ink.bottom - ink.top) <= cell.clientWidth - pad - INK_MARGIN
       && (ink.right - ink.left) <= cell.clientHeight - pad - INK_MARGIN);
   };
   for (const cell of cells) {
     const text = cell.firstElementChild;
-    if (!text.style.width) laySpineTextFlat(cell);
     text.style.transform = '';
     // The untruncated text, restored first so a re-render can grow back.
     if (text.dataset.full === undefined) text.dataset.full = text.textContent;

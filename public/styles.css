@@ -611,6 +611,11 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
    the fitting pass rather than by CSS padding; only the cell clips. */
 .spine-text {
   font-family: Spine, "Roboto Condensed", system-ui, sans-serif;
+  /* Wrapped lines break as near the middle of the text as the words allow
+     ("The curse of the / House of Foskett"), not greedily ("…of the House
+     of / Foskett"). The fitter measures rendered lines, so balanced layout
+     flows straight through it. */
+  text-wrap: balance;
   position: absolute;
   top: 0;
   left: 0;

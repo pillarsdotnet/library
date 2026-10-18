@@ -512,6 +512,7 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
 .viz-toggle { margin-left: 8px; }
 .bookcase-visual-wrap { overflow-x: auto; margin: 0 0 16px; }
 .bookcase-visual {
+  position: relative;  /* the shelf labels are positioned into its gaps */
   display: grid;
   width: max-content;
   border-radius: 6px;
@@ -534,23 +535,22 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
 }
 /* A coordinate with no shelf behind it (a gap in the grid): bare bookcase. */
 .viz-cell.viz-void { background: transparent; box-shadow: none; }
-.viz-tag {
+/* The shelf's label, set into the cellspacing below its cell — the strip of
+   bare bookcase between rows — where no book can ever stand. Its size comes
+   inline from the strip's height, so it always fits; its ink color contrasts
+   with the bookcase's own. */
+.viz-label {
   position: absolute;
-  top: 2px;
-  /* Top-right: books pack from the left, so this is the corner a shelf fills
-     last — the chip stops sitting on the first books' heads. */
-  right: 4px;
-  max-width: calc(100% - 8px);
-  overflow: hidden;
-  padding: 0 4px;
-  border-radius: 4px;
-  font-size: 10px;
-  line-height: 1.5;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: center;
   white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--muted);
-  background: var(--surface);
-  opacity: 0.85;
+  opacity: 0.9;
   cursor: pointer;
 }
 .spine {

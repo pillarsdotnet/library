@@ -439,13 +439,17 @@ function renderSpine(b, scale) {
     cell.appendChild(inner);
     return cell;
   };
-  const title = cellOf('spine-title', b.title || '');
+  // Spines drop a leading article — "Hobbit", not "The Hobbit" — the way
+  // sorting already does: the article spends scarce millimetres saying
+  // nothing. The tooltip keeps the full title.
+  const spineTitle = String(b.title || '').replace(/^(a|an|the)\s+/i, '') || String(b.title || '');
+  const title = cellOf('spine-title', spineTitle);
   spine.appendChild(title);
   let share = 1;
   if (b.authors) {
     const author = cellOf('spine-author', b.authors);
     share = cachedSplit && cachedSplit < 1 ? cachedSplit : Math.min(0.88, Math.max(0.12,
-      (b.title || '').length / (((b.title || '').length + b.authors.length) || 1)));
+      spineTitle.length / ((spineTitle.length + b.authors.length) || 1)));
     title.style.flex = `0 1 ${(share * 100).toFixed(1)}%`;
     author.style.flex = `0 1 ${((1 - share) * 100).toFixed(1)}%`;
     spine.appendChild(author);

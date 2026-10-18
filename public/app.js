@@ -457,50 +457,108 @@ function renderSpine(b, scale) {
 // each BOOK fits independently — a neighbour with less text may well be
 // larger. Binary search against real layout, because wrapped, rotated text
 // defies arithmetic. Needs the spine in the document.
+let spineMeasureCtx = null;
+
+// The TRUE ink rectangle of a cell's rotated text, in viewport coordinates.
+//
+// Neither the element box nor the line boxes can be trusted for this: the
+// box's automatic width is an engine estimate (sometimes a phantom line
+// wide); the line boxes reserve a full ascent and descender allowance
+// whether or not any glyph uses them; and at line-height 1.1 the font's
+// bounding box (≈1.17em for the system fonts) is TALLER than the line box —
+// negative leading — so ascender ink protrudes past the line box, and past
+// any clip aligned to it. Instead, each rendered line is read back from
+// layout (characters sharing a line share its column, so a jump in column
+// position is a line break), its baseline located from the line box, and
+// its real ink taken from canvas TextMetrics, which measures glyphs.
+function spineInkRect(text) {
+  const node = text.firstChild;
+  const s = node && node.nodeType === Node.TEXT_NODE ? node.textContent : '';
+  if (!s) return null;
+  const range = document.createRange();
+  const lines = [];
+  let cur = null;
+  for (let i = 0; i < s.length; i++) {
+    range.setStart(node, i);
+    range.setEnd(node, i + 1);
+    const r = range.getClientRects()[0];
+    if (!r || (r.width === 0 && r.height === 0)) { if (cur) cur.str += s[i]; continue; }
+    if (!cur || Math.abs(r.right - cur.right) > 1) {
+      cur = { str: '', right: r.right, top: r.top, bottom: r.bottom };
+      lines.push(cur);
+    }
+    cur.str += s[i];
+    cur.top = Math.min(cur.top, r.top);
+    cur.bottom = Math.max(cur.bottom, r.bottom);
+  }
+  if (!lines.length) return null;
+
+  if (!spineMeasureCtx) spineMeasureCtx = document.createElement('canvas').getContext('2d');
+  const cs = getComputedStyle(text);
+  spineMeasureCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const lineH = 1.1 * parseFloat(cs.fontSize);
+  let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+  for (const line of lines) {
+    const m = spineMeasureCtx.measureText(line.str.trim());
+    // In vertical-rl the line's over edge is its right; the baseline sits a
+    // (possibly negative) half-leading plus the font ascent in from it, and
+    // the glyphs' real ink extends actualAscent rightward and actualDescent
+    // leftward of that baseline.
+    const halfLead = (lineH - (m.fontBoundingBoxAscent + m.fontBoundingBoxDescent)) / 2;
+    const baseline = line.right - halfLead - m.fontBoundingBoxAscent;
+    right = Math.max(right, baseline + m.actualBoundingBoxAscent);
+    left = Math.min(left, baseline - m.actualBoundingBoxDescent);
+    top = Math.min(top, line.top);
+    bottom = Math.max(bottom, line.bottom);
+  }
+  return { left, right, top, bottom, width: right - left, height: bottom - top };
+}
+
 function fitSpineText(spine) {
   const cells = [...spine.querySelectorAll('.spine-cell')];
   if (!cells.length) return null;
-  // The text sits centered in its cell behind 0.15em of cellpadding per side,
-  // which scales with the very font being probed — hence fits() takes the
-  // candidate size and subtracts the padding it implies. Width overflow shows
-  // on the inner text's box (it never shrinks); height overflow shows as the
-  // clamped inner box scrolling.
+  // Strict: the measured ink must clear the cell by the 0.15em-per-side
+  // cellpadding the candidate font implies, in both directions.
   const fits = (f) => cells.every((cell) => {
-    const text = cell.firstElementChild;
-    return text.getBoundingClientRect().width <= cell.getBoundingClientRect().width - 0.3 * f + 1
-      && text.scrollHeight <= text.clientHeight + 1;
+    const ink = spineInkRect(cell.firstElementChild);
+    if (!ink) return true;
+    const c = cell.getBoundingClientRect();
+    return ink.width <= c.width - 0.3 * f && ink.height <= c.height - 0.3 * f;
   });
   let lo = 0.5, hi = 14;
   spine.style.fontSize = hi + 'px';
-  if (fits(hi)) return hi;
-  for (let i = 0; i < 7; i++) {
-    const mid = (lo + hi) / 2;
-    spine.style.fontSize = mid.toFixed(2) + 'px';
-    if (fits(mid)) lo = mid; else hi = mid;
+  if (!fits(hi)) {
+    for (let i = 0; i < 7; i++) {
+      const mid = (lo + hi) / 2;
+      spine.style.fontSize = mid.toFixed(2) + 'px';
+      if (fits(mid)) lo = mid; else hi = mid;
+    }
+  } else {
+    lo = hi;
   }
-  spine.style.fontSize = lo.toFixed(2) + 'px';
-  return lo;
+  // A little below the maximum that fits, so antialiasing and subpixel
+  // rounding can never shave the last letter at the cell edge.
+  const final = Math.max(0.5, lo * 0.97);
+  spine.style.fontSize = final.toFixed(2) + 'px';
+  return final;
 }
 
-// Pin each cell's text box to the lines it actually holds. The automatic
-// width of a rotated (orthogonal-flow) box is an engine estimate, and for
-// some texts it comes out a whole line wider than the breaks produce; the
-// line stack then clings to the box's right edge (vertical-rl's line-start)
-// with the phantom column on the left, defeating the centering. The real ink
-// extent is measurable through a Range, so once the font has settled the box
-// is set to exactly that. Line breaking depends on the box's height, not its
-// width, so the lines are unchanged.
-function tightenSpineText(spine) {
+// After the font settles (cached or freshly fitted), slide the text so that
+// its measured INK — not its box, not its line boxes with their unused
+// allowances — sits dead centre in the cell, both across the spine and along
+// it. The fit above guarantees the ink clears the cell, so the centred ink
+// never meets the cell's clip.
+function polishSpineText(spine) {
   for (const cell of spine.querySelectorAll('.spine-cell')) {
     const text = cell.firstElementChild;
-    text.style.width = '';
-    const range = document.createRange();
-    range.selectNodeContents(text);
-    const rects = [...range.getClientRects()];
-    if (!rects.length) continue;
-    const ink = Math.max(...rects.map((r) => r.right)) - Math.min(...rects.map((r) => r.left));
-    if (ink > 0 && ink < text.getBoundingClientRect().width - 0.5) {
-      text.style.width = Math.ceil(ink) + 'px';
+    text.style.transform = '';
+    const ink = spineInkRect(text);
+    if (!ink) continue;
+    const c = cell.getBoundingClientRect();
+    const dx = (c.left + c.right) / 2 - (ink.left + ink.right) / 2;
+    const dy = (c.top + c.bottom) / 2 - (ink.top + ink.bottom) / 2;
+    if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) {
+      text.style.transform = `translate(${dx.toFixed(2)}px, ${dy.toFixed(2)}px)`;
     }
   }
 }
@@ -593,7 +651,7 @@ async function renderBookcaseVisual(el, shelves) {
         const font = fitSpineText(s);
         if (font) newFonts[s.dataset.id] = { font: +(font / scale).toFixed(3), split: +s.dataset.split };
       }
-      tightenSpineText(s);
+      polishSpineText(s);
     }
   };
 

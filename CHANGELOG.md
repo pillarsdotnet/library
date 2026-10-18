@@ -5,6 +5,27 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.8] — 2026-10-18
+
+### Changed
+
+- **A readable floor for spine text: 3.4px, then ellipsis.** Calibrated just
+  under the ~3.7px that the smallest spine a reader accepted fits at; a 7mm
+  spine's ~2.3px smear was unreadable at any zoom. A spine whose text cannot
+  fit at the floor keeps the floor, gives up its cellpadding, and is
+  ellipsized along the spine instead — longest prefix that fits, found
+  against real layout, down to a bare "…" on a spine too thin for any glyph
+  — with the full text still in the tooltip. The floor also holds at render
+  time, so a cached font scaled down by a smaller viewport clamps up and
+  truncates rather than shrinking below it.
+
+### Fixed
+
+- **Hairline overflow at the cell edge on thin spines.** Antialiasing bleeds
+  about a pixel past the measured ink, which let ~4px type ("Mystekos
+  Spring"'s author) kiss and cross the cell's right edge; the fit now keeps
+  a 0.75px margin on every side.
+
 ## [5.6.7] — 2026-10-18
 
 ### Changed

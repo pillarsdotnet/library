@@ -5,6 +5,21 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.12] — 2026-10-18
+
+### Fixed
+
+- **Cross-device spine caching with absolute floors.** The readable font
+  floor and the minimum spine width are absolute pixels, which quietly broke
+  the cache's assumption that a fitted size scales with the view: a size
+  fitted on the phone could wrap and overflow on the laptop ("Violet
+  Thistlewaite…" wrapped and needlessly ellipsized; "Mystekos Fall/Winter"
+  ellipsized on one device, whole on the other). Now a fit that lands on the
+  floor is never cached (it refits per view, cheaply), and a cached size
+  that fails on the current device is refitted locally before anything is
+  ellipsized — truncation is the last resort, after refitting, after the
+  cellpadding has already been given up.
+
 ## [5.6.11] — 2026-10-18
 
 ### Changed

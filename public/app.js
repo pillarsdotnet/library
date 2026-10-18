@@ -589,27 +589,37 @@ function fitSpineText(spine) {
 function polishSpineText(spine) {
   // The readable floor holds at render time too: a cached font is normalised
   // to the bookcase's scale, so on a smaller viewport it can land below the
-  // minimum — it is clamped up here, and whatever then no longer fits is
-  // ellipsized rather than shrunk.
+  // minimum — it is clamped up here.
   let f = parseFloat(spine.style.fontSize) || MIN_SPINE_FONT;
   if (f < MIN_SPINE_FONT) {
     f = MIN_SPINE_FONT;
     spine.style.fontSize = f.toFixed(2) + 'px';
   }
-  for (const cell of spine.querySelectorAll('.spine-cell')) {
+  const cells = [...spine.querySelectorAll('.spine-cell')];
+  const inside = (cell, pad) => {
+    const ink = spineInkRect(cell);
+    return !ink || ((ink.bottom - ink.top) <= cell.clientWidth - pad - INK_MARGIN
+      && (ink.right - ink.left) <= cell.clientHeight - pad - INK_MARGIN);
+  };
+  for (const cell of cells) {
     const text = cell.firstElementChild;
     if (!text.style.width) laySpineTextFlat(cell);
     text.style.transform = '';
     // The untruncated text, restored first so a re-render can grow back.
     if (text.dataset.full === undefined) text.dataset.full = text.textContent;
     else if (text.textContent !== text.dataset.full) text.textContent = text.dataset.full;
-
-    const inside = (pad) => {
-      const ink = spineInkRect(cell);
-      return !ink || ((ink.bottom - ink.top) <= cell.clientWidth - pad - INK_MARGIN
-        && (ink.right - ink.left) <= cell.clientHeight - pad - INK_MARGIN);
-    };
-    if (!inside(0.3 * f)) {
+  }
+  // A cached size that does not fit HERE is refitted here before anything is
+  // ellipsized: the readable floor and the minimum spine width are absolute
+  // pixels, which break the scale-proportionality the cache relies on — a
+  // size fitted on the phone can wrap and overflow on the laptop, and vice
+  // versa. The refit finds this device's own largest fitting size.
+  if (!cells.every((cell) => inside(cell, 0.3 * f))) {
+    f = fitSpineText(spine) ?? f;
+  }
+  for (const cell of cells) {
+    const text = cell.firstElementChild;
+    if (!inside(cell, 0.3 * f)) {
       // Too much text for this spine at the readable minimum: give up the
       // cellpadding, then the tail of the text — longest prefix that fits
       // with an ellipsis, found against real layout. The tooltip keeps the
@@ -619,13 +629,13 @@ function polishSpineText(spine) {
       while (lo < hi) {
         const mid = Math.ceil((lo + hi) / 2);
         text.textContent = full.slice(0, mid).trimEnd() + '…';
-        if (inside(0)) lo = mid; else hi = mid - 1;
+        if (inside(cell, 0)) lo = mid; else hi = mid - 1;
       }
       // The whole string surviving the search means only the cellpadding had
       // to give way — no ellipsis for text that is all there.
       text.textContent = lo >= full.length ? full
         : lo > 0 ? full.slice(0, lo).trimEnd() + '…' : '…';
-      if (lo === 0 && !inside(0)) text.textContent = '';
+      if (lo === 0 && !inside(cell, 0)) text.textContent = '';
     }
 
     const ink = spineInkRect(cell);
@@ -754,7 +764,12 @@ async function renderBookcaseVisual(el, shelves) {
     for (const s of root.querySelectorAll('.spine')) {
       if (s.dataset.fit !== 'cached') {
         const font = fitSpineText(s);
-        if (font) newFonts[s.dataset.id] = { font: +(font / scale).toFixed(3), split: +s.dataset.split };
+        // A fit that landed ON the readable floor is an absolute-pixel
+        // outcome, not a proportional one — cached and rescaled it poisons
+        // other viewports, so those stay device-local and refit each view.
+        if (font && font > MIN_SPINE_FONT + 0.01) {
+          newFonts[s.dataset.id] = { font: +(font / scale).toFixed(3), split: +s.dataset.split };
+        }
       }
       polishSpineText(s);
     }

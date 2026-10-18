@@ -222,10 +222,10 @@ function renderShelves() {
   const cmp = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
   for (const room of [...byRoom.keys()].sort(cmp)) {
     const cases = byRoom.get(room);
-    const shelfTotal = [...cases.values()].reduce((n, arr) => n + arr.length, 0);
+    const caseTotal = cases.size;
     const roomEl = document.createElement('section');
     roomEl.className = 'room-group';
-    roomEl.innerHTML = `<h2 class="room-heading">${esc(room)} <span class="group-count">${shelfTotal} ${shelfTotal === 1 ? 'shelf' : 'shelves'}</span></h2>`;
+    roomEl.innerHTML = `<h2 class="room-heading">${esc(room)} <span class="group-count">${caseTotal} bookcase${caseTotal === 1 ? '' : 's'}</span></h2>`;
 
     for (const bookcase of [...cases.keys()].sort(cmp)) {
       const shelves = cases.get(bookcase).sort((a, b) => cmp(a.label, b.label));

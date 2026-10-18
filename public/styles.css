@@ -585,18 +585,18 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
 .spine-text {
   writing-mode: vertical-rl;
   line-height: 1.1;
-  overflow: hidden;
   /* Wrap on spaces only — never inside a word. A word too long for the cell
      at some size doesn't break; it fails the fit and the font shrinks until
-     the whole word fits on one line. */
+     the whole word fits on one line.
+
+     No overflow:hidden and no width pinning here: at this line-height the
+     font's bounding box is taller than the line box (negative leading), so
+     glyph ink legitimately protrudes past the box's own edges, and a clip on
+     the box shaves ascenders. polishSpineText() centres the measured ink in
+     the cell with a transform; only the CELL clips, and the fitting pass
+     keeps the ink inside the cellpadding. */
   flex: 0 0 auto;
   max-height: 100%;
-  /* The box hugs its stack of lines exactly. An orthogonal-flow box left at
-     width:auto can come out wider than its lines; the lines then cling to its
-     right edge (the line-start edge of vertical-rl) and all the slack piles
-     up on the left, which read as zero cellpadding on one side. With the box
-     tight, the cell's flex centering alone places it, symmetrically. */
-  width: fit-content;
 }
 
 /* ---------- Bookcase color picker ---------- */

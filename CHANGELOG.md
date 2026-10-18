@@ -5,6 +5,20 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.11] — 2026-10-18
+
+### Changed
+
+- **Thin spines render wide enough to speak.** A spine never draws narrower
+  than one line of floor-size type plus its margins (5px): a 10mm paperback
+  at phone scale — or, one day, a magazine — widens past its true scale
+  rather than collapsing to a bare ellipsis, and each shelf cell widens to
+  the sum of its rendered spines, so a full shelf still contains everything
+  it physically holds. The cellpadding already yields before any text does;
+  and text that survives whole is no longer suffixed with a spurious
+  ellipsis, which the truncation pass used to append even when nothing had
+  been dropped.
+
 ## [5.6.10] — 2026-10-18
 
 ### Changed

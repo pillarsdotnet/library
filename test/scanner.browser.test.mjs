@@ -920,8 +920,12 @@ test('Shelves tab nests shelves by room → bookcase → shelf, each sorted', { 
   assert.deepEqual(aRoom.bookcases.map((b) => b.bookcase), ['Birch', 'Oak'], 'bookcases sorted within room');
   assert.deepEqual(aRoom.bookcases.find((b) => b.bookcase === 'Oak').shelves, ['1L', '2L'], 'shelves sorted within bookcase');
 
-  // "shelf" pluralises to "shelves", never "shelfves".
-  assert.match(aRoom.count, /^3 shelves$/, 'room count');
+  // The room heading counts the bookcases it groups by; shelf counts live on
+  // each bookcase's own heading. "shelf" pluralises to "shelves", never
+  // "shelfves".
+  assert.match(aRoom.count, /^2 bookcases$/, 'room counts its bookcases');
+  const zRoom = tree.find((r) => r.room === `Zroom${stamp}`);
+  assert.match(zRoom.count, /^1 bookcase$/, 'singular room bookcase count');
   assert.match(aRoom.bookcases.find((b) => b.bookcase === 'Oak').count, /^2 shelves\b/, 'plural bookcase count');
   assert.match(aRoom.bookcases.find((b) => b.bookcase === 'Birch').count, /^1 shelf\b/, 'singular bookcase count');
   const headings = await page.$$eval('.group-count', (els) => els.map((e) => e.textContent));

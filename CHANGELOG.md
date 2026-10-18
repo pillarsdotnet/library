@@ -19,6 +19,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the Foskett title now renders whole on the phone at 4.26px, and the whole
   regression set shows zero truncations on either viewport.
 
+### Changed
+
+- **Wrapped spine text breaks near the centre.** Two-line titles and authors
+  balance their lines ("The curse of the / House of Foskett") instead of
+  packing the first line full and leaving a stub — `text-wrap: balance`,
+  which the fitter's layout-based measurement picks up for free. (Shipped in
+  this release's commit; noted here after the fact.)
+
 ## [5.6.12] — 2026-10-18
 
 ### Fixed

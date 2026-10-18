@@ -482,6 +482,29 @@ function fitSpineText(spine) {
   return lo;
 }
 
+// Pin each cell's text box to the lines it actually holds. The automatic
+// width of a rotated (orthogonal-flow) box is an engine estimate, and for
+// some texts it comes out a whole line wider than the breaks produce; the
+// line stack then clings to the box's right edge (vertical-rl's line-start)
+// with the phantom column on the left, defeating the centering. The real ink
+// extent is measurable through a Range, so once the font has settled the box
+// is set to exactly that. Line breaking depends on the box's height, not its
+// width, so the lines are unchanged.
+function tightenSpineText(spine) {
+  for (const cell of spine.querySelectorAll('.spine-cell')) {
+    const text = cell.firstElementChild;
+    text.style.width = '';
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const rects = [...range.getClientRects()];
+    if (!rects.length) continue;
+    const ink = Math.max(...rects.map((r) => r.right)) - Math.min(...rects.map((r) => r.left));
+    if (ink > 0 && ink < text.getBoundingClientRect().width - 0.5) {
+      text.style.width = Math.ceil(ink) + 'px';
+    }
+  }
+}
+
 async function renderBookcaseVisual(el, shelves) {
   const ids = new Set(shelves.map((s) => s.id));
   const { room, bookcase } = shelves[0];
@@ -566,9 +589,11 @@ async function renderBookcaseVisual(el, shelves) {
   const newFonts = {};
   const fitFresh = (root) => {
     for (const s of root.querySelectorAll('.spine')) {
-      if (s.dataset.fit === 'cached') continue;
-      const font = fitSpineText(s);
-      if (font) newFonts[s.dataset.id] = { font: +(font / scale).toFixed(3), split: +s.dataset.split };
+      if (s.dataset.fit !== 'cached') {
+        const font = fitSpineText(s);
+        if (font) newFonts[s.dataset.id] = { font: +(font / scale).toFixed(3), split: +s.dataset.split };
+      }
+      tightenSpineText(s);
     }
   };
 

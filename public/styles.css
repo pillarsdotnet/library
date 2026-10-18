@@ -523,9 +523,11 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
   position: relative;
   display: flex;
   align-items: flex-end;
-  gap: 1px;
+  /* No gap and no side padding: a spine's width is the book's real thickness
+     at scale, so any extra pixel per book overflows a shelf that is in fact
+     exactly full. The spines' inset edge shading keeps them distinguishable. */
   overflow: hidden;
-  padding: 2px 2px 0;
+  padding: 2px 0 0;
   border-radius: 2px;
   background: var(--bg);
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.3);
@@ -561,20 +563,34 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
   cursor: pointer;
   box-shadow: inset -1px 0 rgba(0, 0, 0, 0.3), inset 1px 0 rgba(255, 255, 255, 0.12);
 }
-/* A spine is a two-celled mini-table: title above, author below. The text is
-   rotated 90° clockwise (reads top-to-bottom), shown in full — wrapped onto
-   further lines and shrunk by fitSpineText() rather than ever truncated. */
+/* A spine is a two-celled mini-table: title above, author below, no visible
+   boundary between them. The text is rotated 90° clockwise (reads
+   top-to-bottom), shown in full — wrapped onto further lines and shrunk by
+   fitSpineText() rather than ever truncated — and centered both across the
+   spine's width and along the cell. The cellpadding is in em so it scales
+   with the fitted font and always at least matches the 0.1em of blank space
+   that line-height 1.1 leaves between wrapped lines; fitSpineText() accounts
+   for it when probing. */
 .spine-cell {
-  writing-mode: vertical-rl;
-  line-height: 1.1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   overflow: hidden;
-  overflow-wrap: break-word;
+  padding: 0.15em;
   text-align: center;
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
 }
-.spine-author {
-  border-top: 1px solid rgba(128, 128, 128, 0.45);
+.spine-text {
+  writing-mode: vertical-rl;
+  line-height: 1.1;
+  overflow: hidden;
+  /* Wrap on spaces only — never inside a word. A word too long for the cell
+     at some size doesn't break; it fails the fit and the font shrinks until
+     the whole word fits on one line. */
+  flex: 0 0 auto;
+  max-height: 100%;
 }
 
 /* ---------- Bookcase color picker ---------- */

@@ -5,6 +5,24 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.1] — 2026-10-18
+
+### Changed
+
+- **Spine typography polish.** Titles and authors are centered across the
+  spine's width (and along their cell); each cell carries 0.15em of padding —
+  scaling with the fitted font, so always at least the 0.1em of blank space
+  line-height 1.1 leaves between wrapped lines — and the visible boundary
+  between the title and author cells is gone. Text wraps on spaces only: a
+  word too long for the cell shrinks the font until it fits on one line,
+  rather than breaking mid-word ("Thistlefo/ot"). The fitting pass accounts
+  for the padding; existing cached spine typography is cleared by hand on the
+  live database so every spine is refitted under the new geometry.
+- **Full shelves no longer overflow their cell.** Spines sit flush — the 1px
+  gap and side padding that added phantom width per book are gone, and spine
+  widths keep their fractional pixels instead of rounding, so a shelf drawn
+  with exactly the books it really holds fits exactly.
+
 ## [5.6.0] — 2026-10-18
 
 ### Changed

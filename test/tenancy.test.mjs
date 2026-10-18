@@ -175,7 +175,7 @@ test('lists show only your own library', async () => {
   assert.ok(genres.length > 10, 'its own stock genres');
   assert.ok(!genres.some((g) => g.name === 'Alpha Only Genre'), 'none of the other library\'s');
   const meta = (await B.get('/api/meta')).data;
-  assert.deepEqual(meta, { rooms: [], bookcases: [], count: 0, unshelved: 0 });
+  assert.deepEqual(meta, { rooms: [], bookcases: [], count: 0, unshelved: 0, avg_dims: {} });
   const suggest = (await B.post('/api/suggest-shelf', { thickness_mm: 20 })).data;
   assert.deepEqual([...suggest.suggestions, ...suggest.rejected], [], 'no shelves to suggest');
   // The filters cannot reach across either.

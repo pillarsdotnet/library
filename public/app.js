@@ -17,6 +17,17 @@ const STATUS_LABELS = { tbr: 'To be read', reading: 'Reading', read: 'Read', loa
 const FORMAT_LABELS = { paperback: 'Paperback', hardback: 'Hardback', ebook: 'E-book', audiobook: 'Audiobook', other: 'Other' };
 const SOURCE_LABELS = { openlibrary: 'Open Library', googlebooks: 'Google Books', barnesnoble: 'Barnes & Noble', bookofthemonth: 'Book of the Month', epub: 'EPUB file', kindle: 'Kindle', manual: 'Manual' };
 
+// --- Bookcase visual view ---
+// A spine with no cover photo, or one whose cover's pixels cannot be read
+// (a cross-origin image without CORS taints the canvas), is drawn grey.
+const SPINE_GREY = '#888888';
+// When this library has no catalogued book of a type to average, fall back to
+// the averages measured over the Bobbalisa library (2026-10-18).
+const FALLBACK_DIMS = {
+  hardback: { height_mm: 236, width_mm: 160, thickness_mm: 31 },
+  softcover: { height_mm: 213, width_mm: 138, thickness_mm: 23 },
+};
+
 // --- Units. Everything is stored in mm; the toggle only affects display/input. ---
 const MM_PER_IN = 25.4;
 const DIM_FIELDS = ['height_mm', 'width_mm', 'thickness_mm', 'depth_mm'];
@@ -61,6 +72,9 @@ document.querySelectorAll('.tab').forEach((tab) => {
     $('#tab-books').hidden = which !== 'books';
     $('#tab-shelves').hidden = which !== 'shelves';
     $('#tab-genres').hidden = which !== 'genres';
+    // Visual bookcases scale themselves to the panel's width, which is 0 while
+    // the panel is hidden — so they are drawn on arrival, not at load.
+    if (which === 'shelves') renderShelves();
     $('#addBtn').textContent = ADD_BY_TAB[which].label;
     $('#addBtn').onclick = ADD_BY_TAB[which].fn;
   });
@@ -207,12 +221,28 @@ function renderShelves() {
       const caseEl = document.createElement('div');
       caseEl.className = 'bookcase-group';
       const books = shelves.reduce((n, s) => n + (s.book_count || 0), 0);
-      caseEl.innerHTML = `<h3 class="bookcase-heading"><a href="#" class="bookcase-link" title="Rename or move this bookcase">${esc(bookcase)}</a> <span class="group-count">${shelves.length} ${shelves.length === 1 ? 'shelf' : 'shelves'} · ${books} book${books === 1 ? '' : 's'}</span></h3>`;
+      // The visual view needs cells to place shelves, and a visible panel to
+      // measure itself against.
+      const vizKey = `${room}|${bookcase}`;
+      const canViz = shelves.some((s) => s.cell) && !$('#tab-shelves').hidden;
+      const viz = canViz && vizPref(vizKey);
+      caseEl.innerHTML = `<h3 class="bookcase-heading"><a href="#" class="bookcase-link" title="Rename, move or recolor this bookcase">${esc(bookcase)}</a> <span class="group-count">${shelves.length} ${shelves.length === 1 ? 'shelf' : 'shelves'} · ${books} book${books === 1 ? '' : 's'}</span>`
+        + `${canViz ? ` <button type="button" class="link viz-toggle">${viz ? 'List' : 'Visual'}</button>` : ''}</h3>`;
       caseEl.querySelector('.bookcase-link').onclick = (e) => { e.preventDefault(); openEditBookcase(shelves, books); };
-      const grid = document.createElement('div');
-      grid.className = 'grid';
-      for (const s of shelves) grid.appendChild(renderShelfCard(s));
-      caseEl.appendChild(grid);
+      if (canViz) {
+        caseEl.querySelector('.viz-toggle').onclick = () => { setVizPref(vizKey, !viz); renderShelves(); };
+      }
+      if (viz) {
+        const wrap = document.createElement('div');
+        wrap.className = 'bookcase-visual-wrap';
+        caseEl.appendChild(wrap);
+        renderBookcaseVisual(wrap, shelves);  // fills in asynchronously
+      } else {
+        const grid = document.createElement('div');
+        grid.className = 'grid';
+        for (const s of shelves) grid.appendChild(renderShelfCard(s));
+        caseEl.appendChild(grid);
+      }
       roomEl.appendChild(caseEl);
     }
     list.appendChild(roomEl);
@@ -245,7 +275,7 @@ function renderShelfCard(s) {
 
   card.innerHTML = `
     <div class="card-body grow">
-      <h3>${esc(s.label)}</h3>
+      <h3>${esc(s.label)}${s.cell ? ` <span class="badge muted" title="Position in the bookcase grid">⊞ ${esc(s.cell)}</span>` : ''}</h3>
       <p class="loc">📐 ${s.width_mm ? dispDim(s.width_mm) + ' W' : '—'} × ${s.height_mm ? dispDim(s.height_mm) + ' H' : '—'} × ${s.depth_mm ? dispDim(s.depth_mm) + ' D' : '—'} ${UNIT}</p>
       ${capacity}
       ${flags.length ? `<div class="badges">${flags.map((f) => `<span class="badge muted">${f}</span>`).join('')}</div>` : ''}
@@ -266,6 +296,211 @@ function viewShelfBooks(shelfId) {
   document.querySelector('.tab[data-tab="books"]').click();
   $('#filterShelf').value = String(shelfId);
   loadBooks();
+}
+
+// ---------------------------------------------------------------------------
+// Bookcase visual view: the bookcase drawn as the grid its cells describe, each
+// shelf a row/column opening with its books standing on it as scaled spines.
+//
+// Everything unmeasured is presumed: shelves share their column's width and
+// their row's height; an unmeasured book is the average of the library's books
+// of its type (hardcover vs softcover), or failing that FALLBACK_DIMS; a shelf
+// is at least big enough to contain its books.
+// ---------------------------------------------------------------------------
+
+// Which bookcases the user flipped to the card list; visual is the default.
+let vizPrefs = {};
+try { vizPrefs = JSON.parse(localStorage.getItem('libVizPrefs') || '{}') || {}; } catch { vizPrefs = {}; }
+const vizPref = (key) => vizPrefs[key] !== 'cards';
+function setVizPref(key, visual) {
+  vizPrefs[key] = visual ? 'visual' : 'cards';
+  try { localStorage.setItem('libVizPrefs', JSON.stringify(vizPrefs)); } catch { /* per-viewer nicety only */ }
+}
+
+const dimType = (format) => (format === 'hardback' ? 'hardback' : 'softcover');
+function effectiveDims(b) {
+  const type = dimType(b.format);
+  const avg = META.avg_dims[type] || {};
+  const fb = FALLBACK_DIMS[type];
+  return {
+    height_mm: b.height_mm > 0 ? b.height_mm : (avg.height_mm || fb.height_mm),
+    width_mm: b.width_mm > 0 ? b.width_mm : (avg.width_mm || fb.width_mm),
+    thickness_mm: b.thickness_mm > 0 ? b.thickness_mm : (avg.thickness_mm || fb.thickness_mm),
+  };
+}
+
+const hex2 = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+const rgbToHex = (r, g, b) => '#' + hex2(r) + hex2(g) + hex2(b);
+
+// Black or white, whichever reads better on the given background.
+function contrastInk(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const chan = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const lum = 0.2126 * chan(n >> 16) + 0.7152 * chan((n >> 8) & 255) + 0.0722 * chan(n & 255);
+  return lum > 0.35 ? '#000000' : '#ffffff';
+}
+
+// Average a vertical strip of an image: the canvas squeezes the strip into a
+// one-pixel column, and the column is averaged. sx/sw select the strip; the
+// whole image is just the strip that is as wide as the image.
+function averageColor(img, sx, sw) {
+  const ih = img.naturalHeight || img.height;
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = Math.max(1, Math.min(64, ih));
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, sx, 0, sw, ih, 0, 0, 1, canvas.height);
+  const px = ctx.getImageData(0, 0, 1, canvas.height).data;
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] < 16) continue;      // transparent padding says nothing
+    r += px[i]; g += px[i + 1]; b += px[i + 2]; n += 1;
+  }
+  return n ? rgbToHex(r / n, g / n, b / n) : null;
+}
+
+// A book's spine colour: the average of the pixels along the left border of its
+// cover image — the edge that wraps around onto the spine. Grey when there is
+// no cover, and grey when the pixels cannot be read (a cross-origin cover
+// without CORS taints the canvas and getImageData throws).
+const spineColorCache = new Map();  // cover URL → Promise<#rrggbb>
+function spineColor(url) {
+  if (!url) return Promise.resolve(SPINE_GREY);
+  if (spineColorCache.has(url)) return spineColorCache.get(url);
+  const p = new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const strip = Math.max(1, Math.round((img.naturalWidth || 1) * 0.03));
+        resolve(averageColor(img, 0, strip) || SPINE_GREY);
+      } catch { resolve(SPINE_GREY); }
+    };
+    img.onerror = () => resolve(SPINE_GREY);
+    img.src = url;
+  });
+  spineColorCache.set(url, p);
+  return p;
+}
+
+function renderSpine(b, scale) {
+  const d = effectiveDims(b);
+  const w = Math.max(3, Math.round(d.thickness_mm * scale));
+  const spine = document.createElement('button');
+  spine.type = 'button';
+  spine.className = 'spine';
+  spine.style.width = w + 'px';
+  spine.style.height = Math.round(d.height_mm * scale) + 'px';
+  spine.style.background = SPINE_GREY;
+  spine.style.color = contrastInk(SPINE_GREY);
+  spine.title = [b.title, b.authors].filter(Boolean).join(' — ');
+  if (w >= 9) {
+    const text = document.createElement('span');
+    text.className = 'spine-text';
+    text.style.fontSize = Math.max(7, Math.min(11, Math.round(w * 0.72))) + 'px';
+    text.textContent = [b.title, b.authors].filter(Boolean).join(' · ');
+    spine.appendChild(text);
+  }
+  spine.onclick = () => openEditBook(b);
+  spineColor(b.cover_url).then((c) => {
+    spine.style.background = c;
+    spine.style.color = contrastInk(c);
+  });
+  return spine;
+}
+
+async function renderBookcaseVisual(el, shelves) {
+  const ids = new Set(shelves.map((s) => s.id));
+  const { room, bookcase } = shelves[0];
+  const params = new URLSearchParams({ limit: '0' });
+  if (room) params.set('room', room);
+  if (bookcase) params.set('bookcase', bookcase);
+  let books;
+  try {
+    books = (await api('/books?' + params)).filter((b) => ids.has(b.shelf_id));
+  } catch (err) {
+    el.textContent = 'Could not load this bookcase: ' + err.message;
+    return;
+  }
+  const byShelf = new Map();
+  for (const b of books) {
+    if (!byShelf.has(b.shelf_id)) byShelf.set(b.shelf_id, []);
+    byShelf.get(b.shelf_id).push(b);
+  }
+
+  // Place each shelf by its cell; shelves without one (or with a duplicate)
+  // are appended under the grid, one full-width row each.
+  const CELL = /^([A-Z]+)([0-9]+)$/;
+  const placed = new Map();
+  const spare = [];
+  for (const s of shelves) {
+    const m = CELL.exec(String(s.cell || '').toUpperCase());
+    if (m && !placed.has(m[0])) placed.set(m[0], { s, col: m[1], row: Number(m[2]) });
+    else spare.push(s);
+  }
+  const cols = [...new Set([...placed.values()].map((p) => p.col))].sort();
+  const rows = [...new Set([...placed.values()].map((p) => p.row))].sort((a, b) => a - b);
+
+  // Floors for a shelf nobody has measured and no book constrains yet: about
+  // the smallest bookshelf anyone owns, so an empty grid still looks like one.
+  const shelfBooks = (s) => byShelf.get(s.id) || [];
+  const shelfWidthMm = (s) => s.width_mm
+    || Math.max(350, shelfBooks(s).reduce((n, b) => n + effectiveDims(b).thickness_mm, 0));
+  const shelfHeightMm = (s) => s.height_mm
+    || Math.max(220, ...shelfBooks(s).map((b) => effectiveDims(b).height_mm + 15));
+  const at = (c, r) => placed.get(c + r);
+
+  const colW = cols.map((c) => Math.max(350, ...rows.map((r) => (at(c, r) ? shelfWidthMm(at(c, r).s) : 0))));
+  const rowH = rows.map((r) => Math.max(220, ...cols.map((c) => (at(c, r) ? shelfHeightMm(at(c, r).s) : 0))));
+
+  const FRAME = 10;  // px of visible bookcase between and around the openings
+  const totalMm = colW.reduce((a, b) => a + b, 0) || 1;
+  const avail = Math.max(280, el.clientWidth || 600) - FRAME * (cols.length + 1) - 2;
+  const scale = Math.min(0.5, Math.max(0.08, avail / totalMm));
+
+  const color = shelves.map((s) => s.bookcase_color).find(Boolean) || '#ffffff';
+  const table = document.createElement('div');
+  table.className = 'bookcase-visual';
+  table.style.background = color;
+  table.style.gap = FRAME + 'px';
+  table.style.padding = FRAME + 'px';
+  table.style.gridTemplateColumns = colW.map((w) => Math.round(w * scale) + 'px').join(' ');
+
+  const openShelf = (s, cell) => {
+    cell.classList.add('viz-shelf');
+    const tag = document.createElement('span');
+    tag.className = 'viz-tag';
+    tag.textContent = s.cell && s.label !== s.cell ? `${s.cell} · ${s.label}` : (s.cell || s.label);
+    tag.title = 'Edit this shelf';
+    tag.onclick = (e) => { e.stopPropagation(); openEditShelf(s); };
+    cell.appendChild(tag);
+    for (const b of shelfBooks(s)) cell.appendChild(renderSpine(b, scale));
+  };
+
+  for (const [ri, r] of rows.entries()) {
+    for (const c of cols) {
+      const cell = document.createElement('div');
+      cell.className = 'viz-cell';
+      cell.style.height = Math.round(rowH[ri] * scale) + 'px';
+      const p = at(c, r);
+      if (p) openShelf(p.s, cell);
+      else cell.classList.add('viz-void');  // no shelf at this coordinate
+      table.appendChild(cell);
+    }
+  }
+  el.appendChild(table);
+
+  for (const s of spare) {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'bookcase-visual viz-spare';
+    rowEl.style.background = color;
+    const cell = document.createElement('div');
+    cell.className = 'viz-cell';
+    cell.style.height = Math.round(shelfHeightMm(s) * scale) + 'px';
+    openShelf(s, cell);
+    rowEl.appendChild(cell);
+    el.appendChild(rowEl);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -774,11 +1009,70 @@ async function saveShelf(e) {
   const data = Object.fromEntries(new FormData(shelfForm).entries());
   DIM_FIELDS.forEach((f) => { if (f in data) data[f] = unitToMm(data[f]); });
   try {
-    if (editingShelfId) await api('/shelves/' + editingShelfId, { method: 'PUT', headers: json(), body: JSON.stringify(data) });
-    else await api('/shelves', { method: 'POST', headers: json(), body: JSON.stringify(data) });
+    const saved = editingShelfId
+      ? await api('/shelves/' + editingShelfId, { method: 'PUT', headers: json(), body: JSON.stringify(data) })
+      : await api('/shelves', { method: 'POST', headers: json(), body: JSON.stringify(data) });
     shelfDialog.close();
+    await offerDimensionCopy(saved);
     await refresh();
   } catch (err) { alert('Save failed: ' + err.message); }
+}
+
+// After a shelf's dimensions are saved, offer to spread them over the bookcase:
+// shelves in one bookcase usually share a depth, a column shares its width, a
+// row its height. Only offered where it would change something, and nothing is
+// written unless the box stays ticked and Copy is pressed.
+const CELL_PARSE = /^([A-Z]+)([0-9]+)$/;
+function offerDimensionCopy(saved) {
+  if (!saved || !saved.cell) return Promise.resolve();
+  const m = CELL_PARSE.exec(saved.cell);
+  if (!m) return Promise.resolve();
+  const same = (a, b) => (a || '') === (b || '');
+  const mates = shelvesCache.filter((s) => s.id !== saved.id
+    && same(s.room, saved.room) && same(s.bookcase, saved.bookcase));
+  const part = (s, i) => (CELL_PARSE.exec(String(s.cell || '')) || [])[i];
+  const where = saved.bookcase || 'this bookcase';
+
+  const plans = [
+    { box: 'dimCopyDepth', field: 'depth_mm', value: saved.depth_mm,
+      targets: mates.filter((s) => s.depth_mm !== saved.depth_mm),
+      text: (n) => `Depth ${dispDim(saved.depth_mm)} ${UNIT} → every other shelf in ${where} (${n})` },
+    { box: 'dimCopyWidth', field: 'width_mm', value: saved.width_mm,
+      targets: mates.filter((s) => part(s, 1) === m[1] && s.width_mm !== saved.width_mm),
+      text: (n) => `Width ${dispDim(saved.width_mm)} ${UNIT} → the rest of column ${m[1]} (${n})` },
+    { box: 'dimCopyHeight', field: 'height_mm', value: saved.height_mm,
+      targets: mates.filter((s) => part(s, 2) === m[2] && s.height_mm !== saved.height_mm),
+      text: (n) => `Height ${dispDim(saved.height_mm)} ${UNIT} → the rest of row ${m[2]} (${n})` },
+  ].filter((p) => p.value != null && p.targets.length);
+
+  for (const id of ['dimCopyDepthRow', 'dimCopyWidthRow', 'dimCopyHeightRow']) {
+    document.getElementById(id).hidden = !plans.some((p) => id.startsWith(p.box));
+  }
+  if (!plans.length) return Promise.resolve();
+  for (const p of plans) {
+    const box = document.getElementById(p.box);
+    box.checked = true;
+    box.closest('label').querySelector('span').textContent = p.text(p.targets.length);
+  }
+
+  const dialog = $('#dimCopyDialog');
+  return new Promise((resolve) => {
+    const done = () => { dialog.close(); resolve(); };
+    $('#dimCopySkipBtn').onclick = done;
+    $('#dimCopyApplyBtn').onclick = async () => {
+      const writes = [];
+      for (const p of plans) {
+        if (!document.getElementById(p.box).checked) continue;
+        for (const s of p.targets) {
+          writes.push(api('/shelves/' + s.id, { method: 'PUT', headers: json(), body: JSON.stringify({ [p.field]: p.value }) }));
+        }
+      }
+      try { await Promise.all(writes); } catch (err) { alert('Copy failed: ' + err.message); }
+      done();
+    };
+    dialog.onclose = () => resolve();
+    dialog.showModal();
+  });
 }
 
 async function deleteShelf() {
@@ -789,15 +1083,91 @@ async function deleteShelf() {
 }
 
 // ---------------------------------------------------------------------------
+// Add-bookcase dialog: a whole bookcase at once, as a rows × columns grid of
+// shelves, each named for its cell until it earns a label of its own.
+// ---------------------------------------------------------------------------
+const addBookcaseDialog = $('#addBookcaseDialog');
+const addBookcaseForm = $('#addBookcaseForm');
+
+function openAddBookcase() {
+  addBookcaseForm.reset();
+  addBookcaseDialog.showModal();
+  addBookcaseForm.elements.room.focus();
+}
+
+async function createBookcase(e) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(addBookcaseForm).entries());
+  try {
+    await api('/bookcases', { method: 'POST', headers: json(), body: JSON.stringify(data) });
+    addBookcaseDialog.close();
+    await refresh();
+  } catch (err) { alert('Create failed: ' + err.message); }
+}
+
+// ---------------------------------------------------------------------------
 // Bookcase dialog: a bookcase is the shelves sharing a room and bookcase name,
 // so renaming or moving one rewrites both names on all of them at once.
 // ---------------------------------------------------------------------------
+// A grid of standard colors to pick a bookcase's color from: woods and
+// neutrals first, since most bookcases are one of those.
+const BOOKCASE_PALETTE = [
+  '#ffffff', '#d9d9d9', '#9e9e9e', '#616161', '#3a3a3a', '#000000',
+  '#f5e8d0', '#deb887', '#c19a6b', '#a0522d', '#8b4513', '#5c3a21',
+  '#7b3f00', '#4e2a14', '#800000', '#b22222', '#e25822', '#f4a460',
+  '#2e4a2e', '#4f7942', '#1f3a5f', '#4169a1', '#5d3b8c', '#937ac4',
+];
+let bookcaseColor = null;   // the color chosen in the open bookcase dialog
+
+function setBookcaseColor(color) {
+  bookcaseColor = color;
+  $('#bookcaseColorLabel').textContent = color || 'Default (white)';
+  document.querySelectorAll('#bookcaseSwatches .swatch').forEach((b) => {
+    b.classList.toggle('selected', (b.dataset.color || null) === (color || null));
+  });
+}
+
+// Built once: one button per palette color, plus "none" for the default.
+function buildBookcaseSwatches() {
+  const box = $('#bookcaseSwatches');
+  for (const color of BOOKCASE_PALETTE) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'swatch';
+    b.dataset.color = color;
+    b.style.background = color;
+    b.title = color;
+    b.onclick = () => setBookcaseColor(color);
+    box.appendChild(b);
+  }
+}
+
+// Scan: photograph a patch of the real bookcase; its color is the average of
+// every pixel in the photo.
+function onBookcaseColorFile(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const c = averageColor(img, 0, img.naturalWidth || img.width);
+      if (c) setBookcaseColor(c);
+    } catch { alert('Could not read a color from that photo.'); }
+    URL.revokeObjectURL(url);
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); alert('Could not read that photo.'); };
+  img.src = url;
+}
+
 function openEditBookcase(shelves, books) {
   const { room, bookcase } = shelves[0];
   editingBookcase = { room: room || '', bookcase: bookcase || '' };
   bookcaseForm.reset();
   bookcaseForm.elements.room.value = editingBookcase.room;
   bookcaseForm.elements.bookcase.value = editingBookcase.bookcase;
+  setBookcaseColor(shelves.map((s) => s.bookcase_color).find(Boolean) || null);
   $('#bookcaseSummary').textContent = `${shelves.length} ${shelves.length === 1 ? 'shelf' : 'shelves'} · `
     + `${books} book${books === 1 ? '' : 's'}`;
   bookcaseDialog.showModal();
@@ -819,7 +1189,7 @@ async function copyBookcase() {
 async function sendBookcase(method, verb) {
   const data = Object.fromEntries(new FormData(bookcaseForm).entries());
   try {
-    await api('/bookcases', { method, headers: json(), body: JSON.stringify({ from: editingBookcase, ...data }) });
+    await api('/bookcases', { method, headers: json(), body: JSON.stringify({ from: editingBookcase, ...data, color: bookcaseColor }) });
     bookcaseDialog.close();
     await refresh();
   } catch (err) { alert(`${verb} failed: ${err.message}`); }
@@ -1174,12 +1544,12 @@ async function runImport() {
 // Metadata + refresh
 // ---------------------------------------------------------------------------
 // Distinct values powering the custom autocomplete dropdowns; refreshed by loadMeta.
-const META = { rooms: [], bookcases: [] };
+const META = { rooms: [], bookcases: [], avg_dims: {} };
 
 async function loadMeta() {
   const meta = await api('/meta');
   $('#count').textContent = `${meta.count} book${meta.count === 1 ? '' : 's'}`;
-  Object.assign(META, { rooms: meta.rooms, bookcases: meta.bookcases });
+  Object.assign(META, { rooms: meta.rooms, bookcases: meta.bookcases, avg_dims: meta.avg_dims || {} });
   fillSelect('filterRoom', meta.rooms, 'All rooms');
   fillSelect('filterBookcase', meta.bookcases, 'All bookcases');
   populateGenreFilter();
@@ -1791,6 +2161,14 @@ $('#closeBookcaseDialog').addEventListener('click', () => bookcaseDialog.close()
 $('#cancelBookcaseBtn').addEventListener('click', () => bookcaseDialog.close());
 $('#copyBookcaseBtn').addEventListener('click', copyBookcase);
 bookcaseForm.addEventListener('submit', saveBookcase);
+buildBookcaseSwatches();
+$('#bookcaseScanBtn').addEventListener('click', () => $('#bookcaseColorFile').click());
+$('#bookcaseColorFile').addEventListener('change', onBookcaseColorFile);
+$('#bookcaseDefaultBtn').addEventListener('click', () => setBookcaseColor(null));
+$('#addBookcaseBtn').addEventListener('click', openAddBookcase);
+$('#closeAddBookcaseDialog').addEventListener('click', () => addBookcaseDialog.close());
+$('#cancelAddBookcaseBtn').addEventListener('click', () => addBookcaseDialog.close());
+addBookcaseForm.addEventListener('submit', createBookcase);
 
 // Autocomplete for the free-text classification/location fields.
 // Single multi-select genres field (id-based, backed by book_genres).
@@ -1812,6 +2190,7 @@ attachCombo(shelfForm.elements.room, () => META.rooms);
 attachCombo(shelfForm.elements.bookcase, () => META.bookcases);
 attachCombo(bookcaseForm.elements.room, () => META.rooms);
 attachCombo(bookcaseForm.elements.bookcase, () => META.bookcases);
+attachCombo(addBookcaseForm.elements.room, () => META.rooms);
 
 // ---------------------------------------------------------------------------
 // Giving back to Open Library. The queue is the review gate: approving a row

@@ -176,7 +176,7 @@ const COPY_COLS = [
 // Accepted from clients; `isbn` and the cover fields are routed by hand because
 // each needs a decision rather than a column copy.
 const BOOK_COLS = [...EDITION_COLS, ...COPY_COLS, 'isbn', 'cover_url', 'cover_source', 'library_name'];
-const SHELF_COLS = ['room', 'bookcase', 'label', 'height_mm', 'width_mm', 'depth_mm', 'notes'];
+const SHELF_COLS = ['room', 'bookcase', 'label', 'cell', 'height_mm', 'width_mm', 'depth_mm', 'notes'];
 const NUMERIC = new Set(['page_count', 'height_mm', 'width_mm', 'thickness_mm', 'depth_mm', 'shelf_id']);
 // Dimensions are whole millimetres; round whatever a client sends.
 const MM_COLS = new Set(['height_mm', 'width_mm', 'thickness_mm', 'depth_mm']);
@@ -219,6 +219,42 @@ function update(table, id, data, lib) {
 const shelfInLibrary = (shelfId, lib) =>
   shelfId == null || !!db.prepare('SELECT 1 FROM shelves WHERE id = ? AND library_id = ?').get(shelfId, lib);
 const badShelf = (res) => res.status(400).json({ error: 'shelf not found' });
+
+// A shelf's cell: its position in the bookcase grid, column letter(s) + row
+// number, "A1" the top left. Normalised to uppercase; blank clears it; unique
+// within a bookcase because it names one physical opening. Mutates `data` in
+// place and answers the request itself when the cell cannot be accepted.
+const CELL_RE = /^[A-Z]{1,2}[1-9]\d{0,2}$/;
+function cellAccepted(data, lib, res, current = null) {
+  let cell;
+  if (data.cell !== undefined) {
+    cell = String(data.cell ?? '').trim().toUpperCase();
+    if (!cell) { data.cell = null; return true; }
+    if (!CELL_RE.test(cell)) {
+      res.status(400).json({ error: 'cell must be a column letter plus a row number, like A1' });
+      return false;
+    }
+    data.cell = cell;
+  } else {
+    // No cell in the request — but a shelf moving to another bookcase takes
+    // its existing cell along, and it must not land on an occupied one.
+    cell = current?.cell;
+    if (!cell || (data.room === undefined && data.bookcase === undefined)) return true;
+  }
+  // The bookcase the shelf will be in once this write lands: fields from the
+  // request where given, the existing row's where not.
+  const room = data.room !== undefined ? data.room : current?.room;
+  const bookcase = data.bookcase !== undefined ? data.bookcase : current?.bookcase;
+  const clash = db.prepare(`SELECT 1 FROM shelves WHERE library_id = @lib
+    AND COALESCE(room, '') = COALESCE(@room, '') AND COALESCE(bookcase, '') = COALESCE(@bookcase, '')
+    AND cell = @cell AND (@self IS NULL OR id <> @self)`)
+    .get({ lib, room: room ?? null, bookcase: bookcase ?? null, cell, self: current?.id ?? null });
+  if (clash) {
+    res.status(400).json({ error: `cell ${cell} is already used in that bookcase` });
+    return false;
+  }
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Books CRUD
@@ -971,13 +1007,17 @@ router.post('/api/suggest-shelf', (req, res) => {
 router.post('/api/shelves', (req, res) => {
   const data = pick(req.body, SHELF_COLS);
   if (!data.label) return res.status(400).json({ error: 'label is required' });
+  if (!cellAccepted(data, req.library.id, res)) return;
   const id = insert('shelves', { ...data, library_id: req.library.id });
   res.status(201).json(oneShelf(id, req.library.id));
 });
 
 router.put('/api/shelves/:id', (req, res) => {
-  if (!oneShelf(req.params.id, req.library.id)) return res.status(404).json({ error: 'Not found' });
-  update('shelves', req.params.id, pick(req.body, SHELF_COLS), req.library.id);
+  const current = oneShelf(req.params.id, req.library.id);
+  if (!current) return res.status(404).json({ error: 'Not found' });
+  const data = pick(req.body, SHELF_COLS);
+  if (!cellAccepted(data, req.library.id, res, current)) return;
+  update('shelves', req.params.id, data, req.library.id);
   res.json(oneShelf(req.params.id, req.library.id));
 });
 
@@ -987,11 +1027,24 @@ router.put('/api/shelves/:id', (req, res) => {
 // names to give the result. A blank name matches, and becomes, no room or no
 // bookcase.
 const bookcaseName = (v) => (v == null ? '' : String(v).trim());
+const COLOR_RE = /^#[0-9a-f]{6}$/i;
 function bookcaseRequest(req, res) {
   const { from } = req.body;
   if (!from || typeof from !== 'object') {
     res.status(400).json({ error: 'from is required' });
     return null;
+  }
+  // The bookcase's colour: '#rrggbb' sets it, null or '' clears it back to the
+  // default white, and an absent field leaves whatever the shelves carry.
+  let color;
+  if (req.body.color !== undefined) {
+    const c = req.body.color;
+    if (c == null || c === '') color = null;
+    else if (COLOR_RE.test(String(c))) color = String(c).toLowerCase();
+    else {
+      res.status(400).json({ error: 'color must be #rrggbb' });
+      return null;
+    }
   }
   return {
     lib: req.library.id,
@@ -999,8 +1052,16 @@ function bookcaseRequest(req, res) {
     fromBookcase: bookcaseName(from.bookcase),
     room: bookcaseName(req.body.room) || null,
     bookcase: bookcaseName(req.body.bookcase) || null,
+    color,
   };
 }
+
+// Paint every shelf of the (destination) bookcase, so a merge cannot leave the
+// two halves of one bookcase wearing two colours.
+const paintBookcase = db.prepare(`
+  UPDATE shelves SET bookcase_color = @color, updated_at = datetime('now')
+  WHERE library_id = @lib AND COALESCE(room, '') = COALESCE(@room, '')
+    AND COALESCE(bookcase, '') = COALESCE(@bookcase, '')`);
 const IN_BOOKCASE = 'library_id = @lib AND COALESCE(room, \'\') = @fromRoom AND COALESCE(bookcase, \'\') = @fromBookcase';
 
 // Move or rename a bookcase, so it moves between rooms without editing each
@@ -1008,29 +1069,78 @@ const IN_BOOKCASE = 'library_id = @lib AND COALESCE(room, \'\') = @fromRoom AND 
 router.put('/api/bookcases', (req, res) => {
   const params = bookcaseRequest(req, res);
   if (!params) return;
-  const info = db.prepare(`
-    UPDATE shelves SET room = @room, bookcase = @bookcase, updated_at = datetime('now')
-    WHERE ${IN_BOOKCASE}`).run(params);
+  const { lib, fromRoom, fromBookcase, room, bookcase, color } = params;
+  const move = db.transaction(() => {
+    const info = db.prepare(`
+      UPDATE shelves SET room = @room, bookcase = @bookcase, updated_at = datetime('now')
+      WHERE ${IN_BOOKCASE}`).run({ lib, fromRoom, fromBookcase, room, bookcase });
+    if (info.changes && color !== undefined) paintBookcase.run({ lib, room, bookcase, color });
+    return info;
+  });
+  const info = move();
   if (info.changes === 0) return res.status(404).json({ error: 'No such bookcase' });
   res.json({ moved: info.changes });
 });
+
+// Create a bookcase as a grid: rows × columns shelves, each named for its cell
+// ("A1" the top left) until somebody gives it a better label. Columns run A-Z,
+// so 26 is the widest bookcase this can make.
+function createBookcase(req, res) {
+  const room = bookcaseName(req.body.room) || null;
+  const bookcase = bookcaseName(req.body.bookcase) || null;
+  const rows = Number(req.body.rows);
+  const columns = Number(req.body.columns);
+  if (!bookcase) return res.status(400).json({ error: 'bookcase is required' });
+  if (!Number.isInteger(rows) || rows < 1 || rows > 99
+      || !Number.isInteger(columns) || columns < 1 || columns > 26) {
+    return res.status(400).json({ error: 'rows must be 1-99 and columns 1-26' });
+  }
+  const color = req.body.color == null || req.body.color === '' ? null : String(req.body.color).toLowerCase();
+  if (color !== null && !COLOR_RE.test(color)) return res.status(400).json({ error: 'color must be #rrggbb' });
+
+  const lib = req.library.id;
+  const create = db.transaction(() => {
+    const exists = db.prepare(`SELECT 1 FROM shelves WHERE library_id = @lib
+      AND COALESCE(room, '') = COALESCE(@room, '') AND COALESCE(bookcase, '') = COALESCE(@bookcase, '')`)
+      .get({ lib, room, bookcase });
+    if (exists) return { status: 409, error: 'That bookcase already exists' };
+    const ins = db.prepare(`INSERT INTO shelves (library_id, room, bookcase, label, cell, bookcase_color)
+                            VALUES (@lib, @room, @bookcase, @cell, @cell, @color)`);
+    for (let r = 1; r <= rows; r++) {
+      for (let c = 0; c < columns; c++) {
+        ins.run({ lib, room, bookcase, cell: String.fromCharCode(65 + c) + r, color });
+      }
+    }
+    return { created: rows * columns };
+  });
+  const result = create();
+  if (result.status) return res.status(result.status).json({ error: result.error });
+  res.status(201).json(result);
+}
 
 // Copy a bookcase: a new shelf for each of its shelves, with the same label,
 // dimensions and notes, under the new names. The books stay where they are. The
 // copy must be a new bookcase: copying onto one that exists, itself included,
 // would leave two shelves of every label in it.
+//
+// Without `from` there is nothing to copy, and the same POST creates a NEW
+// bookcase instead, from { room, bookcase, rows, columns, color? }.
 router.post('/api/bookcases', (req, res) => {
+  if (req.body.from === undefined) return createBookcase(req, res);
   const params = bookcaseRequest(req, res);
   if (!params) return;
+  const { lib, fromRoom, fromBookcase, room, bookcase, color } = params;
   const copy = db.transaction(() => {
     const exists = db.prepare(`SELECT 1 FROM shelves WHERE library_id = @lib
-      AND COALESCE(room, '') = COALESCE(@room, '') AND COALESCE(bookcase, '') = COALESCE(@bookcase, '')`).get(params);
+      AND COALESCE(room, '') = COALESCE(@room, '') AND COALESCE(bookcase, '') = COALESCE(@bookcase, '')`)
+      .get({ lib, room, bookcase });
     if (exists) return { status: 409, error: 'That bookcase already exists' };
     const info = db.prepare(`
-      INSERT INTO shelves (library_id, room, bookcase, label, height_mm, width_mm, depth_mm, notes)
-      SELECT library_id, @room, @bookcase, label, height_mm, width_mm, depth_mm, notes
-      FROM shelves WHERE ${IN_BOOKCASE} ORDER BY id`).run(params);
+      INSERT INTO shelves (library_id, room, bookcase, label, cell, bookcase_color, height_mm, width_mm, depth_mm, notes)
+      SELECT library_id, @room, @bookcase, label, cell, bookcase_color, height_mm, width_mm, depth_mm, notes
+      FROM shelves WHERE ${IN_BOOKCASE} ORDER BY id`).run({ lib, fromRoom, fromBookcase, room, bookcase });
     if (info.changes === 0) return { status: 404, error: 'No such bookcase' };
+    if (color !== undefined) paintBookcase.run({ lib, room, bookcase, color });
     return { copied: info.changes };
   });
   const result = copy();
@@ -1083,11 +1193,28 @@ router.get('/api/meta', (req, res) => {
     db.prepare(`SELECT DISTINCT ${col} AS v FROM ${table}
                 WHERE library_id = ? AND ${col} IS NOT NULL AND ${col} != '' ORDER BY v COLLATE NOCASE`)
       .all(lib).map((r) => r.v);
+  // Average size of a catalogued book, hardbacks apart from everything else, so
+  // the visual shelf view can draw a plausible spine for a book that was never
+  // measured. NULL where nothing of that type has a measurement yet.
+  const avg_dims = {};
+  for (const r of db.prepare(`
+    SELECT CASE WHEN format = 'hardback' THEN 'hardback' ELSE 'softcover' END AS type,
+           AVG(CASE WHEN height_mm > 0 THEN height_mm END) AS height_mm,
+           AVG(CASE WHEN width_mm > 0 THEN width_mm END) AS width_mm,
+           AVG(CASE WHEN thickness_mm > 0 THEN thickness_mm END) AS thickness_mm
+    FROM books WHERE library_id = ? GROUP BY type`).all(lib)) {
+    avg_dims[r.type] = {
+      height_mm: r.height_mm == null ? null : Math.round(r.height_mm),
+      width_mm: r.width_mm == null ? null : Math.round(r.width_mm),
+      thickness_mm: r.thickness_mm == null ? null : Math.round(r.thickness_mm),
+    };
+  }
   res.json({
     rooms: distinct('shelves', 'room'),
     bookcases: distinct('shelves', 'bookcase'),
     count: db.prepare('SELECT COUNT(*) AS n FROM books WHERE library_id = ?').get(lib).n,
     unshelved: db.prepare('SELECT COUNT(*) AS n FROM books WHERE library_id = ? AND shelf_id IS NULL').get(lib).n,
+    avg_dims,
   });
 });
 

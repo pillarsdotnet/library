@@ -5,6 +5,25 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.5] — 2026-10-18
+
+### Fixed
+
+- **Spines fit and center on their true glyph ink.** Three lies are gone. The
+  fitting pass trusted scrollWidth/scrollHeight, which under-report overflow
+  in vertical writing modes — half-shaved final letters ("Foxglove"). At
+  line-height 1.1 the system fonts' bounding box (≈1.17em) is taller than
+  the line box, so ascender ink protruded past the text box's own clip —
+  clipped first-line tops ("Violet Thistlewaite…"). And line boxes reserve
+  ascent and descender allowances no glyph may use, so ink sat visibly off
+  centre ("Heroes' Feast"). The text is now measured as actual ink — each
+  rendered line read back from layout, its glyphs measured by canvas
+  TextMetrics from its baseline — the fit is strict against that ink plus
+  the cellpadding, the final font sits 3% below the maximum so rounding can
+  never clip, the text box no longer clips (only the cell does), and a
+  transform centres the measured ink in the cell both ways. Live cached
+  typography is cleared at deploy so every spine refits.
+
 ## [5.6.4] — 2026-10-18
 
 ### Fixed

@@ -5,6 +5,14 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.10] — 2026-10-18
+
+### Changed
+
+- **Room headings count bookcases, not shelves.** "Livingroom · 4 bookcases"
+  reads at the level the heading groups by; the shelf counts stay on each
+  bookcase's own line.
+
 ## [5.6.9] — 2026-10-18
 
 ### Changed

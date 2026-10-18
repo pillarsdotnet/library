@@ -537,7 +537,9 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
 .viz-tag {
   position: absolute;
   top: 2px;
-  left: 4px;
+  /* Top-right: books pack from the left, so this is the corner a shelf fills
+     last — the chip stops sitting on the first books' heads. */
+  right: 4px;
   max-width: calc(100% - 8px);
   overflow: hidden;
   padding: 0 4px;
@@ -572,31 +574,26 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
    that line-height 1.1 leaves between wrapped lines; fitSpineText() accounts
    for it when probing. */
 .spine-cell {
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  position: relative;
   overflow: hidden;
-  padding: 0.15em;
-  text-align: center;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
 }
+/* Laid out HORIZONTALLY — in the one writing mode whose baseline placement
+   is dependable — in a box as wide as the cell is tall, then rotated 90°
+   clockwise and centred by transform in polishSpineText(), which measures
+   the glyphs' real ink. Text wraps on spaces only: a word too long for the
+   cell never breaks mid-word; it fails the fit and the font shrinks until
+   the word sits on one line. The 0.15em-per-side cellpadding is enforced by
+   the fitting pass rather than by CSS padding; only the cell clips. */
 .spine-text {
-  writing-mode: vertical-rl;
+  position: absolute;
+  top: 0;
+  left: 0;
   line-height: 1.1;
-  /* Wrap on spaces only — never inside a word. A word too long for the cell
-     at some size doesn't break; it fails the fit and the font shrinks until
-     the whole word fits on one line.
-
-     No overflow:hidden and no width pinning here: at this line-height the
-     font's bounding box is taller than the line box (negative leading), so
-     glyph ink legitimately protrudes past the box's own edges, and a clip on
-     the box shaves ascenders. polishSpineText() centres the measured ink in
-     the cell with a transform; only the CELL clips, and the fitting pass
-     keeps the ink inside the cellpadding. */
-  flex: 0 0 auto;
-  max-height: 100%;
+  text-align: center;
+  transform-origin: 0 0;
 }
 
 /* ---------- Bookcase color picker ---------- */

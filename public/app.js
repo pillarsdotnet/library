@@ -459,19 +459,21 @@ function renderSpine(b, scale) {
 // defies arithmetic. Needs the spine in the document.
 let spineMeasureCtx = null;
 
-// The TRUE ink rectangle of a cell's rotated text, in viewport coordinates.
+// The TRUE ink rectangle of a cell's text, in coordinates relative to the
+// cell, measured while the text lies in plain HORIZONTAL layout (the rotation
+// is a transform applied afterwards — see polishSpineText).
 //
-// Neither the element box nor the line boxes can be trusted for this: the
-// box's automatic width is an engine estimate (sometimes a phantom line
-// wide); the line boxes reserve a full ascent and descender allowance
-// whether or not any glyph uses them; and at line-height 1.1 the font's
-// bounding box (≈1.17em for the system fonts) is TALLER than the line box —
-// negative leading — so ascender ink protrudes past the line box, and past
-// any clip aligned to it. Instead, each rendered line is read back from
-// layout (characters sharing a line share its column, so a jump in column
-// position is a line break), its baseline located from the line box, and
-// its real ink taken from canvas TextMetrics, which measures glyphs.
-function spineInkRect(text) {
+// Spine text used to be laid out with writing-mode: vertical-rl, but where
+// an engine anchors sideways glyphs inside a vertical line column is not
+// reliably the documented half-leading model, and every mis-guess showed up
+// as spines clinging to one edge. Horizontal layout is the one case where
+// the model — baseline at line-box top + half-leading + font ascent — is
+// dependable, so: read each rendered line back from layout (a jump in line
+// top is a line break), locate its baseline, and take the glyphs' real
+// vertical ink from canvas TextMetrics; the horizontal extent is the line's
+// advance width straight from the Range rects.
+function spineInkRect(cell) {
+  const text = cell.firstElementChild;
   const node = text.firstChild;
   const s = node && node.nodeType === Node.TEXT_NODE ? node.textContent : '';
   if (!s) return null;
@@ -483,47 +485,59 @@ function spineInkRect(text) {
     range.setEnd(node, i + 1);
     const r = range.getClientRects()[0];
     if (!r || (r.width === 0 && r.height === 0)) { if (cur) cur.str += s[i]; continue; }
-    if (!cur || Math.abs(r.right - cur.right) > 1) {
-      cur = { str: '', right: r.right, top: r.top, bottom: r.bottom };
+    if (!cur || Math.abs(r.top - cur.topBox) > 1) {
+      cur = { str: '', topBox: r.top, left: r.left, right: r.right };
       lines.push(cur);
     }
     cur.str += s[i];
-    cur.top = Math.min(cur.top, r.top);
-    cur.bottom = Math.max(cur.bottom, r.bottom);
+    cur.left = Math.min(cur.left, r.left);
+    cur.right = Math.max(cur.right, r.right);
   }
   if (!lines.length) return null;
 
   if (!spineMeasureCtx) spineMeasureCtx = document.createElement('canvas').getContext('2d');
   const cs = getComputedStyle(text);
   spineMeasureCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-  const lineH = 1.1 * parseFloat(cs.fontSize);
+  const lineH = parseFloat(cs.lineHeight);
+  const c = cell.getBoundingClientRect();
+  const elTop = text.getBoundingClientRect().top;
   let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
-  for (const line of lines) {
+  for (const [i, line] of lines.entries()) {
     const m = spineMeasureCtx.measureText(line.str.trim());
-    // In vertical-rl the line's over edge is its right; the baseline sits a
-    // (possibly negative) half-leading plus the font ascent in from it, and
-    // the glyphs' real ink extends actualAscent rightward and actualDescent
-    // leftward of that baseline.
+    // Line i's box spans [i*lineH, (i+1)*lineH] of the element exactly (the
+    // element's height is lines × line-height), so the baseline is anchored
+    // by INDEX — a Range rect is a selection rectangle, which overhangs the
+    // line box when the font's bounding box exceeds the line-height, and
+    // anchoring to it skewed everything by that overhang.
     const halfLead = (lineH - (m.fontBoundingBoxAscent + m.fontBoundingBoxDescent)) / 2;
-    const baseline = line.right - halfLead - m.fontBoundingBoxAscent;
-    right = Math.max(right, baseline + m.actualBoundingBoxAscent);
-    left = Math.min(left, baseline - m.actualBoundingBoxDescent);
-    top = Math.min(top, line.top);
-    bottom = Math.max(bottom, line.bottom);
+    const baseline = elTop + i * lineH + halfLead + m.fontBoundingBoxAscent;
+    top = Math.min(top, baseline - m.actualBoundingBoxAscent);
+    bottom = Math.max(bottom, baseline + m.actualBoundingBoxDescent);
+    left = Math.min(left, line.left);
+    right = Math.max(right, line.right);
   }
-  return { left, right, top, bottom, width: right - left, height: bottom - top };
+  return { left: left - c.left, right: right - c.left, top: top - c.top, bottom: bottom - c.top };
+}
+
+// The text lies horizontally in a box as wide as the cell is TALL (so lines
+// wrap along the spine's run), unrotated and untransformed while measuring.
+function laySpineTextFlat(cell) {
+  const text = cell.firstElementChild;
+  text.style.transform = '';
+  text.style.width = cell.clientHeight + 'px';
 }
 
 function fitSpineText(spine) {
   const cells = [...spine.querySelectorAll('.spine-cell')];
   if (!cells.length) return null;
-  // Strict: the measured ink must clear the cell by the 0.15em-per-side
-  // cellpadding the candidate font implies, in both directions.
+  for (const cell of cells) laySpineTextFlat(cell);
+  // Strict: the measured ink, once rotated, must clear the cell by the
+  // 0.15em-per-side cellpadding the candidate font implies, both ways.
   const fits = (f) => cells.every((cell) => {
-    const ink = spineInkRect(cell.firstElementChild);
+    const ink = spineInkRect(cell);
     if (!ink) return true;
-    const c = cell.getBoundingClientRect();
-    return ink.width <= c.width - 0.3 * f && ink.height <= c.height - 0.3 * f;
+    return (ink.bottom - ink.top) <= cell.clientWidth - 0.3 * f
+      && (ink.right - ink.left) <= cell.clientHeight - 0.3 * f;
   });
   let lo = 0.5, hi = 14;
   spine.style.fontSize = hi + 'px';
@@ -543,23 +557,22 @@ function fitSpineText(spine) {
   return final;
 }
 
-// After the font settles (cached or freshly fitted), slide the text so that
-// its measured INK — not its box, not its line boxes with their unused
-// allowances — sits dead centre in the cell, both across the spine and along
-// it. The fit above guarantees the ink clears the cell, so the centred ink
-// never meets the cell's clip.
+// After the font settles (cached or freshly fitted): rotate the measured
+// text 90° clockwise and place its INK dead centre in the cell, both across
+// the spine and along it. rotate(90deg) about the element's top-left maps a
+// point (x, y) to (-y, x), so the ink lands centred when the translation is
+// computed from the ink's own rectangle — no engine model of vertical text
+// anchoring is involved at all.
 function polishSpineText(spine) {
   for (const cell of spine.querySelectorAll('.spine-cell')) {
     const text = cell.firstElementChild;
+    if (!text.style.width) laySpineTextFlat(cell);
     text.style.transform = '';
-    const ink = spineInkRect(text);
+    const ink = spineInkRect(cell);
     if (!ink) continue;
-    const c = cell.getBoundingClientRect();
-    const dx = (c.left + c.right) / 2 - (ink.left + ink.right) / 2;
-    const dy = (c.top + c.bottom) / 2 - (ink.top + ink.bottom) / 2;
-    if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) {
-      text.style.transform = `translate(${dx.toFixed(2)}px, ${dy.toFixed(2)}px)`;
-    }
+    const x = cell.clientWidth / 2 + (ink.top + ink.bottom) / 2;
+    const y = cell.clientHeight / 2 - (ink.left + ink.right) / 2;
+    text.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px) rotate(90deg)`;
   }
 }
 

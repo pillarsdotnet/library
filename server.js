@@ -1253,9 +1253,22 @@ router.get('/api/meta', (req, res) => {
       thickness_mm: r.thickness_mm == null ? null : Math.round(r.thickness_mm),
     };
   }
+  // Individual author names for autocomplete: the column is comma-separated,
+  // so it is split, trimmed and deduplicated case-insensitively (first
+  // spelling wins) before sorting.
+  const byName = new Map();
+  for (const r of db.prepare(`SELECT authors FROM editions
+                              WHERE library_id = ? AND authors IS NOT NULL AND authors <> ''`).all(lib)) {
+    for (const name of r.authors.split(',').map((a) => a.trim()).filter(Boolean)) {
+      const key = name.toLowerCase();
+      if (!byName.has(key)) byName.set(key, name);
+    }
+  }
   res.json({
     rooms: distinct('shelves', 'room'),
     bookcases: distinct('shelves', 'bookcase'),
+    authors: [...byName.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })),
+    publishers: distinct('editions', 'publisher'),
     count: db.prepare('SELECT COUNT(*) AS n FROM books WHERE library_id = ?').get(lib).n,
     unshelved: db.prepare('SELECT COUNT(*) AS n FROM books WHERE library_id = ? AND shelf_id IS NULL').get(lib).n,
     avg_dims,

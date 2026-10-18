@@ -1848,12 +1848,12 @@ async function runImport() {
 // Metadata + refresh
 // ---------------------------------------------------------------------------
 // Distinct values powering the custom autocomplete dropdowns; refreshed by loadMeta.
-const META = { rooms: [], bookcases: [], avg_dims: {} };
+const META = { rooms: [], bookcases: [], authors: [], publishers: [], avg_dims: {} };
 
 async function loadMeta() {
   const meta = await api('/meta');
   $('#count').textContent = `${meta.count} book${meta.count === 1 ? '' : 's'}`;
-  Object.assign(META, { rooms: meta.rooms, bookcases: meta.bookcases, avg_dims: meta.avg_dims || {} });
+  Object.assign(META, { rooms: meta.rooms, bookcases: meta.bookcases, authors: meta.authors || [], publishers: meta.publishers || [], avg_dims: meta.avg_dims || {} });
   fillSelect('filterRoom', meta.rooms, 'All rooms');
   fillSelect('filterBookcase', meta.bookcases, 'All bookcases');
   populateGenreFilter();
@@ -1882,7 +1882,10 @@ function fillSelect(id, values, allLabel) {
 // Lightweight autocomplete to replace <datalist>, whose native popup covered the
 // keyboard on Android with no way to dismiss it. This dropdown sits in the dialog
 // below the field, is dismissible (tap away / Esc), and never blocks free typing.
-function attachCombo(input, getItems) {
+// `segmented` completes only the part after the last comma — for fields that
+// hold a comma-separated list, like a book's authors — leaving what is
+// already typed in place.
+function attachCombo(input, getItems, { segmented = false } = {}) {
   const label = input.closest('label');
   label.classList.add('combo');
   const list = document.createElement('ul');
@@ -1891,9 +1894,15 @@ function attachCombo(input, getItems) {
   label.appendChild(list);
   let active = -1;
 
+  const parts = () => {
+    const i = input.value.lastIndexOf(',');
+    return segmented && i >= 0
+      ? { prefix: input.value.slice(0, i + 1) + ' ', q: input.value.slice(i + 1) }
+      : { prefix: '', q: input.value };
+  };
   const close = () => { list.hidden = true; list.innerHTML = ''; active = -1; };
   const render = () => {
-    const q = input.value.trim().toLowerCase();
+    const q = parts().q.trim().toLowerCase();
     const items = getItems()
       .filter((v) => v.toLowerCase().includes(q) && v.toLowerCase() !== q)
       .slice(0, 6);
@@ -1902,7 +1911,11 @@ function attachCombo(input, getItems) {
     list.hidden = false;
     active = -1;
   };
-  const choose = (li) => { input.value = li.textContent; close(); input.focus(); };
+  const choose = (li) => {
+    input.value = (parts().prefix + li.textContent).replace(/^\s+/, '');
+    close();
+    input.focus();
+  };
 
   input.addEventListener('input', render);
   input.addEventListener('focus', render);
@@ -2490,6 +2503,8 @@ $('#closeGenreDialog').addEventListener('click', () => genreDialog.close());
 $('#cancelGenreBtn').addEventListener('click', () => genreDialog.close());
 $('#deleteGenreBtn').addEventListener('click', deleteGenre);
 genreForm.addEventListener('submit', saveGenre);
+attachCombo(bookForm.elements.authors, () => META.authors, { segmented: true });
+attachCombo(bookForm.elements.publisher, () => META.publishers);
 attachCombo(shelfForm.elements.room, () => META.rooms);
 attachCombo(shelfForm.elements.bookcase, () => META.bookcases);
 attachCombo(bookcaseForm.elements.room, () => META.rooms);

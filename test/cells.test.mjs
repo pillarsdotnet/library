@@ -145,6 +145,15 @@ test('meta reports average dimensions per cover type', async () => {
   assert.deepEqual(meta.avg_dims.softcover, { height_mm: 180, width_mm: 110, thickness_mm: 20 });
 });
 
+test('meta lists distinct authors and publishers for autocomplete', async () => {
+  await api('/books', send('POST', { title: 'Co-written', authors: 'Alpha Writer, beta writer', publisher: 'Smallhouse' }));
+  await api('/books', send('POST', { title: 'Solo', authors: 'Beta Writer', publisher: 'Smallhouse' }));
+  const meta = (await api('/meta')).body;
+  assert.ok(meta.authors.includes('Alpha Writer'), 'comma-separated names are split');
+  assert.equal(meta.authors.filter((a) => a.toLowerCase() === 'beta writer').length, 1, 'case-insensitive dedupe');
+  assert.equal(meta.publishers.filter((p) => p === 'Smallhouse').length, 1, 'publishers distinct');
+});
+
 test('spine typography is cached on the copy and cleared by the writes that change it', async () => {
   const s1 = await shelf({ room: 'Nook', bookcase: 'Case', label: 'one', cell: 'A1' });
   const s2 = await shelf({ room: 'Nook', bookcase: 'Case', label: 'two', cell: 'A2' });

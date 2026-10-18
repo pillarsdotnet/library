@@ -5,6 +5,18 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.7.0] — 2026-10-18
+
+### Added
+
+- **Author and publisher autocomplete.** The book dialog's author and
+  publisher fields suggest from what the library already holds — authors
+  split out of the comma-separated column, deduplicated case-insensitively;
+  publishers distinct — through the same dropdown rooms and bookcases use.
+  The authors field completes per segment: typing after a comma suggests and
+  completes only the name being typed, leaving the co-authors already
+  entered in place. `/api/meta` carries the two lists.
+
 ## [5.6.15] — 2026-10-18
 
 ### Changed

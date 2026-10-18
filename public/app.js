@@ -640,6 +640,11 @@ async function renderBookcaseVisual(el, shelves) {
     el.textContent = 'Could not load this bookcase: ' + err.message;
     return;
   }
+  // Fit nothing until the bundled spine font has loaded: measured against a
+  // fallback face, every fitted size, wrap and cached value would be wrong —
+  // and would differ per device, which the bundled font exists to prevent.
+  try { await document.fonts.load('10px Spine'); } catch { /* fall back to the stack */ }
+
   const byShelf = new Map();
   for (const b of books) {
     if (!byShelf.has(b.shelf_id)) byShelf.set(b.shelf_id, []);

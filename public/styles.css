@@ -580,6 +580,28 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
   min-height: 0;
   min-width: 0;
 }
+/* The spines' own font, bundled (served from the vendored npm package) and
+   pinned so every device measures and draws identical glyphs — system-ui
+   differs between a phone and a laptop, and with it every fitted size, wrap
+   and truncation. A condensed face, because that is what real book spines
+   use: more text per millimetre of thickness. */
+@font-face {
+  font-family: Spine;
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("vendor/fonts/roboto-condensed/roboto-condensed-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: Spine;
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("vendor/fonts/roboto-condensed/roboto-condensed-latin-ext-400-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 /* Laid out HORIZONTALLY — in the one writing mode whose baseline placement
    is dependable — in a box as wide as the cell is tall, then rotated 90°
    clockwise and centred by transform in polishSpineText(), which measures
@@ -588,6 +610,7 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
    the word sits on one line. The 0.15em-per-side cellpadding is enforced by
    the fitting pass rather than by CSS padding; only the cell clips. */
 .spine-text {
+  font-family: Spine, "Roboto Condensed", system-ui, sans-serif;
   position: absolute;
   top: 0;
   left: 0;

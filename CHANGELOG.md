@@ -5,6 +5,19 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.9] — 2026-10-18
+
+### Changed
+
+- **The spine font is bundled and pinned.** Spine text now renders in Roboto
+  Condensed (latin + latin-ext woff2, ~44KB, served from the vendored npm
+  package like the scanner libraries, so offline use keeps working) instead
+  of system-ui, which differs between a phone and a laptop — and with it
+  differed every fitted size, wrap and truncation. Fitting waits for the
+  font to load, so nothing is ever measured against a fallback face; a
+  condensed face also fits more text per millimetre of spine, which is why
+  real book spines use them.
+
 ## [5.6.8] — 2026-10-18
 
 ### Changed

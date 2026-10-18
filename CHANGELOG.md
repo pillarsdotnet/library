@@ -5,6 +5,16 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.15] — 2026-10-18
+
+### Changed
+
+- **Spines drop a leading article.** "Hobbit", not "The Hobbit" — the way
+  sorting already treats titles: on a spine the article spends scarce
+  millimetres saying nothing, and its characters now go to the words that
+  matter (and to larger type on thin spines). The tooltip keeps the full
+  title; the title/author split is computed from the text actually shown.
+
 ## [5.6.13] — 2026-10-18
 
 ### Fixed

@@ -5,6 +5,18 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.3] — 2026-10-18
+
+### Fixed
+
+- **Spine text centers with symmetrical blank space.** The rotated text box,
+  left at its automatic size, could come out wider than its stack of lines;
+  the lines then clung to its right edge (vertical-rl's line-start) and the
+  slack piled up on the left, reading as zero cellpadding on one side. The
+  box now hugs its lines exactly (`width: fit-content`), so the cell's
+  centering alone places it: left = right and top = bottom, measured to the
+  pixel in the driver.
+
 ## [5.6.2] — 2026-10-18
 
 ### Changed

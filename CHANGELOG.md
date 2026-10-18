@@ -5,6 +5,25 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.6] — 2026-10-18
+
+### Fixed
+
+- **Spine text is laid out flat and rotated by transform.** Where an engine
+  anchors sideways glyphs inside a vertical-rl line column is not reliably
+  the documented model, and every mis-guess showed as spines crowding one
+  edge ("Belladonna", "Heroes' Feast", "Apology"…). The text now lays out
+  HORIZONTALLY — the one writing mode whose baseline arithmetic is
+  dependable, with each baseline anchored by line index — is measured as
+  real glyph ink via canvas TextMetrics, and is then rotated 90° clockwise
+  and placed by transform so the ink sits dead centre in the cell. Verified
+  against the rendered pixels: a harness screenshots the bookcase and
+  measures every cell's ink margins; 29 of 30 cells are symmetric to within
+  2px, the 30th being a 4px-font cell where antialiasing dominates.
+- **The cell tag moved to the top-right corner.** Books pack from the left,
+  so the "A1" chip sat on the first books' heads and ate the tops of their
+  titles; the top-right corner is the part of a shelf that fills last.
+
 ## [5.6.5] — 2026-10-18
 
 ### Fixed

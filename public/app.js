@@ -385,11 +385,13 @@ function spineColor(url) {
 
 function renderSpine(b, scale) {
   const d = effectiveDims(b);
-  const w = Math.max(3, Math.round(d.thickness_mm * scale));
+  // Fractional pixels on purpose: rounding every spine to whole pixels can
+  // add up to visible overflow across a shelf that is in fact exactly full.
+  const w = Math.max(3, d.thickness_mm * scale);
   const spine = document.createElement('button');
   spine.type = 'button';
   spine.className = 'spine';
-  spine.style.width = w + 'px';
+  spine.style.width = w.toFixed(2) + 'px';
   spine.style.height = Math.round(d.height_mm * scale) + 'px';
   spine.style.background = SPINE_GREY;
   spine.style.color = contrastInk(SPINE_GREY);
@@ -401,15 +403,20 @@ function renderSpine(b, scale) {
   // is split between the cells by how much text each holds, so a long author
   // is not crushed under a short title or vice versa.
   const cachedSplit = b.spine_split > 0 && b.spine_split <= 1 ? b.spine_split : null;
-  const title = document.createElement('span');
-  title.className = 'spine-cell spine-title';
-  title.textContent = b.title || '';
+  const cellOf = (cls, text) => {
+    const cell = document.createElement('span');
+    cell.className = 'spine-cell ' + cls;
+    const inner = document.createElement('span');
+    inner.className = 'spine-text';
+    inner.textContent = text;
+    cell.appendChild(inner);
+    return cell;
+  };
+  const title = cellOf('spine-title', b.title || '');
   spine.appendChild(title);
   let share = 1;
   if (b.authors) {
-    const author = document.createElement('span');
-    author.className = 'spine-cell spine-author';
-    author.textContent = b.authors;
+    const author = cellOf('spine-author', b.authors);
     share = cachedSplit && cachedSplit < 1 ? cachedSplit : Math.min(0.88, Math.max(0.12,
       (b.title || '').length / (((b.title || '').length + b.authors.length) || 1)));
     title.style.flex = `0 1 ${(share * 100).toFixed(1)}%`;
@@ -441,17 +448,25 @@ function renderSpine(b, scale) {
 // larger. Binary search against real layout, because wrapped, rotated text
 // defies arithmetic. Needs the spine in the document.
 function fitSpineText(spine) {
-  const cells = spine.querySelectorAll('.spine-cell');
+  const cells = [...spine.querySelectorAll('.spine-cell')];
   if (!cells.length) return null;
-  const fits = () => [...cells].every((c) =>
-    c.scrollWidth <= c.clientWidth + 1 && c.scrollHeight <= c.clientHeight + 1);
+  // The text sits centered in its cell behind 0.15em of cellpadding per side,
+  // which scales with the very font being probed — hence fits() takes the
+  // candidate size and subtracts the padding it implies. Width overflow shows
+  // on the inner text's box (it never shrinks); height overflow shows as the
+  // clamped inner box scrolling.
+  const fits = (f) => cells.every((cell) => {
+    const text = cell.firstElementChild;
+    return text.getBoundingClientRect().width <= cell.getBoundingClientRect().width - 0.3 * f + 1
+      && text.scrollHeight <= text.clientHeight + 1;
+  });
   let lo = 0.5, hi = 14;
   spine.style.fontSize = hi + 'px';
-  if (fits()) return hi;
+  if (fits(hi)) return hi;
   for (let i = 0; i < 7; i++) {
     const mid = (lo + hi) / 2;
     spine.style.fontSize = mid.toFixed(2) + 'px';
-    if (fits()) lo = mid; else hi = mid;
+    if (fits(mid)) lo = mid; else hi = mid;
   }
   spine.style.fontSize = lo.toFixed(2) + 'px';
   return lo;

@@ -5,9 +5,38 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [5.5.0] — 2026-10-18
 
 ### Added
+
+- **Shelf cells and visual bookcases.** Each shelf can carry a `cell` — its
+  spot in the bookcase grid as a spreadsheet-style coordinate, "A1" the top
+  left — separate from the label, which stays free text. On the Shelves tab a
+  bookcase with cells renders as that grid: every book a spine scaled from its
+  dimensions (or, unmeasured, the average of the library's hardbacks or
+  softcovers, falling back to constants measured over the Bobbalisa library),
+  colored by averaging the left border of its cover image — grey without a
+  cover — and titled down the spine in black or white, whichever contrasts.
+  Clicking a spine opens the book; a List/Visual toggle per bookcase is
+  remembered in the browser. `/api/meta` now reports `avg_dims` per cover type.
+- **Bookcase colors.** The bookcase dialog gains a color: a grid of standard
+  swatches, or 📷 Scan, which photographs a patch of the real bookcase and
+  averages every pixel. The color backs the visual grid (white by default),
+  lives on each shelf row (`shelves.bookcase_color`), and so follows moves,
+  merges and copies; `PUT`/`POST /api/bookcases` accept `color`.
+- **Add bookcase.** A new dialog (and `POST /api/bookcases` without `from`)
+  creates a rows × columns bookcase in one go, each shelf named for its cell
+  until it earns a real label.
+- **Copy dimensions across a bookcase.** Saving a shelf that has a cell offers
+  to copy its depth to every shelf of the bookcase, its width down the column,
+  and its height across the row — each preselected only where it would change
+  something, and nothing written without confirmation.
+- **One-time cell backfill.** A database gaining the `cell` column derives
+  cells from the labels: pure coordinates ("1L", "2M") become cells and are
+  relabelled to the new notation ("1L" → "A1"; columns are whichever of L/M/R
+  the bookcase uses, left to right), labels that only lead with a row number
+  ("2", "1 - Top") get column A and keep their text, and anything else is left
+  alone — as is any bookcase whose labels would derive the same cell twice.
 
 - **Listening on a Unix socket.** `SOCKET_PATH` serves on a socket file
   instead of `PORT`, for a web server in front, and `SOCKET_MODE` sets who may

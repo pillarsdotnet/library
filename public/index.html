@@ -78,6 +78,7 @@
   <div id="tab-shelves" class="tab-panel" hidden>
     <section class="toolbar">
       <p class="hint grow">Model your shelves with real dimensions to see how full they are and what still fits.</p>
+      <button id="addBookcaseBtn">+ Add bookcase</button>
       <button id="addShelfBtn" class="primary">+ Add shelf</button>
     </section>
     <main id="shelfList"></main>
@@ -287,7 +288,11 @@
         <label>Room <input name="room" autocomplete="off" /></label>
         <label>Bookcase <input name="bookcase" autocomplete="off" /></label>
       </div>
-      <label>Shelf label <input name="label" required placeholder="e.g. Shelf 3 / Top left" /></label>
+      <div class="two-col">
+        <label>Shelf label <input name="label" required placeholder="e.g. Shelf 3 / Horror" /></label>
+        <label>Cell <input name="cell" autocomplete="off" placeholder="e.g. A1" /></label>
+      </div>
+      <p class="hint">Cell = where the shelf sits in the bookcase grid: column letter + row number, A1 top left. The label stays free text.</p>
       <fieldset>
         <legend>Dimensions</legend>
         <div class="three-col">
@@ -320,6 +325,17 @@
         <label>Bookcase <input name="bookcase" autocomplete="off" /></label>
       </div>
       <p class="hint"><b>Edit</b> renames or moves every shelf in this bookcase; naming a bookcase that already exists in that room merges the two. <b>Copy</b> makes a new, empty bookcase with the same shelves under the new names.</p>
+      <fieldset>
+        <legend>Color</legend>
+        <div id="bookcaseSwatches" class="swatches"></div>
+        <div class="swatch-row">
+          <button type="button" id="bookcaseScanBtn">📷 Scan</button>
+          <button type="button" id="bookcaseDefaultBtn">Default</button>
+          <span id="bookcaseColorLabel" class="hint">Default (white)</span>
+        </div>
+        <input type="file" id="bookcaseColorFile" accept="image/*" capture="environment" hidden />
+        <p class="hint">Backs the bookcase's visual view. Scan photographs a patch of the real bookcase and uses its average color.</p>
+      </fieldset>
       <div class="dialog-actions">
         <span class="grow"></span>
         <button type="button" id="cancelBookcaseBtn">Cancel</button>
@@ -327,6 +343,44 @@
         <button type="submit" class="primary">Edit</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- ============ ADD-BOOKCASE DIALOG ============ -->
+  <dialog id="addBookcaseDialog" class="pad-dialog">
+    <form id="addBookcaseForm" method="dialog">
+      <div class="dialog-head">
+        <h2>Add bookcase</h2>
+        <button type="button" class="icon" id="closeAddBookcaseDialog" aria-label="Close">✕</button>
+      </div>
+      <div class="two-col">
+        <label>Room <input name="room" autocomplete="off" /></label>
+        <label>Bookcase <input name="bookcase" required autocomplete="off" /></label>
+      </div>
+      <div class="two-col">
+        <label>Rows <input name="rows" type="number" min="1" max="99" value="5" required /></label>
+        <label>Columns <input name="columns" type="number" min="1" max="26" value="1" required /></label>
+      </div>
+      <p class="hint">Makes one shelf per cell, named for its spot in the grid — A1 top left — until you give it a label of its own.</p>
+      <div class="dialog-actions">
+        <span class="grow"></span>
+        <button type="button" id="cancelAddBookcaseBtn">Cancel</button>
+        <button type="submit" class="primary">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ COPY-DIMENSIONS DIALOG ============ -->
+  <dialog id="dimCopyDialog" class="pad-dialog">
+    <div class="dialog-head"><h2>Copy dimensions?</h2></div>
+    <p class="hint">Shelves in a bookcase usually share sizes: one depth throughout, one width per column, one height per row.</p>
+    <label class="checkbox" id="dimCopyDepthRow"><input type="checkbox" id="dimCopyDepth" /> <span></span></label>
+    <label class="checkbox" id="dimCopyWidthRow"><input type="checkbox" id="dimCopyWidth" /> <span></span></label>
+    <label class="checkbox" id="dimCopyHeightRow"><input type="checkbox" id="dimCopyHeight" /> <span></span></label>
+    <div class="dialog-actions">
+      <span class="grow"></span>
+      <button type="button" id="dimCopySkipBtn">Skip</button>
+      <button type="button" id="dimCopyApplyBtn" class="primary">Copy</button>
+    </div>
   </dialog>
 
   <!-- ============ DUPLICATE-ISBN DIALOG ============ -->

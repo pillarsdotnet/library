@@ -84,7 +84,17 @@ db.exec(`
     library_id      INTEGER REFERENCES libraries(id),
     room            TEXT,
     bookcase        TEXT,
-    label           TEXT NOT NULL,     -- e.g. "Shelf 3" / "Top left"
+    label           TEXT NOT NULL,     -- free text: "Shelf 3" / "Horror" / a branch name
+    -- Where the shelf sits in its bookcase's grid, as a spreadsheet-style
+    -- coordinate: column letter + row number, "A1" the top left. Separate from
+    -- the label on purpose — the label says what is ON the shelf, the cell says
+    -- WHERE it is.
+    cell            TEXT,
+    -- The bookcase's colour (#rrggbb), NULL meaning the default white. On each
+    -- shelf rather than in a bookcases table, because a bookcase IS only the
+    -- shelves sharing a room and a name: a colour here follows the bookcase
+    -- through every move, merge and copy with no bookkeeping of its own.
+    bookcase_color  TEXT,
     height_mm       INTEGER,           -- vertical clearance
     width_mm        INTEGER,           -- horizontal run available for spines
     depth_mm        INTEGER,           -- front-to-back depth
@@ -821,6 +831,64 @@ function legacyAllowlist() {
   const joined = db.prepare(`INSERT OR IGNORE INTO library_users (library_id, user_id)
                              SELECT l.id, u.id FROM libraries l, users u WHERE u.id = ?`).run(OWNER_ID).changes;
   if (joined) console.log(`👤 user ${OWNER_ID} is now a member of ${joined} more library(ies)`);
+}
+
+// ─── shelf grid cells and bookcase colours ──────────────────────────────────────
+// Databases from before the columns existed gain them here, and the cell is
+// backfilled ONCE, from the labels — only when the column is first added, so a
+// label somebody writes afterwards is theirs whatever it looks like:
+//
+//   - A label that is nothing but a grid coordinate — row number + L/M/R, like
+//     "1L" or "2M" — becomes that cell, and the label is rewritten to the
+//     cell's name ("1L" → "A1"): it carried no information beyond the position.
+//     Columns are whichever of L/M/R the bookcase uses, left to right, so L/R
+//     with no M maps to A/B while L/M/R maps to A/B/C.
+//   - A label that only LEADS with a row number ("2", "1 - Top") gets a cell in
+//     column A and keeps its label.
+//   - Anything else ("Horror", a library branch name) is left alone.
+{
+  const cols = db.prepare('PRAGMA table_info(shelves)').all().map((c) => c.name);
+  if (!cols.includes('bookcase_color')) db.exec('ALTER TABLE shelves ADD COLUMN bookcase_color TEXT');
+  if (!cols.includes('cell')) {
+    db.exec('ALTER TABLE shelves ADD COLUMN cell TEXT');
+
+    const GRID = /^(\d+)\s*([LMR])$/i;   // "1L" … "6R": a coordinate and nothing else
+    const ROW = /^(\d+)\s*(?:[-–].*)?$/; // "2", "1 - Top": a row in a one-column bookcase
+    const byCase = new Map();
+    // A sufficiently old database may lack room/bookcase here; every shelf is
+    // then one nameless bookcase, which is what NULLs group as anyway.
+    const sel = ['id', 'library_id', 'room', 'bookcase', 'label']
+      .map((c) => (c === 'id' || cols.includes(c) ? c : `NULL AS ${c}`)).join(', ');
+    for (const s of db.prepare(`SELECT ${sel} FROM shelves`).all()) {
+      const k = `${s.library_id}|${s.room ?? ''}|${s.bookcase ?? ''}`;
+      if (!byCase.has(k)) byCase.set(k, []);
+      byCase.get(k).push(s);
+    }
+    const setCell = db.prepare('UPDATE shelves SET cell = @cell WHERE id = @id');
+    const relabel = db.prepare('UPDATE shelves SET cell = @cell, label = @cell WHERE id = @id');
+    db.transaction(() => {
+      for (const shelves of byCase.values()) {
+        const grid = shelves.map((s) => ({ s, m: GRID.exec(s.label) })).filter((x) => x.m);
+        let plan;
+        if (grid.length) {
+          const letters = [...new Set(grid.map((x) => x.m[2].toUpperCase()))]
+            .sort((a, b) => 'LMR'.indexOf(a) - 'LMR'.indexOf(b));
+          plan = grid.map((x) => ({
+            id: x.s.id,
+            cell: String.fromCharCode(65 + letters.indexOf(x.m[2].toUpperCase())) + Number(x.m[1]),
+            stmt: relabel,
+          }));
+        } else {
+          plan = shelves.map((s) => ({ s, m: ROW.exec(s.label) })).filter((x) => x.m)
+            .map((x) => ({ id: x.s.id, cell: 'A' + Number(x.m[1]), stmt: setCell }));
+        }
+        // Two shelves deriving the same cell means these labels were not really
+        // coordinates; leave the whole bookcase for a human to assign.
+        if (new Set(plan.map((p) => p.cell)).size !== plan.length) continue;
+        for (const p of plan) p.stmt.run({ id: p.id, cell: p.cell });
+      }
+    })();
+  }
 }
 
 // ─── the `books` compatibility view ─────────────────────────────────────────────

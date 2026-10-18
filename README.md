@@ -19,8 +19,22 @@ both iOS Safari and Android Chrome.
 - **Physical description** — hardback/paperback/e-book/audiobook, dust-jacket
   present/missing/N/A, and book dimensions (height × width × spine thickness).
 - **Genre / subgenre** with autocomplete from what you've already entered.
-- **Shelves as real objects** — model each shelf with room, bookcase, label, and
-  dimensions (height × width × depth). Books are placed *on* a shelf.
+- **Shelves as real objects** — model each shelf with room, bookcase, label,
+  grid **cell** (its spot in the bookcase: column letter + row number, A1 top
+  left — separate from the label, which stays free text like "Horror" or a
+  branch name), and dimensions (height × width × depth). Books are placed *on*
+  a shelf. **Add bookcase** creates a whole rows × columns grid of shelves at
+  once, and after you measure one shelf the app offers to copy the depth to the
+  whole bookcase, the width down its column, and the height across its row.
+- **Visual bookcases** — a bookcase whose shelves have cells is drawn as the
+  table those cells describe, each book a spine scaled from its real (or
+  presumed) dimensions and colored by averaging the left border of its cover
+  image (grey when there is no cover), with the title and author written down
+  the spine in whichever of black or white reads better. Unmeasured books are
+  presumed the average size of the library's other hardbacks or softcovers.
+  The bookcase's own color — picked from a grid of standard colors, or scanned
+  by photographing the real bookcase and averaging the photo's pixels — backs
+  the table; unset means white.
 - **Move, rename or copy a bookcase** — click a bookcase's name on the Shelves
   tab and give it a room and a name. **Edit** moves or renames it: every shelf
   in it, and every book on them, goes along, and naming a bookcase that already
@@ -54,7 +68,7 @@ SQLite — see [`db.js`](./db.js). Book data is split along the ISBN:
 | --- | --- | --- |
 | `editions` | Title, authors, publisher, published date, page count, **format**, **dimensions**, stock cover artwork, metadata source | Everything an ISBN determines, and therefore identical for every copy |
 | `copies` | Dust jacket, shelf, status, loan, library borrowing + due date, notes, a photograph of *this* copy | Everything true of one physical object on one shelf |
-| `shelves` | Room, bookcase, label, clearances | Where copies live |
+| `shelves` | Room, bookcase, label, grid cell, bookcase color, clearances | Where copies live |
 | `libraries` | Name | A tenant: everything above belongs to exactly one |
 | `users`, `library_users` | Email address and encrypted Open Library keys; who belongs to which library | Who may sign in to what |
 

@@ -635,22 +635,39 @@ async function renderBookcaseVisual(el, shelves) {
 
   const openShelf = (s, cell) => {
     cell.classList.add('viz-shelf');
-    const tag = document.createElement('span');
-    tag.className = 'viz-tag';
-    tag.textContent = s.cell && s.label !== s.cell ? `${s.cell} · ${s.label}` : (s.cell || s.label);
-    tag.title = 'Edit this shelf';
-    tag.onclick = (e) => { e.stopPropagation(); openEditShelf(s); };
-    cell.appendChild(tag);
     for (const b of shelfBooks(s)) cell.appendChild(renderSpine(b, scale));
   };
 
+  // The shelf's label lives in the cellspacing BELOW its cell — the strip of
+  // bookcase between rows — where no book can ever stand, sized to that
+  // strip. Positioned from the cell's own offsets once the grid is in the
+  // document, so it needs no arithmetic of its own.
+  const labelInk = contrastInk(color);
+  const labelShelf = (s, cell, container) => {
+    const lab = document.createElement('button');
+    lab.type = 'button';
+    lab.className = 'viz-label';
+    lab.textContent = s.cell && s.label !== s.cell ? `${s.cell} · ${s.label}` : (s.cell || s.label);
+    lab.title = `${lab.textContent} — edit this shelf`;
+    lab.onclick = () => openEditShelf(s);
+    lab.style.color = labelInk;
+    lab.style.left = cell.offsetLeft + 'px';
+    lab.style.top = (cell.offsetTop + cell.offsetHeight) + 'px';
+    lab.style.width = cell.offsetWidth + 'px';
+    lab.style.height = FRAME + 'px';
+    lab.style.lineHeight = FRAME + 'px';
+    lab.style.fontSize = Math.max(5, FRAME - 2) + 'px';
+    container.appendChild(lab);
+  };
+
+  const labeled = [];
   for (const [ri, r] of rows.entries()) {
     for (const c of cols) {
       const cell = document.createElement('div');
       cell.className = 'viz-cell';
       cell.style.height = Math.round(rowH[ri] * scale) + 'px';
       const p = at(c, r);
-      if (p) openShelf(p.s, cell);
+      if (p) { openShelf(p.s, cell); labeled.push([p.s, cell]); }
       else cell.classList.add('viz-void');  // no shelf at this coordinate
       table.appendChild(cell);
     }
@@ -670,6 +687,7 @@ async function renderBookcaseVisual(el, shelves) {
 
   el.appendChild(table);
   fitFresh(table);
+  for (const [s, cellEl] of labeled) labelShelf(s, cellEl, table);
 
   for (const s of spare) {
     const rowEl = document.createElement('div');
@@ -682,6 +700,7 @@ async function renderBookcaseVisual(el, shelves) {
     rowEl.appendChild(cell);
     el.appendChild(rowEl);
     fitFresh(rowEl);
+    labelShelf(s, cell, rowEl);
   }
   if (Object.keys(newFonts).length) {
     api('/spine-fonts', { method: 'POST', headers: json(), body: JSON.stringify({ fonts: newFonts }) })

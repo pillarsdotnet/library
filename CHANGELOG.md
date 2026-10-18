@@ -5,6 +5,16 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.2] — 2026-10-18
+
+### Changed
+
+- **Virtual bookcases show only their book counts.** A bookcase none of whose
+  shelves has any dimension — an e-reader, a public library's branches, a
+  want-to-buy list — is virtual: its shelf cards drop the "— × — × — mm" line
+  and the "Set a width to track capacity." nag and show just "N books".
+  Setting any dimension on any shelf makes the whole bookcase physical again.
+
 ## [5.6.1] — 2026-10-18
 
 ### Changed

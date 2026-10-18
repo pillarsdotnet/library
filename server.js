@@ -124,7 +124,8 @@ const DEFAULT_PAGE = 20;         // books per page unless the client asks otherw
 const BOOK_SELECT = `b.id, b.edition_id, b.isbn, b.isbn13, b.ol_work_id, b.title, b.authors,
   b.publisher, b.published_date, b.page_count, b.format, b.height_mm, b.width_mm,
   b.thickness_mm, b.source, b.jacket, b.shelf_id, b.status, b.loaned_to,
-  b.is_library_book, b.library_name, b.due_date, b.notes, b.created_at, b.updated_at,
+  b.is_library_book, b.library_name, b.due_date, b.notes, b.spine_font, b.spine_split,
+  b.created_at, b.updated_at,
   b.cover_file, b.cover_token, b.cover_source_file, b.cover_source_token, b.edition_cover_url`;
 
 // Turn the stored tokens back into the cover URLs the API has always returned.
@@ -551,6 +552,15 @@ router.post('/api/books', (req, res) => {
   res.status(201).json(coverRef(attachGenres([oneBook(id, lib)])[0]));
 });
 
+// The cached spine typography (see /api/spine-fonts) is derived from the
+// title, the authors, the book's size, the shelf the copy sits on and that
+// shelf's size: whichever of those changes, the cache is cleared and the
+// browser fits the text afresh on the next view.
+const SPINE_EDITION_FIELDS = ['title', 'authors', 'height_mm', 'thickness_mm', 'format'];
+const clearSpineForEdition = db.prepare('UPDATE copies SET spine_font = NULL, spine_split = NULL WHERE edition_id = ? AND library_id = ?');
+const clearSpineForCopy = db.prepare('UPDATE copies SET spine_font = NULL, spine_split = NULL WHERE id = ? AND library_id = ?');
+const clearSpineForShelf = db.prepare('UPDATE copies SET spine_font = NULL, spine_split = NULL WHERE shelf_id = ? AND library_id = ?');
+
 router.put('/api/books/:id', (req, res) => {
   const lib = req.library.id;
   const current = db.prepare('SELECT id, edition_id FROM copies WHERE id = ? AND library_id = ?').get(req.params.id, lib);
@@ -590,6 +600,8 @@ router.put('/api/books/:id', (req, res) => {
     }
     if (Object.keys(copy).length) update('copies', current.id, copy, lib);
     if (req.body.genre_ids !== undefined) setBookGenres(editionId, req.body.genre_ids, lib);
+    if (SPINE_EDITION_FIELDS.some((f) => edition[f] !== undefined)) clearSpineForEdition.run(editionId, lib);
+    else if (copy.shelf_id !== undefined) clearSpineForCopy.run(current.id, lib);
   });
   save();
   res.json(coverRef(attachGenres([oneBook(req.params.id, lib)])[0]));
@@ -1018,7 +1030,35 @@ router.put('/api/shelves/:id', (req, res) => {
   const data = pick(req.body, SHELF_COLS);
   if (!cellAccepted(data, req.library.id, res, current)) return;
   update('shelves', req.params.id, data, req.library.id);
+  // Resized shelves redraw their spines, so their cached typography is stale.
+  if (['height_mm', 'width_mm', 'depth_mm'].some((f) => data[f] !== undefined)) {
+    clearSpineForShelf.run(req.params.id, req.library.id);
+  }
   res.json(oneShelf(req.params.id, req.library.id));
+});
+
+// The visual view's spine typography, computed in the browser the first time
+// a spine is drawn and cached on the copy so later views skip the fitting
+// pass. `font` is the px size at a scale of one pixel per millimetre — the
+// view multiplies by its own scale, so one cache serves a phone and a desktop
+// — and `split` is the title cell's share of the spine, (0, 1]. Cleared by
+// the writes that change what the spine shows (see clearSpineFor* above).
+router.post('/api/spine-fonts', (req, res) => {
+  const { fonts } = req.body;
+  if (!fonts || typeof fonts !== 'object') return res.status(400).json({ error: 'fonts is required' });
+  const set = db.prepare(`UPDATE copies SET spine_font = @font, spine_split = @split
+                          WHERE id = @id AND library_id = @lib`);
+  let saved = 0;
+  db.transaction(() => {
+    for (const [id, v] of Object.entries(fonts)) {
+      const font = Number(v?.font);
+      const split = Number(v?.split);
+      if (!Number.isFinite(font) || font <= 0 || font > 100) continue;
+      if (!Number.isFinite(split) || split <= 0 || split > 1) continue;
+      saved += set.run({ id: Number(id), lib: req.library.id, font, split }).changes;
+    }
+  })();
+  res.json({ saved });
 });
 
 // A bookcase is only the shelves that share a room and a bookcase name, so the

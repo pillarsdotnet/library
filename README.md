@@ -29,8 +29,13 @@ both iOS Safari and Android Chrome.
 - **Visual bookcases** — a bookcase whose shelves have cells is drawn as the
   table those cells describe, each book a spine scaled from its real (or
   presumed) dimensions and colored by averaging the left border of its cover
-  image (grey when there is no cover), with the title and author written down
-  the spine in whichever of black or white reads better. Unmeasured books are
+  image (grey when there is no cover). The spine is a two-celled mini-table —
+  title above, author below, both written down the spine in whichever of black
+  or white reads better, word-wrapped and shrunk to fit so nothing is ever
+  truncated (zoom in for the tiny ones); each book independently gets the
+  largest size that fits, and the fitted typography is cached per copy and
+  recomputed only when the book, its shelf, or the shelf's size changes.
+  Unmeasured books are
   presumed the average size of the library's other hardbacks or softcovers.
   The bookcase's own color — picked from a grid of standard colors, or scanned
   by photographing the real bookcase and averaging the photo's pixels — backs

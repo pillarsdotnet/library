@@ -5,6 +5,20 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.13] — 2026-10-18
+
+### Fixed
+
+- **Text wraps at the width the fit allows.** The measuring box spanned the
+  cell's full length while the fit permitted length-minus-cellpadding, so a
+  line could lay out just past the limit WITHOUT wrapping — failing a fit
+  that a wrap would have passed, cascading into a floor-clamp and an
+  ellipsis for text that fit comfortably ("The curse of the House of
+  Foskett", over by 0.1px on a phone). The box is now exactly as long as
+  the fit's limit for the padding in force, so wrapping and fitting agree;
+  the Foskett title now renders whole on the phone at 4.26px, and the whole
+  regression set shows zero truncations on either viewport.
+
 ## [5.6.12] — 2026-10-18
 
 ### Fixed

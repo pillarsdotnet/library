@@ -5,6 +5,36 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.0] — 2026-10-18
+
+### Changed
+
+- **Spines show the whole title and author.** Each spine in the visual view is
+  now a two-celled mini-table — title above, author below, a hairline between
+  — with the text rotated as before but word-wrapped and shrunk to fit rather
+  than ever truncated: nothing ellipsizes, however small it must go (zoom the
+  page to read the tiny ones). Title and author within one book share a font
+  size, found per book by binary search against real layout, so neighbouring
+  books differ; the spine's length is split between the two cells in
+  proportion to how much text each holds, so a short title with a long author
+  gets a small title cell and a large author cell.
+
+### Added
+
+- **Cached spine typography.** The fitted font size (stored normalised to a
+  scale of 1 px/mm, so one value serves phone and desktop) and the title
+  cell's share are saved per copy — `copies.spine_font`, `copies.spine_split`,
+  written through `POST /api/spine-fonts` — so later views skip the fitting
+  pass. The server clears the cache whenever an input changes: the title,
+  authors, dimensions or format of the edition, the copy moving to another
+  shelf, or the shelf's dimensions changing.
+
+### Removed
+
+- **The schema-upgrade and label→cell backfill code from 5.5.0.** The one
+  known deployment's database is migrated by hand (and already was); a fresh
+  database starts with every column. No general upgrade path, less to carry.
+
 ## [5.5.0] — 2026-10-18
 
 ### Added

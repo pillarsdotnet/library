@@ -4,7 +4,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
-import Database from 'better-sqlite3';
 
 const PORT = 3241;   // grep `PORT = ` across test/ before picking one: 3233 was the owner test's stub SMTP
 const BASE = `http://127.0.0.1:${PORT}/library`;
@@ -146,46 +145,39 @@ test('meta reports average dimensions per cover type', async () => {
   assert.deepEqual(meta.avg_dims.softcover, { height_mm: 180, width_mm: 110, thickness_mm: 20 });
 });
 
-test('adding the cell column backfills it from the labels, once', async () => {
-  // Shelves whose labels an upgrade must interpret. Created through the API,
-  // then the new columns are dropped to reproduce a pre-upgrade database.
-  for (const label of ['1L', '1M', '1R', '2L', '2R']) await shelf({ room: 'Up', bookcase: 'Wall', label });
-  for (const label of ['1 - Top', '2', '5 - Bottom']) await shelf({ room: 'Up', bookcase: 'Desk', label });
-  await shelf({ room: 'Up', bookcase: 'Odd', label: 'Horror' });
-  for (const label of ['1', '1 - Top']) await shelf({ room: 'Up', bookcase: 'Dup', label });
+test('spine typography is cached on the copy and cleared by the writes that change it', async () => {
+  const s1 = await shelf({ room: 'Nook', bookcase: 'Case', label: 'one', cell: 'A1' });
+  const s2 = await shelf({ room: 'Nook', bookcase: 'Case', label: 'two', cell: 'A2' });
+  const b = (await api('/books', send('POST', { title: 'Spine Book', authors: 'A. Writer', shelf_id: s1.id }))).body;
+  const book = async () => (await api('/books/' + b.id)).body;
+  const cache = (font, split) => api('/spine-fonts', send('POST', { fonts: { [b.id]: { font, split } } }));
 
-  await stop();
-  {
-    const db = new Database(DB_PATH);
-    db.exec('ALTER TABLE shelves DROP COLUMN cell; ALTER TABLE shelves DROP COLUMN bookcase_color;');
-    db.close();
-  }
-  await start();
+  let r = await cache(3.21, 0.62);
+  assert.equal(r.body.saved, 1);
+  let got = await book();
+  assert.equal(got.spine_font, 3.21);
+  assert.equal(got.spine_split, 0.62);
 
-  const byLabel = new Map((await allShelves()).filter((s) => s.room === 'Up').map((s) => [`${s.bookcase}|${s.label}`, s]));
-  // Pure coordinates became cells AND their labels were rewritten: with L, M
-  // and R all present the columns map to A, B, C.
-  for (const [old, cell] of [['1L', 'A1'], ['1M', 'B1'], ['1R', 'C1'], ['2L', 'A2'], ['2R', 'C2']]) {
-    assert.ok(!byLabel.has(`Wall|${old}`), `label ${old} should be gone`);
-    assert.equal(byLabel.get(`Wall|${cell}`)?.cell, cell);
-  }
-  // Leading row numbers got column A and KEPT their labels.
-  assert.equal(byLabel.get('Desk|1 - Top').cell, 'A1');
-  assert.equal(byLabel.get('Desk|2').cell, 'A2');
-  assert.equal(byLabel.get('Desk|5 - Bottom').cell, 'A5');
-  // Free-text labels were left alone.
-  assert.equal(byLabel.get('Odd|Horror').cell, null);
-  // Two labels deriving one cell means they were not coordinates: whole
-  // bookcase skipped.
-  assert.equal(byLabel.get('Dup|1').cell, null);
-  assert.equal(byLabel.get('Dup|1 - Top').cell, null);
+  r = await cache(-1, 2);   // nonsense is ignored, not stored
+  assert.equal(r.body.saved, 0);
+  assert.equal((await book()).spine_font, 3.21);
 
-  // One-time: a coordinate-looking label written AFTER the upgrade is the
-  // user's own and survives the next restart untouched.
-  const late = await shelf({ room: 'Up', bookcase: 'Wall', label: '3L' });
-  await stop();
-  await start();
-  const again = (await api(`/shelves/${late.id}`)).body;
-  assert.equal(again.label, '3L');
-  assert.equal(again.cell, null);
+  await api('/books/' + b.id, send('PUT', { shelf_id: s2.id }));
+  assert.equal((await book()).spine_font, null, 'moving the copy clears it');
+
+  await cache(3, 0.5);
+  await api('/shelves/' + s2.id, send('PUT', { height_mm: 280 }));
+  assert.equal((await book()).spine_font, null, 'resizing the shelf clears it');
+
+  await cache(3, 0.5);
+  await api('/books/' + b.id, send('PUT', { title: 'Spine Book, Revised' }));
+  assert.equal((await book()).spine_font, null, 'retitling clears it');
+
+  await cache(3, 0.5);
+  await api('/books/' + b.id, send('PUT', { notes: 'just a note' }));
+  assert.equal((await book()).spine_font, 3, 'an unrelated edit keeps it');
 });
+
+// The one-time label→cell backfill that 5.5.0 carried is gone: the only
+// deployment's database was migrated by hand, and a fresh database starts
+// with the columns. See CHANGELOG 5.6.0.

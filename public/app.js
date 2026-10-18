@@ -32,6 +32,12 @@ const MIN_SPINE_FONT = 3.4;
 // Antialiasing bleeds roughly a pixel past the measured ink; fitting flush
 // against the cell let 4px type kiss and cross the edge.
 const INK_MARGIN = 0.75;
+// A spine never renders narrower than one line of floor-size type plus its
+// margins: a thin paperback — or a magazine — draws WIDER than its true
+// scale rather than losing its words to a bare ellipsis, and the shelf cell
+// widens to hold the sum (see renderBookcaseVisual), so a full shelf still
+// contains everything it physically holds.
+const MIN_SPINE_PX = Math.ceil(MIN_SPINE_FONT * 0.95 + 2 * INK_MARGIN);
 // When this library has no catalogued book of a type to average, fall back to
 // the averages measured over the Bobbalisa library (2026-10-18).
 const FALLBACK_DIMS = {
@@ -408,7 +414,7 @@ function renderSpine(b, scale) {
   const d = effectiveDims(b);
   // Fractional pixels on purpose: rounding every spine to whole pixels can
   // add up to visible overflow across a shelf that is in fact exactly full.
-  const w = Math.max(3, d.thickness_mm * scale);
+  const w = Math.max(MIN_SPINE_PX, d.thickness_mm * scale);
   const spine = document.createElement('button');
   spine.type = 'button';
   spine.className = 'spine';
@@ -615,7 +621,10 @@ function polishSpineText(spine) {
         text.textContent = full.slice(0, mid).trimEnd() + '…';
         if (inside(0)) lo = mid; else hi = mid - 1;
       }
-      text.textContent = lo > 0 ? full.slice(0, lo).trimEnd() + '…' : '…';
+      // The whole string surviving the search means only the cellpadding had
+      // to give way — no ellipsis for text that is all there.
+      text.textContent = lo >= full.length ? full
+        : lo > 0 ? full.slice(0, lo).trimEnd() + '…' : '…';
       if (lo === 0 && !inside(0)) text.textContent = '';
     }
 
@@ -681,13 +690,23 @@ async function renderBookcaseVisual(el, shelves) {
   const avail = Math.max(280, el.clientWidth || 600) - FRAME * (cols.length + 1) - 2;
   const scale = Math.min(0.5, Math.max(0.08, avail / totalMm));
 
+  // Rendered spine widths can exceed true scale (MIN_SPINE_PX floors them),
+  // so each column must hold its widest shelf's SUM of rendered spines, or
+  // a full shelf of thin books would overflow the very cell drawn for it.
+  const spinePx = (b) => Math.max(MIN_SPINE_PX, effectiveDims(b).thickness_mm * scale);
+  const shelfPx = (s) => shelfBooks(s).reduce((n, b) => n + spinePx(b), 0);
+  const colPx = cols.map((c, i) => Math.max(
+    Math.round(colW[i] * scale),
+    Math.ceil(Math.max(0, ...rows.map((r) => (at(c, r) ? shelfPx(at(c, r).s) : 0)))) + 1,
+  ));
+
   const color = shelves.map((s) => s.bookcase_color).find(Boolean) || '#ffffff';
   const table = document.createElement('div');
   table.className = 'bookcase-visual';
   table.style.background = color;
   table.style.gap = FRAME + 'px';
   table.style.padding = FRAME + 'px';
-  table.style.gridTemplateColumns = colW.map((w) => Math.round(w * scale) + 'px').join(' ');
+  table.style.gridTemplateColumns = colPx.map((w) => w + 'px').join(' ');
 
   const openShelf = (s, cell) => {
     cell.classList.add('viz-shelf');
@@ -752,6 +771,7 @@ async function renderBookcaseVisual(el, shelves) {
     const cell = document.createElement('div');
     cell.className = 'viz-cell';
     cell.style.height = Math.round(shelfHeightMm(s) * scale) + 'px';
+    cell.style.minWidth = (Math.ceil(shelfPx(s)) + 1) + 'px';
     openShelf(s, cell);
     rowEl.appendChild(cell);
     el.appendChild(rowEl);

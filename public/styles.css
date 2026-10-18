@@ -591,6 +591,12 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
      the whole word fits on one line. */
   flex: 0 0 auto;
   max-height: 100%;
+  /* The box hugs its stack of lines exactly. An orthogonal-flow box left at
+     width:auto can come out wider than its lines; the lines then cling to its
+     right edge (the line-start edge of vertical-rl) and all the slack piles
+     up on the left, which read as zero cellpadding on one side. With the box
+     tight, the cell's flex centering alone places it, symmetrically. */
+  width: fit-content;
 }
 
 /* ---------- Bookcase color picker ---------- */

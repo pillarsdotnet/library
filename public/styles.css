@@ -552,7 +552,7 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
 .spine {
   flex: 0 0 auto;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
   overflow: hidden;
   margin: 0;
   padding: 3px 0;
@@ -561,14 +561,20 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
   cursor: pointer;
   box-shadow: inset -1px 0 rgba(0, 0, 0, 0.3), inset 1px 0 rgba(255, 255, 255, 0.12);
 }
-.spine-text {
-  /* Rotated 90° clockwise, so the title reads top-to-bottom along the spine. */
+/* A spine is a two-celled mini-table: title above, author below. The text is
+   rotated 90° clockwise (reads top-to-bottom), shown in full — wrapped onto
+   further lines and shrunk by fitSpineText() rather than ever truncated. */
+.spine-cell {
   writing-mode: vertical-rl;
-  line-height: 1;
-  white-space: nowrap;
+  line-height: 1.1;
   overflow: hidden;
-  text-overflow: ellipsis;
-  max-height: 100%;
+  overflow-wrap: break-word;
+  text-align: center;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.spine-author {
+  border-top: 1px solid rgba(128, 128, 128, 0.45);
 }
 
 /* ---------- Bookcase color picker ---------- */

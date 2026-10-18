@@ -394,19 +394,67 @@ function renderSpine(b, scale) {
   spine.style.background = SPINE_GREY;
   spine.style.color = contrastInk(SPINE_GREY);
   spine.title = [b.title, b.authors].filter(Boolean).join(' — ');
-  if (w >= 9) {
-    const text = document.createElement('span');
-    text.className = 'spine-text';
-    text.style.fontSize = Math.max(7, Math.min(11, Math.round(w * 0.72))) + 'px';
-    text.textContent = [b.title, b.authors].filter(Boolean).join(' · ');
-    spine.appendChild(text);
+
+  // The spine is a two-celled column: title above, author below, each shown
+  // IN FULL — wrapped and shrunk to fit rather than truncated, however small
+  // that makes them (zooming the page is the magnifier). The spine's length
+  // is split between the cells by how much text each holds, so a long author
+  // is not crushed under a short title or vice versa.
+  const cachedSplit = b.spine_split > 0 && b.spine_split <= 1 ? b.spine_split : null;
+  const title = document.createElement('span');
+  title.className = 'spine-cell spine-title';
+  title.textContent = b.title || '';
+  spine.appendChild(title);
+  let share = 1;
+  if (b.authors) {
+    const author = document.createElement('span');
+    author.className = 'spine-cell spine-author';
+    author.textContent = b.authors;
+    share = cachedSplit && cachedSplit < 1 ? cachedSplit : Math.min(0.88, Math.max(0.12,
+      (b.title || '').length / (((b.title || '').length + b.authors.length) || 1)));
+    title.style.flex = `0 1 ${(share * 100).toFixed(1)}%`;
+    author.style.flex = `0 1 ${((1 - share) * 100).toFixed(1)}%`;
+    spine.appendChild(author);
   }
+
+  // Cached typography (font at scale 1, title share) renders as-is; a spine
+  // without it is fitted after it lands in the document, and the result goes
+  // back to the server for next time. See fitSpineText and /api/spine-fonts.
+  spine.dataset.id = b.id;
+  spine.dataset.split = share.toFixed(3);
+  if (b.spine_font > 0) {
+    spine.style.fontSize = (b.spine_font * scale).toFixed(2) + 'px';
+    spine.dataset.fit = 'cached';
+  }
+
   spine.onclick = () => openEditBook(b);
   spineColor(b.cover_url).then((c) => {
     spine.style.background = c;
     spine.style.color = contrastInk(c);
   });
   return spine;
+}
+
+// The largest font size at which BOTH of a spine's cells hold their whole
+// text: title and author share one size, so the pair shrinks together, while
+// each BOOK fits independently — a neighbour with less text may well be
+// larger. Binary search against real layout, because wrapped, rotated text
+// defies arithmetic. Needs the spine in the document.
+function fitSpineText(spine) {
+  const cells = spine.querySelectorAll('.spine-cell');
+  if (!cells.length) return null;
+  const fits = () => [...cells].every((c) =>
+    c.scrollWidth <= c.clientWidth + 1 && c.scrollHeight <= c.clientHeight + 1);
+  let lo = 0.5, hi = 14;
+  spine.style.fontSize = hi + 'px';
+  if (fits()) return hi;
+  for (let i = 0; i < 7; i++) {
+    const mid = (lo + hi) / 2;
+    spine.style.fontSize = mid.toFixed(2) + 'px';
+    if (fits()) lo = mid; else hi = mid;
+  }
+  spine.style.fontSize = lo.toFixed(2) + 'px';
+  return lo;
 }
 
 async function renderBookcaseVisual(el, shelves) {
@@ -488,7 +536,19 @@ async function renderBookcaseVisual(el, shelves) {
       table.appendChild(cell);
     }
   }
+  // Fit whatever has no cached typography, and send the results back so the
+  // next view of these copies skips the whole pass.
+  const newFonts = {};
+  const fitFresh = (root) => {
+    for (const s of root.querySelectorAll('.spine')) {
+      if (s.dataset.fit === 'cached') continue;
+      const font = fitSpineText(s);
+      if (font) newFonts[s.dataset.id] = { font: +(font / scale).toFixed(3), split: +s.dataset.split };
+    }
+  };
+
   el.appendChild(table);
+  fitFresh(table);
 
   for (const s of spare) {
     const rowEl = document.createElement('div');
@@ -500,6 +560,11 @@ async function renderBookcaseVisual(el, shelves) {
     openShelf(s, cell);
     rowEl.appendChild(cell);
     el.appendChild(rowEl);
+    fitFresh(rowEl);
+  }
+  if (Object.keys(newFonts).length) {
+    api('/spine-fonts', { method: 'POST', headers: json(), body: JSON.stringify({ fonts: newFonts }) })
+      .catch(() => { /* a cache miss next time, nothing worse */ });
   }
 }
 

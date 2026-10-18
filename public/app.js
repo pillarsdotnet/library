@@ -238,9 +238,13 @@ function renderShelves() {
         caseEl.appendChild(wrap);
         renderBookcaseVisual(wrap, shelves);  // fills in asynchronously
       } else {
+        // One measured shelf anywhere makes the bookcase physical; with no
+        // dimensions at all it is virtual (e-readers, a public library, a
+        // wishlist) and its cards show only what is on them.
+        const physical = shelves.some((s) => s.height_mm || s.width_mm || s.depth_mm);
         const grid = document.createElement('div');
         grid.className = 'grid';
-        for (const s of shelves) grid.appendChild(renderShelfCard(s));
+        for (const s of shelves) grid.appendChild(renderShelfCard(s, physical));
         caseEl.appendChild(grid);
       }
       roomEl.appendChild(caseEl);
@@ -249,13 +253,19 @@ function renderShelves() {
   }
 }
 
-function renderShelfCard(s) {
+// `physical` is a fact about the BOOKCASE, not the shelf: one measured shelf
+// anywhere in it makes the whole bookcase physical. A virtual bookcase — the
+// eBooks readers, a public library's branches, a want-to-buy list — has no
+// dimensions to show or nag about, so its cards carry just the book count.
+function renderShelfCard(s, physical = true) {
   const card = document.createElement('article');
   card.className = 'card shelf-card';
 
   const pct = s.fill_pct;
   const barClass = s.overfull ? 'bar over' : pct != null && pct > 90 ? 'bar warn' : 'bar';
-  const capacity = s.width_mm == null
+  const capacity = !physical
+    ? `<p class="cap-line">${s.book_count} book${s.book_count === 1 ? '' : 's'}</p>`
+    : s.width_mm == null
     ? '<p class="hint">Set a width to track capacity.</p>'
     : `<div class="${barClass}"><span style="width:${Math.min(pct ?? 0, 100)}%"></span></div>
        <p class="cap-line">
@@ -276,7 +286,7 @@ function renderShelfCard(s) {
   card.innerHTML = `
     <div class="card-body grow">
       <h3>${esc(s.label)}${s.cell ? ` <span class="badge muted" title="Position in the bookcase grid">⊞ ${esc(s.cell)}</span>` : ''}</h3>
-      <p class="loc">📐 ${s.width_mm ? dispDim(s.width_mm) + ' W' : '—'} × ${s.height_mm ? dispDim(s.height_mm) + ' H' : '—'} × ${s.depth_mm ? dispDim(s.depth_mm) + ' D' : '—'} ${UNIT}</p>
+      ${physical ? `<p class="loc">📐 ${s.width_mm ? dispDim(s.width_mm) + ' W' : '—'} × ${s.height_mm ? dispDim(s.height_mm) + ' H' : '—'} × ${s.depth_mm ? dispDim(s.depth_mm) + ' D' : '—'} ${UNIT}</p>` : ''}
       ${capacity}
       ${flags.length ? `<div class="badges">${flags.map((f) => `<span class="badge muted">${f}</span>`).join('')}</div>` : ''}
       <div class="shelf-actions">

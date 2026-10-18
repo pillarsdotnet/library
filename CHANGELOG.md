@@ -5,6 +5,16 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.6.7] — 2026-10-18
+
+### Changed
+
+- **Shelf labels moved into the cellspacing below their shelf.** The label
+  ("A1", or "A1 · Horror") now sits centered in the strip of bare bookcase
+  under its cell, in ink that contrasts with the bookcase's color, sized to
+  the strip (8px in the 10px gap) — so it cannot overlap a book, however
+  full the shelf. Clicking it still edits the shelf.
+
 ## [5.6.6] — 2026-10-18
 
 ### Fixed

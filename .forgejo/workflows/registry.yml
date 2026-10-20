@@ -1,0 +1,65 @@
+# Copyright (c) 2026 Robert August Vincent II <pillarsdotnet@gmail.com>
+# Co-author: Claude Code.
+# Build the home-library binary packages of every push to main and upload them
+# to the Forgejo Debian registry, one distribution per supported Ubuntu
+# series.
+#
+# This is the Forgejo counterpart of .github/workflows/launchpad.yml: GitHub
+# uploads source packages for Launchpad to build, Forgejo builds the debs
+# itself (the registry only hosts them) inside a container of each target
+# series. This file lives in .forgejo/workflows, which GitHub never reads, so
+# it runs on Forgejo alone and needs no server_url guard.
+#
+# Not noble: it has Node 18, and the PPA (which the registry mirrors) carries
+# Node 24 and libvips 8.18 for the newer series only.
+#
+# Needs secret REGISTRY_TOKEN: a Forgejo access token with write:package.
+name: Registry
+
+on:
+  push:
+    branches: [main]
+    # A push that changes nothing but documentation or CI uploads nothing; its
+    # commits still reach the changelog with the next push that does.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/**"
+      - ".forgejo/**"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - series: resolute
+            release: "26.04"
+          - series: stonking
+            release: "26.10"
+    runs-on: docker
+    # The real series image, not a runner image: the build must see the
+    # series' own toolchain, plus the registry's Node 24 and libvips, so the
+    # result matches what Launchpad's builders produce. These images carry no
+    # node, so the checkout is plain git rather than actions/checkout.
+    container:
+      image: ubuntu:${{ matrix.release }}
+    steps:
+      - name: Install git and the Debian build tools
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            git ca-certificates curl devscripts dpkg-dev python3
+      - name: Clone with full history
+        # The changelog lists every commit since the last upload.
+        run: |
+          git clone --branch main "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" src
+          cd src
+          git checkout "$GITHUB_SHA"
+          git config --global --add safe.directory "$PWD"
+      - name: Build and upload
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        working-directory: src
+        run: .forgejo/registry-upload ${{ matrix.series }} ${{ matrix.release }}

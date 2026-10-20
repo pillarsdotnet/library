@@ -1,0 +1,135 @@
+#!/bin/bash
+# Copyright (c) 2026 Robert August Vincent II <pillarsdotnet@gmail.com>
+# Co-author: Claude Code.
+#
+# Build the home-library binary packages of HEAD for one Ubuntu series and
+# upload them to the Forgejo Debian registry. The Launchpad counterpart
+# (.github/ppa-upload) uploads SOURCE packages and lets Launchpad build; this
+# registry only hosts debs, so the build happens here, inside a container of
+# the target series, with the registry itself as the apt source that carries
+# the Node 24 and libvips 8.18 build dependencies the archive lacks.
+#
+# Usage: .forgejo/registry-upload <series> <release>   e.g. "resolute 26.04"
+#
+# The version scheme matches ppa-upload exactly, so the same snapshot carries
+# the same version string in the PPA and in the registry. The node-modules
+# tree is vendored the same way too: what package-lock.json pins, no install
+# scripts, no development or optional packages, no prebuilt binaries.
+#
+# Needs the full git history, the Debian build tools, root in a throwaway
+# container (it edits apt sources and the work tree), and REGISTRY_TOKEN (a
+# Forgejo token with write:package). A 409 on upload means this version is
+# already in the registry; not an error.
+set -euo pipefail
+
+series="$1"
+release="$2"
+SOURCE=home-library
+REGISTRY="${REGISTRY:-https://forgejo.bobbalisa.org/api/packages/pillarsdotnet/debian}"
+REGISTRY_USER="${REGISTRY_USER:-pillarsdotnet}"
+
+repo="$(git rev-parse --show-toplevel)"
+cd "$repo"
+
+sha="$(git rev-parse --short=7 HEAD)"
+stamp="$(TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M%S HEAD)"
+base="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
+upstream="$base+git$stamp.$sha"
+version="$upstream-1~ppa1~ubuntu$release.1"
+
+# The newest version of this source in the registry's distribution for this
+# series: home-library is arch amd64 and -failover arch all, so check both
+# indexes. A missing index just means nothing was published yet.
+last="$( { curl -fsS "$REGISTRY/dists/$series/main/binary-amd64/Packages" 2>/dev/null;
+           curl -fsS "$REGISTRY/dists/$series/main/binary-all/Packages" 2>/dev/null; } |
+  awk -v p="$SOURCE" '$0 == "Package: " p {f=1} f && /^Version:/ {print $2; f=0}' |
+  sort -V | tail -1)"
+last_sha="$(sed -n 's/^.*+git[0-9]*\.\([0-9a-f]\{7,\}\)-.*$/\1/p' <<<"$last")"
+echo "newest in the registry ($series): ${last:-nothing}; this commit: $version" >&2
+
+if [ -n "$last_sha" ] && git cat-file -e "$last_sha^{commit}" 2>/dev/null; then
+  if git merge-base --is-ancestor HEAD "$last_sha"; then
+    echo "$sha is already in the registry, or older than what is; nothing to upload" >&2
+    exit 0
+  fi
+  range="$last_sha..HEAD"
+else
+  range="HEAD^!"
+fi
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+subjects="$work/subjects"
+git log --no-merges --format=%s "$range" >"$subjects"
+
+# The registry joins the container's apt sources: nodejs (>= 24), libnode-dev
+# and libvips-dev live there, not in the archive. The registry mirrors the
+# PPA, so this is the same archive Launchpad builds from.
+install -d /etc/apt/keyrings
+curl -fsS "$REGISTRY/repository.key" -o /etc/apt/keyrings/forgejo-registry.asc
+echo "deb [signed-by=/etc/apt/keyrings/forgejo-registry.asc] $REGISTRY $series main" \
+  >/etc/apt/sources.list.d/forgejo-registry.list
+apt-get update -qq
+
+# npm drives the vendor step below; its nodejs dependency resolves to the
+# registry's Node 24, the same one the build-dependencies name.
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends npm >/dev/null
+apt-get build-dep -y ./ >"$work/build-dep.log" 2>&1 || {
+  cat "$work/build-dep.log" >&2
+  exit 1
+}
+
+# The production node_modules tree, exactly as ppa-upload vendors it. It lands
+# at the tree root as node-modules/, where debian/rules expects the component
+# tarball's contents; this clone is throwaway, so nothing is cleaned up.
+modules="$work/modules"
+mkdir "$modules"
+git archive HEAD package.json package-lock.json | tar -x -C "$modules"
+(cd "$modules" && npm ci --omit=dev --omit=optional --ignore-scripts --no-audit --no-fund >&2)
+# better-sqlite3 ships prebuilt addons for other platforms; none is used.
+find "$modules/node_modules" -type d -name prebuilds -prune -exec rm -rf {} +
+if find "$modules/node_modules" -name '*.node' | grep .; then
+  echo "prebuilt addons left in node-modules" >&2
+  exit 1
+fi
+rm -rf node-modules
+mv "$modules/node_modules" node-modules
+
+cp debian/changelog "$work/changelog.committed"
+maintainer="$(sed -n 's/^Maintainer: //p' debian/control)"
+date="$(date -R)"
+
+python3 - debian/changelog "$work/changelog.committed" "$subjects" \
+  "$SOURCE" "$version" "$series" "$sha" "$stamp" "$maintainer" "$date" <<'EOF'
+import sys
+import textwrap
+
+path, committed, subjects, source, version, series, sha, stamp, maintainer, date = sys.argv[1:]
+day = f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}"
+lines = [f"{source} ({version}) {series}; urgency=medium", ""]
+lines.append(f"  * New upstream snapshot, from git {sha} ({day}).")
+for subject in open(subjects).read().splitlines():
+    # Subjects here read as sentences already, some led by the binary package
+    # they touch ("home-library-failover: ..."), so they go in as they are.
+    lines += textwrap.wrap(subject, 74, initial_indent="    - ", subsequent_indent="      ")
+lines += ["", f" -- {maintainer}  {date}", "", ""]
+open(path, "w").write("\n".join(lines) + open(committed).read())
+EOF
+
+dpkg-buildpackage -b -us -uc >"$work/build.log" 2>&1 || {
+  cat "$work/build.log" >&2
+  exit 1
+}
+git checkout -- debian/changelog
+
+failed=""
+for deb in ../*_"$version"_*.deb; do
+  code="$(curl -sS -o /dev/null -w '%{http_code}' -u "$REGISTRY_USER:$REGISTRY_TOKEN" \
+    --upload-file "$deb" "$REGISTRY/pool/$series/main/upload")"
+  case "$code" in
+    201) echo "uploaded $(basename "$deb") to $series" >&2 ;;
+    409) echo "$(basename "$deb") is already in $series; leaving it" >&2 ;;
+    *)   echo "upload of $(basename "$deb") to $series failed: HTTP $code" >&2
+         failed="$failed $deb" ;;
+  esac
+done
+[ -z "$failed" ]

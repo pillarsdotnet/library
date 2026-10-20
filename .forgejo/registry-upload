@@ -71,8 +71,18 @@ echo "deb [signed-by=/etc/apt/keyrings/forgejo-registry.asc] $REGISTRY $series m
 apt-get update -qq
 
 # npm drives the vendor step below; its nodejs dependency resolves to the
-# registry's Node 24, the same one the build-dependencies name.
+# registry's Node 24, the same one the build-dependencies name. resolute's
+# archive npm (9.2.0~ds) cannot read this lockfile under Node 24 — npm ci
+# claims package-lock.json does not exist — so anything older than npm 10 is
+# replaced with the current npm, the same one GitHub's runners carry for
+# ppa-upload's vendor step. The vendored tree depends only on the lockfile,
+# so the npm that unpacks it does not change what is built.
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends npm >/dev/null
+if ! dpkg --compare-versions "$(npm --version)" ge 10; then
+  npm install -g --no-audit --no-fund 'npm@^11' >/dev/null 2>&1
+  hash -r
+  echo "archive npm was too old; bootstrapped npm $(npm --version)" >&2
+fi
 apt-get build-dep -y ./ >"$work/build-dep.log" 2>&1 || {
   cat "$work/build-dep.log" >&2
   exit 1

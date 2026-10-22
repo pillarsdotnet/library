@@ -114,4 +114,3 @@ fi
 
 printf '%s' "$now" > "$STATE_DIR/last-synced"
 log "synced $(stat -c %s "$SNAP") bytes + $(find "$COVERS_DIR" -type f 2>/dev/null | wc -l) cover file(s) to $PEER"
-

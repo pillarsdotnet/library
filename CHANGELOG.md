@@ -35,16 +35,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cell's full length while the fit permitted length-minus-cellpadding, so a
   line could lay out just past the limit WITHOUT wrapping — failing a fit
   that a wrap would have passed, cascading into a floor-clamp and an
-  ellipsis for text that fit comfortably ("The curse of the House of
-  Foskett", over by 0.1px on a phone). The box is now exactly as long as
+  ellipsis for text that fit comfortably
+  (`The curse of the House of Foskett`, over by 0.1px on a phone). The box is now exactly as long as
   the fit's limit for the padding in force, so wrapping and fitting agree;
-  the Foskett title now renders whole on the phone at 4.26px, and the whole
+  the `Foskett` title now renders whole on the phone at 4.26px, and the whole
   regression set shows zero truncations on either viewport.
 
 ### Changed
 
 - **Wrapped spine text breaks near the centre.** Two-line titles and authors
-  balance their lines ("The curse of the / House of Foskett") instead of
+  balance their lines (`The curse of the / House of Foskett`) instead of
   packing the first line full and leaving a stub — `text-wrap: balance`,
   which the fitter's layout-based measurement picks up for free. (Shipped in
   this release's commit; noted here after the fact.)
@@ -57,12 +57,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   floor and the minimum spine width are absolute pixels, which quietly broke
   the cache's assumption that a fitted size scales with the view: a size
   fitted on the phone could wrap and overflow on the laptop ("Violet
-  Thistlewaite…" wrapped and needlessly ellipsized; "Mystekos Fall/Winter"
-  ellipsized on one device, whole on the other). Now a fit that lands on the
+  Thistlewaite…" wrapped and needlessly truncated; `Mystekos Fall/Winter`
+  truncated on one device, whole on the other). Now a fit that lands on the
   floor is never cached (it refits per view, cheaply), and a cached size
   that fails on the current device is refitted locally before anything is
-  ellipsized — truncation is the last resort, after refitting, after the
-  cellpadding has already been given up.
+  truncated — truncation is the last resort, after refitting, after the
+  `cellpadding` has already been given up.
 
 ## [5.6.11] — 2026-10-18
 
@@ -73,7 +73,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   at phone scale — or, one day, a magazine — widens past its true scale
   rather than collapsing to a bare ellipsis, and each shelf cell widens to
   the sum of its rendered spines, so a full shelf still contains everything
-  it physically holds. The cellpadding already yields before any text does;
+  it physically holds. The `cellpadding` already yields before any text does;
   and text that survives whole is no longer suffixed with a spurious
   ellipsis, which the truncation pass used to append even when nothing had
   been dropped.
@@ -82,7 +82,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Room headings count bookcases, not shelves.** "Livingroom · 4 bookcases"
+- **Room headings count bookcases, not shelves.** `Livingroom · 4 bookcases`
   reads at the level the heading groups by; the shelf counts stay on each
   bookcase's own line.
 
@@ -90,9 +90,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **The spine font is bundled and pinned.** Spine text now renders in Roboto
-  Condensed (latin + latin-ext woff2, ~44KB, served from the vendored npm
-  package like the scanner libraries, so offline use keeps working) instead
+- **The spine font is bundled and pinned.** Spine text now renders in
+  `Roboto Condensed` (`latin` + `latin-ext` woff2, ~44KB, served from the
+  bundled `npm` package like the scanner libraries, so offline use keeps working) instead
   of system-ui, which differs between a phone and a laptop — and with it
   differed every fitted size, wrap and truncation. Fitting waits for the
   font to load, so nothing is ever measured against a fallback face; a
@@ -106,8 +106,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **A readable floor for spine text: 3.4px, then ellipsis.** Calibrated just
   under the ~3.7px that the smallest spine a reader accepted fits at; a 7mm
   spine's ~2.3px smear was unreadable at any zoom. A spine whose text cannot
-  fit at the floor keeps the floor, gives up its cellpadding, and is
-  ellipsized along the spine instead — longest prefix that fits, found
+  fit at the floor keeps the floor, gives up its `cellpadding`, and is
+  truncated along the spine instead — longest prefix that fits, found
   against real layout, down to a bare "…" on a spine too thin for any glyph
   — with the full text still in the tooltip. The floor also holds at render
   time, so a cached font scaled down by a smaller viewport clamps up and
@@ -116,15 +116,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **Hairline overflow at the cell edge on thin spines.** Antialiasing bleeds
-  about a pixel past the measured ink, which let ~4px type ("Mystekos
-  Spring"'s author) kiss and cross the cell's right edge; the fit now keeps
+  about a pixel past the measured ink, which let the ~4px author text of
+  `Mystekos Spring` kiss and cross the cell's right edge; the fit now keeps
   a 0.75px margin on every side.
 
 ## [5.6.7] — 2026-10-18
 
 ### Changed
 
-- **Shelf labels moved into the cellspacing below their shelf.** The label
+- **Shelf labels moved into the `cellspacing` below their shelf.** The label
   ("A1", or "A1 · Horror") now sits centered in the strip of bare bookcase
   under its cell, in ink that contrasts with the bookcase's color, sized to
   the strip (8px in the 10px gap) — so it cannot overlap a book, however
@@ -163,7 +163,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   centre ("Heroes' Feast"). The text is now measured as actual ink — each
   rendered line read back from layout, its glyphs measured by canvas
   TextMetrics from its baseline — the fit is strict against that ink plus
-  the cellpadding, the final font sits 3% below the maximum so rounding can
+  the `cellpadding`, the final font sits 3% below the maximum so rounding can
   never clip, the text box no longer clips (only the cell does), and a
   transform centres the measured ink in the cell both ways. Live cached
   typography is cleared at deploy so every spine refits.
@@ -174,7 +174,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Spine centering holds for every text.** `width: fit-content` still
   inherited the engine's estimate of how many lines the rotated text needs,
-  and for some texts ("Brigands & Breadknives") that is a whole line more
+  and for some texts (`Brigands & Breadknives`) that is a whole line more
   than the breaks produce — the phantom column defeated the centering. After
   the font settles, each cell's text box is now pinned to its measured ink
   extent (the union of its line rectangles), which cannot disagree with the
@@ -187,7 +187,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Spine text centers with symmetrical blank space.** The rotated text box,
   left at its automatic size, could come out wider than its stack of lines;
   the lines then clung to its right edge (vertical-rl's line-start) and the
-  slack piled up on the left, reading as zero cellpadding on one side. The
+  slack piled up on the left, reading as zero `cellpadding` on one side. The
   box now hugs its lines exactly (`width: fit-content`), so the cell's
   centering alone places it: left = right and top = bottom, measured to the
   pixel in the driver.
@@ -227,7 +227,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Spines show the whole title and author.** Each spine in the visual view is
   now a two-celled mini-table — title above, author below, a hairline between
   — with the text rotated as before but word-wrapped and shrunk to fit rather
-  than ever truncated: nothing ellipsizes, however small it must go (zoom the
+  than ever truncated: nothing is cut short, however small it must go (zoom the
   page to read the tiny ones). Title and author within one book share a font
   size, found per book by binary search against real layout, so neighbouring
   books differ; the spine's length is split between the two cells in
@@ -259,7 +259,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   left — separate from the label, which stays free text. On the Shelves tab a
   bookcase with cells renders as that grid: every book a spine scaled from its
   dimensions (or, unmeasured, the average of the library's hardbacks or
-  softcovers, falling back to constants measured over the Bobbalisa library),
+  softcovers, falling back to constants measured over the `Bobbalisa` library),
   colored by averaging the left border of its cover image — grey without a
   cover — and titled down the spine in black or white, whichever contrasts.
   Clicking a spine opens the book; a List/Visual toggle per bookcase is
@@ -356,13 +356,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Node is no longer pinned to 24.18.1.** The pin guarded against
   [nodejs/node#65446](https://github.com/nodejs/node/issues/65446), which
-  aborts an addon built on `node::ObjectWrap` when garbage collection frees one
-  of its objects. `better-sqlite3` 11 was such an addon; 12 onwards uses
+  aborts an `addon` built on `node::ObjectWrap` when garbage collection frees one
+  of its objects. `better-sqlite3` 11 was such an `addon`; 12 onwards uses
   `Napi::ObjectWrap` and is not affected. The new stress test aborts on
   `better-sqlite3` 11.10.0 with Node 24.21.0 and passes on 13, on both Debian
   and Alpine. The Docker image and CI now follow `node:24`.
 - **Smaller Docker image: 654 MB to 287 MB.** `better-sqlite3` compiles from
-  source on every install, so the image carried the compiler toolchain
+  source on every install, so the image carried the compiler `toolchain`
   (`python3`, `make`, `g++`, about 280 MB) it needed only while building. A
   two-stage build now compiles in the first stage and copies just
   `node_modules` into a clean runtime image.
@@ -370,7 +370,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **The Alpine image would have judged due dates in UTC.** `node:alpine` ships
-  no zoneinfo, so its C library ignored `TZ` and so did SQLite, while Node's own
+  no `zoneinfo`, so its C library ignored `TZ` and so did SQLite, while Node's own
   timezone data made the startup log name the right zone. The Alpine image
   installs `tzdata`.
 - A session from before libraries is now honoured for the **first** library,
@@ -385,7 +385,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Add book starts on the filtered shelf.** With the Books tab filtered to a
   shelf, the Add book dialog now opens with that shelf already chosen, instead
-  of Unshelved. With no shelf filter it still opens Unshelved.
+  of `Unshelved`. With no shelf filter it still opens `Unshelved`.
 
 ## [5.2.0] — 2026-09-28
 
@@ -402,12 +402,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **No known vulnerabilities or deprecated packages.** `npm audit` reported 12
   (7 high, 5 moderate) and `npm ci` warned that `prebuild-install` is
   deprecated. `better-sqlite3` 13 ships its prebuilt binaries in the package and
-  no longer needs `prebuild-install`; `sharp` 0.35.5 fixes its libvips and
-  libheif advisories, and an override moves the scanner library's bundled
+  no longer needs `prebuild-install`; `sharp` 0.35.5 fixes its `libvips` and
+  `libheif` advisories, and an override moves the scanner library's bundled
   `sharp` onto it; `npm audit fix` updated `qs` under `express` and the linters'
-  dependencies. ESLint 9 turned out to be deprecated as well, which `npm ci`
-  never said: it is now ESLint 10, whose `no-useless-assignment` rule removed
-  four dead `= null` initialisers.
+  dependencies. `ESLint` 9 turned out to be deprecated as well, which `npm ci`
+  never said: it is now `ESLint` 10, whose `no-useless-assignment` rule removed
+  four dead `= null` `initialisers`.
 - **A new `npm run check:deps`** refuses any vulnerability or deprecated
   package. The `pre-commit` hook and CI both run it.
 
@@ -424,13 +424,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **The phone header still wrapped on CI's wider fonts**, with 13px to spare
+- **The phone header still wrapped on the wider fonts in CI**, with 13px to spare
   where 24px is asked for. Every header button, not only ⚙, now has narrower
   side padding.
 - **Node 24.18.1, pinned.** Every 24.x release from 24.19.0 on can abort
   `better-sqlite3` while freeing a statement during garbage collection
   ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)). It crashed
-  a test file on CI's 24.21.0, and a floating `node:24-slim` would have shipped
+  a test file on CI at 24.21.0, and a floating `node:24-slim` would have shipped
   it. The Docker image and CI stay on 24.18.1 until that is fixed.
 
 ## [5.0.1] — 2026-09-28
@@ -445,7 +445,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **Node.js 24.** The Docker image, CI and `engines` move from Node 20 and 22
-  to 24, and CI's actions move to their Node 24 releases.
+  to 24, and the CI actions move to their Node 24 releases.
 
 ## [5.0.0] — 2026-09-27
 
@@ -465,7 +465,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   genres; a name in use admits its members and nobody else. The session
   carries the library, one at a time; a remembered sign-in (`hl_last`) fills
   the form in next time and offers Google the same account.
-- **The header names the library**: "📚 Bobbalisa Library" instead of "Home
+- **The header names the library**: `📚 Bobbalisa Library` instead of "Home
   Library", in the page and the tab title.
 - **An Account screen (⚙)** to switch library, sign out, manage the library's
   members (any member may add or remove others; not themselves, not the last),
@@ -481,7 +481,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `OPENLIBRARY_ACCESS_KEY` and `OPENLIBRARY_SECRET_KEY` are no longer read;
   with sign-in off, nothing changes.
 - **Authorization is rows, not a file.** On the first start the library
-  "Bobbalisa" is created, everything already in the database becomes its, and
+  `Bobbalisa` is created, everything already in the database becomes its, and
   the addresses in `allowed-emails.txt` become its members. The file is not
   read again. Sessions from before this carry across for anyone in exactly one
   library.
@@ -539,8 +539,8 @@ database since the code that broke went in.
 - **A dropped request is retried instead of counted as a rejection.** Six field
   sends failed in one session with a bare `fetch failed` — a network error that
   never reached Open Library, which nonetheless dropped each row into `failed`
-  looking just like a refusal. A send now retries a *thrown* fetch a few times
-  with a short backoff, while a *returned* response — even a `403` — is still
+  looking just like a refusal. A send now retries a _thrown_ fetch a few times
+  with a short `backoff`, while a _returned_ response — even a `403` — is still
   taken as Open Library's answer and never retried. `login` retries the same
   way. Retrying a write is made safe by re-reading the record before every
   attempt: if a previous PUT actually landed and only its reply was lost, the
@@ -563,12 +563,12 @@ database since the code that broke went in.
 ### Fixed
 
 - **A refusal from Open Library's front door no longer reads as the catalogue
-  disagreeing with us.** Some requests are answered by the nginx in front of
+  disagreeing with us.** Some requests are answered by the `nginx` in front of
   Open Library and never reach it at all; the message now says so. One cause is
   identified by name: a `PUT` whose body contains a quote followed by `--` is
   refused with a bare `403`. That is the SQL comment injection signature, and a
   MARC-derived description routinely ends `"--` before its source attribution —
-  so a record carrying one cannot have *any* blank field filled through the API,
+  so a record carrying one cannot have _any_ blank field filled through the API,
   by us or by anyone, because the whole record goes back on every `PUT`.
 
 ## [4.2.1] — 2026-09-22
@@ -618,8 +618,8 @@ database since the code that broke went in.
   before opening Open Library's form, and skipping it is a dead end rather than
   an error: the form opens a file picker, and a picker cannot offer a file that
   was never saved. The buttons now read **1 · ↓ Save image** and **2 · Upload it
-  there ↗**, with a line saying that the picker opens *Photos* on a phone while
-  the saved image is under *Files → Downloads*.
+  there ↗**, with a line saying that the picker opens _Photos_ on a phone while
+  the saved image is under _Files → Downloads_.
 
 ## [4.1.0] — 2026-09-22
 
@@ -656,13 +656,13 @@ database since the code that broke went in.
 ### Fixed
 
 - **"Open Library rejected the cover (405)" now says what actually happened.**
-  Covers are the one contribution that goes through a browser *form* rather than
+  Covers are the one contribution that goes through a browser _form_ rather than
   the JSON API, and Open Library has put those behind a human-verification
   challenge that a bot account cannot pass. Measured against the live site: an
   authenticated `PUT` of a record reaches the handler, an authenticated
   multipart `POST` to `add-cover` gets `405` from their front end — before
   routing, since a nonexistent OLID gets it too — and an anonymous one is sent
-  to `/verify_human`. Nothing here is retryable and nothing is misconfigured, so
+  to `/verify_human`. Nothing here can be retried and nothing is configured wrongly, so
   the message says so instead of echoing a status code that reads like a bug in
   this app. **Every other contribution is unaffected.**
 - A cover POST that is redirected to the verification or login page is no longer
@@ -675,7 +675,7 @@ database since the code that broke went in.
 
 - **A sign-in now slides instead of expiring on a fixed date.** It was an
   absolute 30 days from signing in, so somebody who used the library daily was
-  still bounced to Google on the thirtieth day. It is now ten days of *not*
+  still bounced to Google on the thirtieth day. It is now ten days of _not_
   visiting, and any visit pushes that back out — so a regular visitor never
   signs in again, and an account that goes quiet is signed out ten days later.
   The cookie is re-issued only once a session is past its half-life, so browsing
@@ -700,13 +700,13 @@ database since the code that broke went in.
   script claims the floating IP only once the app answers `200`, and it asked
   for `/library/` — which sign-in turns into a `401`. A perfectly healthy node
   looked dead, so the VIP was never assigned and `vip_down_local` had already
-  withdrawn its tailnet route, which is what reaches phones off the LAN. nginx
+  withdrawn its `tailnet` route, which is what reaches phones off the LAN. `nginx`
   stayed bound to the VIP through `ip_nonlocal_bind`, so connections hung rather
   than being refused, and the address did not even ping.
 
   There is now a `/healthz` route, mounted in front of the gate, and
   `deploy.sh`, `failover.sh` and `failover-peer.sh` all ask for it. A probe
-  carries no identity and cannot be sent through an OAuth redirect, so refusing
+  carries no identity and cannot be sent through an `OAuth` redirect, so refusing
   it says nothing about the app. It reads from the database rather than merely
   answering, because an app that cannot read the library is not one to hand the
   VIP to.
@@ -719,7 +719,7 @@ database since the code that broke went in.
   puts every page and every API route behind a Google account; leaving them
   unset leaves the app open exactly as before, and the startup banner says which
   of the two it is doing. Sessions are signed cookies (`SESSION_SECRET`,
-  `SESSION_TTL_DAYS`), the flow uses PKCE and a state cookie, and the OAuth
+  `SESSION_TTL_DAYS`), the flow uses PKCE and a state cookie, and the `OAuth`
   exchange is written out rather than pulled from a dependency.
 - **An allowlist file.** `allowed-emails.txt` beside the database names the
   addresses permitted to sign in — one per line, `#` for comments. Absent or
@@ -755,7 +755,7 @@ database since the code that broke went in.
   **↑ Give back** on the row below. It also stopped being a `primary` button:
   accent on an accent-coloured header paints no chip at all, so it read as a
   stray line of text rather than something to tap.
-- The header no longer reports how many books are unshelved. It was a running
+- The header no longer reports how many books sit on no shelf. It was a running
   count of a condition nobody was acting on, sat in the one place every screen
   shows; the shelf filter answers the question on demand.
 
@@ -793,14 +793,14 @@ database since the code that broke went in.
   alone is no longer a backup: every row naming a missing image is a broken
   picture. Copy the covers directory with it. The failover handoff and the hourly
   sync were both taught to move both — `covers-send`/`covers-recv` verbs for the
-  handoff, and an rsync of the directory for the hourly copy, which is where
-  rsync earns its keep since almost nothing changes between runs.
+  handoff, and an `rsync` of the directory for the hourly copy, which is where
+  `rsync` earns its keep since almost nothing changes between runs.
 
   The API is unchanged: covers were already returned as `api/books/:id/cover`
   references rather than bytes.
 
 - `eslint.config.js` matches server-side modules by glob rather than by a list of
-  filenames. `covers.js` was linted without Node globals purely because nobody
+  filenames. `covers.js` was linted without Node `globals` purely because nobody
   remembered to add it, and only a stray `process` reference made that visible.
 
 ## [3.2.0] — 2026-07-31
@@ -830,7 +830,7 @@ database since the code that broke went in.
 - The EPUB import returns its cover as a reference like every other book
   response, rather than echoing back half a megabyte of base64 the client had
   just uploaded. `cover_source` is now `null` rather than `''` when a copy has no
-  kept-back original; both are falsy, and nothing read it any other way.
+  kept-back original; both are `falsy`, and nothing read it any other way.
 
 ## [3.1.0] — 2026-07-31
 
@@ -847,10 +847,10 @@ database since the code that broke went in.
   through a handoff instead of naming a fixed master.
 
   It skips before doing any work when nothing has been written since the last run
-  — fingerprinting the database *and* its WAL, since in WAL mode the main file's
+  — fingerprinting the database _and_ its WAL, since in WAL mode the main file's
   contents can sit unchanged through a busy hour. A peer that is simply offline
-  logs to the journal and exits 0, because an hourly cron mail about a known-down
-  standby is how people learn to ignore cron mail; anything else fails loudly.
+  logs to the journal and exits 0, because an hourly `cron` mail about a known-down
+  standby is how people learn to ignore `cron` mail; anything else fails loudly.
 
   The copy lands in `<data dir>/standby/library.db` on the peer and never on the
   peer's own `library.db`: overwriting that would bypass `assert_generation_ok()`,
@@ -858,13 +858,13 @@ database since the code that broke went in.
   disaster copy, restored deliberately, not a replication channel. Transport is a
   dedicated key pinned to `rrsync -wo`, which can only write and only into that
   directory — the failover key is pinned to the verb script and deliberately has
-  no path to rsync.
+  no path to `rsync`.
 
 ### Fixed
 
 - **The failover snapshots were not backups.** `snapshot_local()` and the peer's
-  `db-snapshot` verb both took a timestamped **hardlink** — another name for the
-  same inode. SQLite writes in place, so all ten "generations" tracked the live
+  `db-snapshot` verb both took a timestamped **hard link** — another name for the
+  same `inode`. SQLite writes in place, so all ten "generations" tracked the live
   database and the rotation preserved nothing; it looked exactly like a working
   set of restore points. They are now `.backup` copies, which are consistent even
   against a database something still has open (`cp` would not be). Ten
@@ -895,16 +895,16 @@ database since the code that broke went in.
   **Major, because the migration is one-way**: a database written by this build
   cannot be read by 2.x, which expects `books` to be a table.
 
-- **An edition is identified by ISBN *and* format**, not by ISBN alone. In
+- **An edition is identified by ISBN _and_ format**, not by ISBN alone. In
   principle one ISBN means one format, since a hardback and a paperback are
-  separately numbered — but e-books have ASINs rather than ISBNs, and importers
+  separately numbered — but e-books have an ASIN rather than an ISBN, and importers
   staple the print ISBN onto the e-book record. Matching on the ISBN alone fused
   Kindle files to hardbacks: the merged record kept one format and the other's
   physical dimensions, so a hardback on a shelf reported itself as an e-book.
   Changing a copy's format now moves it to its own edition rather than rebinding
   every copy that shares the ISBN.
 
-- **ISBNs are canonicalised to ISBN-13 before they are stored.** `0441013597`
+- **Every ISBN is canonicalised to ISBN-13 before it is stored.** `0441013597`
   and `9780441013593` are the same book; stored verbatim they produced two
   records that never merged. Check digits are verified rather than trusted — an
   ISBN that fails its check digit is kept for display but never used to match,
@@ -932,8 +932,8 @@ database since the code that broke went in.
 
   This only means anything if the container is told its timezone: SQLite reads the
   process timezone, so without `TZ` the container runs on UTC and `localtime` is a
-  no-op. `TZ` therefore belongs in the env file passed to the container — setting it
-  via systemd `Environment=` looks right and does nothing, because that reaches the
+  no-op. `TZ` therefore belongs in the `env` file passed to the container — setting it
+  via `systemd` `Environment=` looks right and does nothing, because that reaches the
   `docker run` client rather than the container. In a failover pair it must be set
   **identically on both nodes**: inheriting the host would make a book overdue on one
   node and not the other, depending on which is active.
@@ -956,7 +956,7 @@ database since the code that broke went in.
 
   "Overdue" is judged against a UTC date to match the server's `date('now')` in the
   overdue filter; using the local date would let the badge and the "Overdue only"
-  filter disagree for a few hours each night. A book due *today* is not overdue.
+  filter disagree for a few hours each night. A book due _today_ is not overdue.
 
 ## [2.3.0] — 2026-07-27
 
@@ -985,13 +985,13 @@ database since the code that broke went in.
   node is active, and a floating address follows it, so exactly one node is ever
   writable. Two interlocks guard the handoff: an owner marker carrying a
   **generation counter**, which decides authoritatively which copy is newer, and a
-  refusal to overwrite a copy produced by a later handoff. mtimes are logged as a
+  refusal to overwrite a copy produced by a later handoff. `mtime` values are logged as a
   diagnostic but deliberately do **not** gate anything — merely opening a SQLite
-  database updates its mtime, so a standby started for any reason would otherwise
+  database updates its `mtime`, so a standby started for any reason would otherwise
   look newer than the rightful owner and block the next legitimate handoff.
 
   If the peer cannot be reached, the node never guesses: it keeps its own copy only
-  when its own marker already names it as owner, and does so *without* advancing the
+  when its own marker already names it as owner, and does so _without_ advancing the
   generation, since raising it above a copy that was never compared would defeat the
   guard. If the marker names the unreachable peer as owner, it refuses to start
   rather than serve a stale copy as authoritative.
@@ -1005,10 +1005,8 @@ database since the code that broke went in.
 
   A handoff starts the receiving node's own units rather than starting its app and
   assigning its address by remote verb. The latter left the receiver's units inactive
-  while it was in fact serving, so systemd disagreed with reality and — the part that
+  while it was in fact serving, so `systemd` disagreed with reality and — the part that
   actually bit — the receiver's next shutdown ran no ExecStop and handed nothing back.
-
-### Changed
 
 - The README now describes deploying generically — by the node's role rather than
   by name — instead of documenting one specific host and its addresses.
@@ -1046,7 +1044,7 @@ database since the code that broke went in.
 - When a source is rate-limited, a lookup falls back to whatever was last cached
   for that ISBN, however old, in preference to failing — stale data beats no
   data. Only an ISBN never looked up before returns an error.
-- Metadata source hosts are overridable (`OPENLIBRARY_BASE`, `GOOGLE_BOOKS_BASE`,
+- Metadata source hosts can be overridden (`OPENLIBRARY_BASE`, `GOOGLE_BOOKS_BASE`,
   `BARNESNOBLE_BASE`), so a mirror or a test stub can stand in. They default to
   the real services.
 
@@ -1055,7 +1053,7 @@ database since the code that broke went in.
 ### Added
 
 - When a scanned ISBN finds no metadata, the app offers a re-scan rather than a
-  dead end. A 1D barcode can misread into a *different* number whose check digit
+  dead end. A 1D barcode can misread into a _different_ number whose check digit
   still passes — 9781451787856 for 9781451638356 (War Maid's Choice) is a real
   one — so validation cannot catch it and "not found" is where it surfaces. A
   rate-limited source (503) is an outage, not a misread, and does not prompt.
@@ -1096,13 +1094,13 @@ back.
 - The `k8s/` manifests, left over from an earlier Kubernetes deployment that no
   longer exists. They pinned a node by hostname and named an image tag nothing
   builds any more, so they were a wrong answer waiting to be followed. Deploy is
-  Docker under systemd — see the README. `git log` has them if they are ever
+  Docker under `systemd` — see the README. `git log` has them if they are ever
   wanted back.
 
 ### Changed
 
 - Nothing in the shipped app names one particular deployment any more. The
-  "camera needs HTTPS" advice pointed at one homelab's Tailscale URL, which is
+  "camera needs HTTPS" advice pointed at one home lab's `Tailscale` URL, which is
   no use to anyone running this elsewhere; it now names the host actually in
   use, with a test to keep it that way.
 - README states plainly that there is no authentication of any kind, and what

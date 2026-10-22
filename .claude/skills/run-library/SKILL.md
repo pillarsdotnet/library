@@ -42,6 +42,7 @@ and cleans up its scratch database on exit.
 # End-to-end: add a book through the real dialog, verify it lists, screenshot.
 node .claude/skills/run-library/driver.mjs smoke
 ```
+
 ```
 books 6 → 7, added "Driver Smoke 1785695975654"
 screenshot /tmp/library-shots/smoke.png
@@ -75,6 +76,7 @@ node .claude/skills/run-library/driver.mjs eval '$$(".card").length'
 node .claude/skills/run-library/driver.mjs eval \
   '({ all: $$(".card").length, inBooks: $$("#tab-books .card").length })'
 ```
+
 ```
 { "all": 8, "inBooks": 6 }
 ```
@@ -109,6 +111,7 @@ rather than trying to import it.
 ```bash
 node .claude/skills/run-library/driver.mjs serve --port 3213
 ```
+
 ```
 serving http://127.0.0.1:3213/library/
 database /tmp/library-run-1543181/library.db
@@ -161,11 +164,11 @@ node --test --test-name-pattern "phone header" test/scanner.browser.test.mjs
 
 ## Troubleshooting
 
-| Symptom | Cause / fix |
-| --- | --- |
-| `shot failed: ENOENT ... open '/tmp/x/y.png'` | The output directory did not exist. Fixed in the driver (it creates parents); if you write your own puppeteer script, `mkdirSync` first — puppeteer does not. |
-| Command hangs for minutes, no output | A puppeteer error before `browser.close()` leaves Chrome running and node's event loop alive. The driver closes it in a `finally`; a hand-rolled script must too. |
-| `eval failed: $$ is not defined` | `$$` only exists inside the driver's `eval` wrapper; `public/app.js` defines `$` alone. |
-| `server did not answer on http://127.0.0.1:3210/library/ within 20s` | Something else holds the port — `--port 3299`. Or run with `--verbose` to see the server's own error. |
-| `No Chrome found` | Set `PUPPETEER_EXECUTABLE_PATH=/path/to/chrome`. `puppeteer-core` bundles no browser. |
-| Test failure mentioning `/tmp/covers` | Two test servers sharing a covers directory — see the covers gotcha above. |
+| Symptom                                                              | Cause / fix                                                                                                                                                       |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shot failed: ENOENT ... open '/tmp/x/y.png'`                        | The output directory did not exist. Fixed in the driver (it creates parents); if you write your own puppeteer script, `mkdirSync` first — puppeteer does not.     |
+| Command hangs for minutes, no output                                 | A puppeteer error before `browser.close()` leaves Chrome running and node's event loop alive. The driver closes it in a `finally`; a hand-rolled script must too. |
+| `eval failed: $$ is not defined`                                     | `$$` only exists inside the driver's `eval` wrapper; `public/app.js` defines `$` alone.                                                                           |
+| `server did not answer on http://127.0.0.1:3210/library/ within 20s` | Something else holds the port — `--port 3299`. Or run with `--verbose` to see the server's own error.                                                             |
+| `No Chrome found`                                                    | Set `PUPPETEER_EXECUTABLE_PATH=/path/to/chrome`. `puppeteer-core` bundles no browser.                                                                             |
+| Test failure mentioning `/tmp/covers`                                | Two test servers sharing a covers directory — see the covers gotcha above.                                                                                        |

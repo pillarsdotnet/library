@@ -22,7 +22,7 @@ both iOS Safari and Android Chrome.
 - **Shelves as real objects** — model each shelf with room, bookcase, label,
   grid **cell** (its spot in the bookcase: column letter + row number, A1 top
   left — separate from the label, which stays free text like "Horror" or a
-  branch name), and dimensions (height × width × depth). Books are placed *on*
+  branch name), and dimensions (height × width × depth). Books are placed _on_
   a shelf. **Add bookcase** creates a whole rows × columns grid of shelves at
   once, and after you measure one shelf the app offers to copy the depth to the
   whole bookcase, the width down its column, and the height across its row.
@@ -56,7 +56,7 @@ both iOS Safari and Android Chrome.
   by due date** (soonest first, undated last), or to **overdue only** — the list
   answers "what do I owe the library, and when" rather than making you hunt.
 - **Search & filter** by text, status, library/overdue, format, genre, series, room,
-  bookcase, or shelf (incl. "Unshelved"). Filters compose. While filtering to a
+  bookcase, or shelf (incl. `Unshelved`). Filters compose. While filtering to a
   shelf, **Add book** starts with that shelf chosen.
 - **Give back to Open Library** — measurements, binding, page count and cover
   photos from your own copies can fill gaps in Open Library's records, through a
@@ -69,13 +69,13 @@ both iOS Safari and Android Chrome.
 
 SQLite — see [`db.js`](./db.js). Book data is split along the ISBN:
 
-| Table | Holds | Why |
-| --- | --- | --- |
-| `editions` | Title, authors, publisher, published date, page count, **format**, **dimensions**, stock cover artwork, metadata source | Everything an ISBN determines, and therefore identical for every copy |
-| `copies` | Dust jacket, shelf, status, loan, library borrowing + due date, notes, a photograph of *this* copy | Everything true of one physical object on one shelf |
-| `shelves` | Room, bookcase, label, grid cell, bookcase color, clearances | Where copies live |
-| `libraries` | Name | A tenant: everything above belongs to exactly one |
-| `users`, `library_users` | Email address and encrypted Open Library keys; who belongs to which library | Who may sign in to what |
+| Table                    | Holds                                                                                                                   | Why                                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `editions`               | Title, authors, publisher, published date, page count, **format**, **dimensions**, stock cover artwork, metadata source | Everything an ISBN determines, and therefore identical for every copy |
+| `copies`                 | Dust jacket, shelf, status, loan, library borrowing + due date, notes, a photograph of _this_ copy                      | Everything true of one physical object on one shelf                   |
+| `shelves`                | Room, bookcase, label, grid cell, bookcase color, clearances                                                            | Where copies live                                                     |
+| `libraries`              | Name                                                                                                                    | A tenant: everything above belongs to exactly one                     |
+| `users`, `library_users` | Email address and encrypted Open Library keys; who belongs to which library                                             | Who may sign in to what                                               |
 
 Every table a library owns carries its `library_id`: shelves, editions, copies,
 genres, series and Open Library proposals. The link tables (`book_genres`,
@@ -89,14 +89,14 @@ called Fantasy. The ISBN lookup cache is the one thing shared, because it holds
 only what the metadata services said about an ISBN.
 
 Format and dimensions are **edition** data, which surprises people: a hardback
-and a paperback of one book carry *different ISBNs*, so the ISBN settles the
+and a paperback of one book carry a _different ISBN each_, so the ISBN settles the
 binding and the size. Of the edit form's "Physical" group, only the dust jacket
 is per-copy — your copy lost its jacket, mine did not.
 
 Genres, series membership and Open Library proposals hang off the **edition**:
 two copies of one book are one book, tagged once and queued once. Editions also
 carry `ol_work_id`, unused today — it is the anchor for moving genres and series
-up to *work* level later (Open Library keeps the series tag on the work, `OL…W`,
+up to _work_ level later (Open Library keeps the series tag on the work, `OL…W`,
 and the rest on the edition, `OL…M`) without another table split.
 
 `books` is a **read-only view** joining a copy to its edition, so every query and
@@ -105,20 +105,20 @@ API response looks as it always did; `library_name` is an alias of
 `lastInsertRowid` 0 and `changes` 0 for writes through a view, so a write there
 would look like success while doing nothing.
 
-ISBNs are stored canonically as ISBN-13, so the 10- and 13-digit spellings of one
+Every ISBN is stored canonically as ISBN-13, so the 10- and 13-digit spellings of one
 book cannot become two records. Check digits are verified: an ISBN that fails is
 kept for display but never used to match, because merging on an unverifiable
 value would fuse two unrelated books.
 
 An edition is keyed on **`(library_id, isbn13, format)`**, not on the ISBN alone. E-books
-have ASINs rather than ISBNs, and importers routinely staple the print ISBN onto
+have an ASIN rather than an ISBN, and importers routinely staple the print ISBN onto
 the e-book record — so matching on the ISBN alone merges a Kindle file into a
 hardback, and one of them loses its format and inherits the other's physical
 dimensions. Two records must agree on what kind of object they are before they
 are treated as the same edition.
 
 All physical dimensions are stored in **millimetres**. Capacity is computed by
-treating each book's *spine thickness* as the width it consumes along the shelf;
+treating each book's _spine thickness_ as the width it consumes along the shelf;
 a book fits if its height ≤ shelf height and its width ≤ shelf depth.
 
 ### Covers are files
@@ -134,7 +134,7 @@ Moving them out took the live database from **15.4 MB to 459 KB**.
 **A copy of `library.db` on its own is therefore no longer a backup.** Every row
 naming a missing file is a broken picture, so the covers directory has to travel
 with it. Both mechanisms here already do: the handoff moves it through the
-`covers-send`/`covers-recv` verbs, and the hourly sync rsyncs it alongside.
+`covers-send`/`covers-recv` verbs, and the hourly sync carries it alongside with `rsync`.
 
 The API returns a cover as a reference to `api/books/:id/cover?v=<token>`, never
 as bytes. The token is what makes the URL change when the image does — without
@@ -152,8 +152,39 @@ it is still how the query stays honest about what it reads.
 The 3.0.0 migration runs on first start and is **one-way** — a database it has
 touched cannot be read by 2.x. Copies keep their old book ids, so existing
 `/api/books/:id` links still resolve. Back the database up first; the split
-merges any copies whose ISBNs canonicalise to the same value, unioning their
+merges any copies whose ISBN spellings canonicalise to the same value, taking the union of their
 genres and collapsing duplicate Open Library proposals.
+
+## Development: pre-commit hooks
+
+The repository ships [pre-commit](https://pre-commit.com/) hooks that lint on
+every commit:
+
+- **`eslint`** and **`stylelint`** — the JavaScript and CSS, via `npm run lint`
+- **`prettier`**, **`markdownlint`** and **`vale`** — the Markdown
+- **`prettier`** and **`yamllint`** — the YAML
+- **`check:deps`**, the asset-version check and the changelog check described
+  in the next two sections
+
+Enable them once after cloning — `npm ci` first, because the lint hook runs
+`eslint` and `stylelint` out of `node_modules`:
+
+```bash
+npm ci
+pip install pre-commit        # or: pipx install pre-commit
+pre-commit install
+```
+
+Run them against everything on demand:
+
+```bash
+pre-commit run --all-files
+```
+
+Hook versions are pinned in
+[`.pre-commit-config.yaml`](.pre-commit-config.yaml) and can be bumped with
+`pre-commit autoupdate`; prose and YAML settings live in
+[`.vale.ini`](.vale.ini) and [`.yamllint`](.yamllint).
 
 ## Changing CSS or JS: bump the version
 
@@ -179,12 +210,12 @@ be read by the old one.
 
 `npm run check:deps` fails if `npm audit` reports a vulnerability of any
 severity, in runtime or development dependencies, or if any installed package
-version is deprecated. The `pre-commit` hook runs it, and so does CI's
-**Lint and syntax check** job, which the `main` branch ruleset requires.
+version is deprecated. The `pre-commit` hook runs it, and so does the
+CI **Lint and syntax check** job, which the `main` branch `ruleset` requires.
 
-Deprecations are looked up in the npm registry for every version in
+Deprecations are looked up in the `npm` registry for every version in
 `package-lock.json`, not taken from `npm ci`'s warnings. Those warnings only
-repeat what the lockfile recorded when a package was resolved, so a package
+repeat what the `lockfile` recorded when a package was resolved, so a package
 deprecated later passes `npm ci` in silence. The lookup takes a second or two
 and needs the network; offline, commit with `--no-verify` and let CI check.
 
@@ -198,7 +229,7 @@ With sign-in on (see [Signing in](#signing-in)), every page and API route needs 
 Google account that is a **member** of the library the session was opened for,
 checked on every request. With sign-in off there are no accounts: whoever can
 reach the port can read and edit the first library, which only suits a private
-network (Tailscale, a VPN, a LAN you trust).
+network (`Tailscale`, a VPN, a LAN you trust).
 
 Sign-in is what makes a public address possible. Even then:
 
@@ -209,9 +240,9 @@ Sign-in is what makes a public address possible. Even then:
   new one (see [Libraries and members](#libraries-and-members)).
 - **Open Library keys belong to people, not to the server.** Each user adds
   their own, and only someone with verified keys sees Give back, so nobody can
-  write to a public catalogue under anybody else's account.
-- **Bind it to somewhere deliberate.** The systemd unit described below
-  publishes the container port on `127.0.0.1` and lets nginx be the only thing
+  write to a public catalogue under another person's account.
+- **Bind it to somewhere deliberate.** The `systemd` unit described below
+  publishes the container port on `127.0.0.1` and lets `nginx` be the only thing
   that listens outward, which is a good default to copy.
 
 ## Run it
@@ -227,15 +258,15 @@ sudo apt install home-library
 ```
 
 The package runs the app as a `systemd` service, started on demand through a
-Unix socket, and ships an nginx snippet and an Apache configuration that serve
+Unix socket, and ships an `nginx` snippet and an Apache configuration that serve
 it under `/library/`. Its data lives in `/var/lib/home-library`, and its
 settings in `/etc/home-library/home-library.env`. The PPA also carries the
-newer libvips it needs, and on 26.04 the Node.js 24 that the archive lacks.
+newer `libvips` it needs, and on 26.04 the Node.js 24 that the archive lacks.
 `/usr/share/doc/home-library/README.Debian` covers the web server setup.
 
 To run one library on two machines, with exactly one of them accepting changes
 at a time, add `home-library-failover` (26.10 only for now). It hands the
-live database and covers between the two, moves a Tailscale floating address
+live database and covers between the two, moves a `Tailscale` floating address
 with them, and can point a public DNS name at whichever machine is serving.
 Nothing changes until `home-library-failover enable`; see
 `/usr/share/doc/home-library-failover/README.Debian`.
@@ -271,11 +302,11 @@ and without `MALLOC_ARENA_MAX=2`.
 Before the image is published, CI runs three checks inside it:
 
 - **Due dates follow `TZ`.** SQLite's `localtime` compares with Node's own
-  timezone data in four zones. Without the zoneinfo files in the image,
+  timezone data in four zones. Without the `zoneinfo` files in the image,
   overdue books would be judged in UTC while the startup log named the right
   zone.
 - **Garbage collection does not abort Node.** 300,000 prepared statements are
-  freed under allocation pressure. From Node 24.19.0, this aborts any addon
+  freed under allocation pressure. From Node 24.19.0, this aborts any `addon`
   built on the older `node::ObjectWrap`
   ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)), which
   `better-sqlite3` 11 was.
@@ -290,33 +321,33 @@ npm start            # http://localhost:3000
 
 Environment variables:
 
-| Variable    | Default              | Purpose                                             |
-|-------------|----------------------|-----------------------------------------------------|
-| `PORT`      | `3000`               | HTTP port, when neither of the next two applies     |
-| `SOCKET_PATH` | _(none)_           | Listen on this Unix socket instead of `PORT`, for a web server in front; a stale socket file there is removed first |
-| `SOCKET_MODE` | _(umask)_          | Octal mode for that socket, e.g. `660` so the web server's group can connect |
-| `LISTEN_FDS` | _(set by `systemd`)_ | A socket handed over by `systemd` socket activation wins over both; the Debian package runs it this way |
-| `DB_PATH`   | `./data/library.db`  | SQLite file location                                |
-| `BASE_PATH` | `` (root)            | Sub-path to serve under, e.g. `/library`            |
-| `GOOGLE_BOOKS_API_KEY` | _(none)_  | Optional; raises the Google Books lookup quota      |
-| `OPENLIBRARY_ACCESS_KEY` | _(none)_ | Sign-in **off** only: the keys contributions are sent with. With sign-in on, each user adds their own |
-| `OPENLIBRARY_SECRET_KEY` | _(none)_ | Paired with the access key                          |
-| `OPENLIBRARY_ALLOW_IMPORT` | _(unset)_ | `true` allows creating records for books Open Library lacks |
-| `OPENLIBRARY_SOURCE_PREFIX` | `pillarsdotnet_library` | `source_records` prefix for imports; set it empty to stamp nothing and import nothing |
-| `GOOGLE_CLIENT_ID` | _(none)_ | Google OAuth client; **setting this and the secret is what turns sign-in on** |
-| `GOOGLE_CLIENT_SECRET` | _(none)_ | Paired with the client id |
-| `AUTH_ALLOWED_FILE` | `<DB dir>/allowed-emails.txt` | Read **once**, when the first library is created: its addresses become that library's members |
-| `SESSION_SECRET` | _(new each boot)_ | Signs session cookies and encrypts users' Open Library keys; set it, or a restart signs everyone out and loses the keys |
-| `SESSION_IDLE_DAYS` | `10` | Sign-in expires after this long **without a visit**; every visit pushes it out (floored at 1 day) |
-| `OAUTH_REDIRECT_URI` | _(from the request)_ | Override when the public URL is not what the app sees |
-| `PUBLIC_ORIGIN` | _(from the request)_ | Scheme and host to build the redirect URI and emailed links from |
-| `SMTP_USER` | _(none)_ | Gmail address the new-library email is sent from; **setting this and the password turns it on** |
-| `SMTP_PASSWORD` | _(none)_ | A Gmail app password for `SMTP_USER` |
-| `SMTP_HOST` | `smtp.gmail.com` | Submission server; must offer STARTTLS |
-| `SMTP_PORT` | `587` | Submission port |
-| `TRUST_PROXY` | _(off)_ | `true` behind nginx, so `X-Forwarded-Proto` decides the Secure cookie flag |
-| `LOOKUP_TTL_DAYS` | `30` | How long a found lookup stays cached (floored at 1 day) |
-| `LOOKUP_NEGATIVE_TTL_HOURS` | `24` | How long a "not found" stays cached (floored at 24h) |
+| Variable                    | Default                       | Purpose                                                                                                                 |
+| --------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                      | `3000`                        | HTTP port, when neither of the next two applies                                                                         |
+| `SOCKET_PATH`               | _(none)_                      | Listen on this Unix socket instead of `PORT`, for a web server in front; a stale socket file there is removed first     |
+| `SOCKET_MODE`               | _(`umask`)_                   | Octal mode for that socket, e.g. `660` so the web server's group can connect                                            |
+| `LISTEN_FDS`                | _(set by `systemd`)_          | A socket handed over by `systemd` socket activation wins over both; the Debian package runs it this way                 |
+| `DB_PATH`                   | `./data/library.db`           | SQLite file location                                                                                                    |
+| `BASE_PATH`                 | `` (root)                     | Sub-path to serve under, e.g. `/library`                                                                                |
+| `GOOGLE_BOOKS_API_KEY`      | _(none)_                      | Optional; raises the Google Books lookup quota                                                                          |
+| `OPENLIBRARY_ACCESS_KEY`    | _(none)_                      | Sign-in **off** only: the keys contributions are sent with. With sign-in on, each user adds their own                   |
+| `OPENLIBRARY_SECRET_KEY`    | _(none)_                      | Paired with the access key                                                                                              |
+| `OPENLIBRARY_ALLOW_IMPORT`  | _(unset)_                     | `true` allows creating records for books Open Library lacks                                                             |
+| `OPENLIBRARY_SOURCE_PREFIX` | `pillarsdotnet_library`       | `source_records` prefix for imports; set it empty to stamp nothing and import nothing                                   |
+| `GOOGLE_CLIENT_ID`          | _(none)_                      | Google `OAuth` client; **setting this and the secret is what turns sign-in on**                                         |
+| `GOOGLE_CLIENT_SECRET`      | _(none)_                      | Paired with the client id                                                                                               |
+| `AUTH_ALLOWED_FILE`         | `<DB dir>/allowed-emails.txt` | Read **once**, when the first library is created: its addresses become that library's members                           |
+| `SESSION_SECRET`            | _(new each boot)_             | Signs session cookies and encrypts users' Open Library keys; set it, or a restart signs everyone out and loses the keys |
+| `SESSION_IDLE_DAYS`         | `10`                          | Sign-in expires after this long **without a visit**; every visit pushes it out (floored at 1 day)                       |
+| `OAUTH_REDIRECT_URI`        | _(from the request)_          | Override when the public URL is not what the app sees                                                                   |
+| `PUBLIC_ORIGIN`             | _(from the request)_          | Scheme and host to build the redirect URI and emailed links from                                                        |
+| `SMTP_USER`                 | _(none)_                      | Gmail address the new-library email is sent from; **setting this and the password turns it on**                         |
+| `SMTP_PASSWORD`             | _(none)_                      | A Gmail app password for `SMTP_USER`                                                                                    |
+| `SMTP_HOST`                 | `smtp.gmail.com`              | Submission server; must offer STARTTLS                                                                                  |
+| `SMTP_PORT`                 | `587`                         | Submission port                                                                                                         |
+| `TRUST_PROXY`               | _(off)_                       | `true` behind `nginx`, so `X-Forwarded-Proto` decides the Secure cookie flag                                            |
+| `LOOKUP_TTL_DAYS`           | `30`                          | How long a found lookup stays cached (floored at 1 day)                                                                 |
+| `LOOKUP_NEGATIVE_TTL_HOURS` | `24`                          | How long a "not found" stays cached (floored at 24h)                                                                    |
 
 ### Signing in
 
@@ -324,7 +355,7 @@ Google says who you are; the app's own `users` and `library_users` tables say
 what you may open. Or, with sign-in off, it asks nobody — and which of those it
 is doing is printed on every boot:
 
-```
+```text
    sign-in OFF — anyone who can reach this port can edit the library
 ```
 
@@ -333,7 +364,7 @@ That default is deliberate: a missing variable leaving a home server open is
 recoverable, and a missing variable locking everyone out of the machine that
 holds the library is not. The banner is there so "open" is always a choice.
 
-To turn it on, create an OAuth client (Google Cloud console → APIs & Services →
+To turn it on, create an `OAuth` client (Google Cloud console → `APIs & Services` →
 Credentials → **Web application**), and register the callback as an authorized
 redirect URI — `https://your-host/auth/callback`, or with `BASE_PATH` set,
 `https://your-host/library/auth/callback`. One client can carry a redirect URI
@@ -381,7 +412,7 @@ once and discarded.
 ### Libraries and members
 
 Signing in names a library, and the header then says whose it is: a user in the
-Bobbalisa library sees **📚 Bobbalisa Library**. (A name that already ends in
+`Bobbalisa` library sees **`📚 Bobbalisa Library`**. (A name that already ends in
 "Library" is not given a second one.)
 
 - **A name nobody has used creates a library**, with the person signing in as
@@ -410,7 +441,7 @@ Bobbalisa library sees **📚 Bobbalisa Library**. (A name that already ends in
   STARTTLS and the certificate checks out. A failed send is logged; it never
   holds up the sign-in. The startup log says whether this is on.
 
-The first library, **Bobbalisa**, is created automatically, and everything in a
+The first library, **`Bobbalisa`**, is created automatically, and everything in a
 database from before libraries belongs to it. So do the addresses in
 `allowed-emails.txt` beside the database: they become its members, once, when
 it is created. The file is not read after that.
@@ -445,7 +476,7 @@ Open Library doesn't have every book, and **keyless Google Books has a very
 small shared daily quota** — when it's exhausted the API returns HTTP 429, and a
 book that's only on Google Books will fail to auto-fill (the app says it's
 rate-limited rather than "not found"). A free Google Books API key raises the
-quota to ~1,000 lookups/day and makes this reliable. The hosts are overridable
+quota to ~1,000 lookups/day and makes this reliable. The hosts can be overridden
 (`OPENLIBRARY_BASE`, `GOOGLE_BOOKS_BASE`, `BARNESNOBLE_BASE`) for a mirror or a
 test double; they default to the real services.
 
@@ -453,15 +484,15 @@ test double; they default to the real services.
 
 1. Go to the [Google Cloud console](https://console.cloud.google.com/) and sign in.
 2. Create a project (top bar → project dropdown → **New Project**), or reuse one.
-3. Enable the API: **APIs & Services → Library → search "Books API" → Enable**
+3. Enable the API: **`APIs & Services` → Library → search "Books API" → Enable**
    (a.k.a. "Google Books API"). It has a free daily quota; no billing needed.
-4. Create the key: **APIs & Services → Credentials → Create credentials → API key**.
+4. Create the key: **`APIs & Services` → Credentials → Create credentials → API key**.
    Copy the key. Recommended: **Edit API key → API restrictions → restrict to
    "Books API"** so the key can't be used for anything else.
 
 #### Install the key
 
-**Systemd node:** add it to `/etc/home-library.env`, which the systemd unit passes
+**`systemd` node:** add it to `/etc/home-library.env`, which the `systemd` unit passes
 to the container, then restart the unit (`sudo systemctl restart home-library`).
 Rotating a key is the same edit followed by the same restart.
 
@@ -496,7 +527,7 @@ convention is **the highest explicitly numbered page, disregarding unnumbered
 pages**, and every page-count contribution says so in its edit comment.
 
 **Series** follows Open Library's contributors' guide, which puts a series on
-the *work* as a tag written `[series:series_name]` on the edit form — the
+the _work_ as a tag written `[series:series_name]` on the edit form — the
 brackets are form syntax, and what is stored is a plain subject string,
 `series:Discworld`, which is what drives the `/subjects/series:…` pages. So the
 series contribution edits the work record, not the edition, and it is offered
@@ -518,20 +549,20 @@ account, separate from your personal one.
    ending in `Bot` — the suffix is required, and lets Recent Changes separate
    automated edits from human ones.
 2. **Request API write access — this one is not optional.** Editing Open Library
-   *through the website* needs no approval; any confirmed account can do it, and
+   _through the website_ needs no approval; any confirmed account can do it, and
    librarian status only adds merging and collections. **Editing through the API
-   is gated separately.** Infogami's REST handler calls `can_write()` on every
+   is gated separately.** The `Infogami` REST handler calls `can_write()` on every
    PUT, and Open Library overrides it to allow only accounts with the bot flag,
    site admins, and members of `/usergroup/api`
    ([code.py](https://github.com/internetarchive/openlibrary/blob/master/openlibrary/plugins/openlibrary/code.py),
-   [infogami api](https://github.com/internetarchive/infogami/blob/master/infogami/plugins/api/code.py)).
+   [`infogami` API](https://github.com/internetarchive/infogami/blob/master/infogami/plugins/api/code.py)).
    Without it every metadata edit here returns **403 Forbidden**, no matter how
    legitimate.
 
    So open an issue on the
-   [openlibrary repo](https://github.com/internetarchive/openlibrary/issues)
+   [`openlibrary` repository](https://github.com/internetarchive/openlibrary/issues)
    asking a site admin to grant bot privileges and add the account to the `API`
-   usergroup. Say what the bot will edit and how often; ours fills empty
+   `usergroup`. Say what the bot will edit and how often; ours fills empty
    `physical_dimensions`, `physical_format` and `number_of_pages` fields, adds a
    `series:` subject tag to works that have none, and uploads covers for
    editions that have none, all at human-review pace. Expect this
@@ -539,7 +570,8 @@ account, separate from your personal one.
 
    **Covers are the exception.** `/books/OL…M/add-cover` is an ordinary form
    endpoint with no `can_write()` check, so cover uploads should work as soon as
-   the account can log in — before the usergroup request is granted.
+   the account can log in — before the `usergroup` request is granted.
+
 3. **Get the keys.** Signed in as the bot, visit
    [archive.org/account/s3.php](https://archive.org/account/s3.php) and copy the
    access key and secret key. (Open Library authenticates with Internet Archive
@@ -566,7 +598,7 @@ account, separate from your personal one.
 ### Books Open Library has never heard of
 
 Some books — recent small-press titles especially — have no Open Library edition
-at all, so there is nothing to contribute to. Those can be *created* through
+at all, so there is nothing to contribute to. Those can be _created_ through
 `/api/import`, but creating a record is a different act from filling a blank: a
 bad edit is one wrong field, a bad import is a duplicate or a phantom book, and
 duplicates can only be merged by librarians. So it is off by default:
@@ -576,7 +608,7 @@ OPENLIBRARY_ALLOW_IMPORT=true
 OPENLIBRARY_SOURCE_PREFIX=yourbot   # optional; overrides the built-in prefix
 ```
 
-The prefix names the *catalogue* a record came from, not the person running the
+The prefix names the _catalogue_ a record came from, not the person running the
 import — `ia`, `bwb` and `midcolumbia` are the shape of it, and the importer is
 already identified by the Open Library account the edit is attributed to. This
 installation stamps `pillarsdotnet_library` unless `OPENLIBRARY_SOURCE_PREFIX`
@@ -606,8 +638,8 @@ one to found a new public record on.
 > can only fail. Every other field goes through the JSON API and is unaffected.
 >
 > Save the image **before** opening their form: it opens a file picker, and on a
-> phone that picker opens *Photos* while a saved image lands under
-> *Files → Downloads*. The first visit may also be interrupted by their human
+> phone that picker opens _Photos_ while a saved image lands under
+> _Files → Downloads_. The first visit may also be interrupted by their human
 > check and leave you on the book page rather than the upload form — tapping the
 > same link again goes straight there.
 >
@@ -670,24 +702,24 @@ first.
 
 ### On a server, as a systemd-managed container
 
-The intended deployment runs the app as a **Docker container managed by systemd**,
-behind the node's nginx, served under a sub-path such as `/library/`.
+The intended deployment runs the app as a **Docker container managed by `systemd`**,
+behind the node's `nginx`, served under a sub-path such as `/library/`.
 
 - the unit is `/etc/systemd/system/home-library.service`, with `Restart=always`;
 - the container runs with `BASE_PATH=/library` and `--rm`, so the unit owns its
   whole lifecycle — never start one by hand, the unit's `ExecStartPre` removes it;
 - the SQLite DB lives on the node at `/var/lib/home-library`, bind-mounted to `/data`;
-- **`TZ` must be set in that env file** (e.g. `TZ=America/New_York`). Due dates are
+- **`TZ` must be set in that `env` file** (e.g. `TZ=America/New_York`). Due dates are
   compared against the local civil date, and SQLite reads the process timezone, so
   without it the container runs on UTC and "overdue" silently shifts by hours. Setting
-  it via systemd `Environment=` does *not* work — that reaches the `docker run` client,
+  it via `systemd` `Environment=` does _not_ work — that reaches the `docker run` client,
   not the container. With two nodes, set the same value on both, or a book is overdue
   on one and not the other. The server logs its timezone at startup;
 - secrets (`GOOGLE_BOOKS_API_KEY`, `SESSION_SECRET` and the Google client) come
   from `/etc/home-library.env` on the node. With sign-in on, Open Library keys
   are users' own, on their accounts; `OPENLIBRARY_ACCESS_KEY` and
   `OPENLIBRARY_SECRET_KEY` there are read only with sign-in off;
-- port 3000 is published on `127.0.0.1:30800`, fronted by the node's nginx, which
+- port 3000 is published on `127.0.0.1:30800`, fronted by the node's `nginx`, which
   proxies `location /library/` (see [`deploy/nginx-library.conf`](./deploy/nginx-library.conf)).
 
 Deploy / update — one script has the node pull the image CI published for this
@@ -704,13 +736,13 @@ HEALTH_URL=http://127.0.0.1:30800/library/ deploy/deploy.sh   # non-default port
 
 `HOST` is an ssh destination — a `Host` alias from your `~/.ssh/config` is the
 easiest way to carry a non-standard port or username. The node needs Docker,
-`curl`, passwordless `sudo`, and a route to `ghcr.io` (the package is public, so
+`curl`, `sudo` with no password, and a route to `ghcr.io` (the package is public, so
 no login).
 
 **What is deployed is what CI published**: `ghcr.io/pillarsdotnet/library:<version>`,
 with the version read from `package.json` in this checkout.
-Those tags exist only once the merge to `main` has passed every check, so an
-unmerged change, a local edit or a red build cannot reach a node. If the tag is
+Those tags exist only once the merge to `main` has passed every check, so a
+change not yet merged, a local edit or a red build cannot reach a node. If the tag is
 not there yet — CI still running, or failed — the script says so and stops before
 touching the node. `BUILD=local` is the escape hatch for when `ghcr.io` cannot be
 reached: it builds this checkout and ships the image over ssh, as the script did
@@ -751,28 +783,28 @@ node happens to be active strands the only authoritative copy on a powered-off b
 travels with the active node, and a floating address follows it, so clients keep one
 URL. It is a **graceful handoff, not high availability** — the shutdown half only
 runs on an orderly shutdown, so a power cut leaves the preferred node owning the
-database and the standby deliberately does *not* self-promote.
+database and the standby deliberately does _not_ self-promote.
 
 Which copy is authoritative is decided by an owner marker holding a node name and a
 **generation counter**, written on both nodes at every handoff. A push or pull is
 refused if the destination's generation is higher, i.e. a later handoff produced it.
 File timestamps are logged but never gate a handoff: opening a SQLite database
-updates its mtime, so a standby started for any reason would otherwise look newer
+updates its `mtime`, so a standby started for any reason would otherwise look newer
 than the rightful owner and block the next legitimate failover.
 
-Two units bracket the app so that systemd — not the script — sequences everything:
+Two units bracket the app so that `systemd` — not the script — sequences everything:
 
-| Unit | Ordering | Boot | Shutdown |
-|---|---|---|---|
-| `home-library-db` | `Before=home-library` | runs first, puts the database in place | runs last, app already stopped |
-| `home-library-vip` | `After=home-library` | runs last, claims the address once healthy | runs first, withdraws it |
+| Unit               | Ordering              | Boot                                       | Shutdown                       |
+| ------------------ | --------------------- | ------------------------------------------ | ------------------------------ |
+| `home-library-db`  | `Before=home-library` | runs first, puts the database in place     | runs last, app already stopped |
+| `home-library-vip` | `After=home-library`  | runs last, claims the address once healthy | runs first, withdraws it       |
 
-A hook must never run `systemctl` against the app it brackets — asking systemd to
+A hook must never run `systemctl` against the app it brackets — asking `systemd` to
 run a job while it is waiting on your `ExecStop` deadlocks until the timeout.
 
 A handoff must also start the receiving node's **own units**, not just its app.
 Starting the app directly leaves that node's units inactive while it is serving, and
-systemd then runs no `ExecStop` on its next shutdown — so it hands nothing back.
+`systemd` then runs no `ExecStop` on its next shutdown — so it hands nothing back.
 
 The app unit must also **`Requires=`** the database unit on the preferred node.
 Ordering alone is not a requirement: without it the app starts even after the
@@ -805,7 +837,7 @@ script. The steps inherit the lock the outer run took, rather than taking it aga
 A standby boot is a normal outcome, not an error, so it must not leave failed units.
 `db-claim` writes an activity flag under `/run` only on the node that should be
 running, and the app and address units test it with `ConditionPathExists`, which
-makes systemd **skip** them cleanly. The flag lives in `/run` deliberately: a reboot
+makes `systemd` **skip** them cleanly. The flag lives in `/run` deliberately: a reboot
 clears it, so every boot has to decide afresh.
 
 Cover images move with the database, through the `covers-send` / `covers-recv`
@@ -815,14 +847,14 @@ landfill.
 
 Before a handoff replaces a database, the old one is kept as a timestamped
 **copy** (`.backup`, so it is consistent even against an open database), ten
-generations deep. Covers are *not* snapshotted: they are named after the copy
+generations deep. Covers are _not_ snapshotted: they are named after the copy
 that owns them and are rarely replaced, so a restored database of any recent
-vintage still finds its images. These were once hardlinks, which is not a snapshot at all — a
-hardlink is another name for the same inode, and SQLite writes in place, so every
+vintage still finds its images. These were once hard links, which is not a snapshot at all — a
+hard link is another name for the same `inode`, and SQLite writes in place, so every
 "generation" tracked the live file and the rotation preserved nothing while
 looking exactly like a working backup rotation.
 
-Requirements: passwordless ssh between the nodes for a key restricted by
+Requirements: `ssh` between the nodes with no password, for a key restricted by
 `command=` to `deploy/failover-peer.sh` (a fixed verb list, so the credential cannot
 do more than its job), and if the floating address is a mesh-VPN route, an
 auto-approver for it — otherwise the standby's advertisement is unapproved and the
@@ -839,7 +871,7 @@ activity flag, so it follows the database through a handoff rather than naming a
 fixed master, and it never pulls — two diverged SQLite databases cannot be merged
 afterwards.
 
-It sends the covers directory in the same run — rsync is the right tool for that
+It sends the covers directory in the same run — `rsync` is the right tool for that
 precisely because almost none of it changes between runs — and writes to
 `<data dir>/standby/` on the peer, deliberately **not** to the peer's own
 `library.db`: that would drive past the generation interlock, which
@@ -848,7 +880,7 @@ from it is a deliberate act, not something the hourly job can do by accident.
 
 Transport is a second key, pinned on the far side to `rrsync -wo <dir>` so it can
 only write and only inside that directory. The failover key is not reused — it is
-pinned to the verb script and has no path to rsync, which is the point of it.
+pinned to the verb script and has no path to `rsync`, which is the point of it.
 
 Per node, `/etc/default/home-library-db-sync` holds `PEER=<other node>`. A run
 where nothing has been written since the last one does no work at all; a peer that
@@ -863,9 +895,9 @@ certificate is one the phone already trusts, so a self-signed cert is not enough
 
 Two approaches that need no public DNS:
 
-- **A mesh VPN that issues certs for its own names.** Tailscale, for example, can
+- **A mesh VPN that issues certs for its own names.** `Tailscale`, for example, can
   obtain and auto-renew a Let's Encrypt cert for a node's MagicDNS name and
-  terminate TLS in front of nginx:
+  terminate TLS in front of `nginx`:
 
   ```bash
   # One-time: enable "HTTPS Certificates" in the admin console, then on the node:
@@ -875,24 +907,24 @@ Two approaches that need no public DNS:
   The app is then reachable at `https://<node>.<tailnet>.ts.net/library/` from any
   device on the VPN.
 
-- **A real domain plus certbot**, if the node has one, terminating TLS in nginx
+- **A real domain plus `certbot`**, if the node has one, terminating TLS in `nginx`
   directly.
 
 Such a certificate is only valid for that **one name**, so bare IP addresses and
 short hostnames stay on plain HTTP — fine for browsing on a trusted LAN, but use
 the certificate's name from a phone when you want to scan.
 
-If TLS is terminated ahead of nginx and proxied onward over http, keep
+If TLS is terminated ahead of `nginx` and passed onward over `http`, keep
 `absolute_redirect off` on the `/library` redirect (as
 [`deploy/nginx-library.conf`](./deploy/nginx-library.conf) does) so the redirect
-preserves the client's scheme instead of forcing https clients back to http.
+preserves the client's scheme instead of forcing `https` clients back to `http`.
 
 ## API
 
 All endpoints are under `/api`:
 
 - `GET/POST /books`, `GET/PUT/DELETE /books/:id` — filters: `q`, `status`,
-  `room`, `genre`, `format`, `shelf_id` (`none` = unshelved).
+  `room`, `genre`, `format`, `shelf_id` (`none` = no shelf).
 - `GET/POST /shelves`, `GET/PUT/DELETE /shelves/:id` — list includes computed
   capacity stats (`used_width_mm`, `free_width_mm`, `fill_pct`, `est_additional`,
   `overfull`, `too_tall`, `too_deep`, `unknown_thickness`).
@@ -906,8 +938,8 @@ All endpoints are under `/api`:
 
 ## Notes
 
-- Deleting a shelf keeps its books; they become "Unshelved".
-- ISBN dimension data is sparse in both APIs — when it's missing, measure the
+- Deleting a shelf keeps its books; they become `Unshelved`.
+- ISBN dimension data is sparse in both sources — when it's missing, measure the
   book and enter height/width/thickness by hand to enable shelf-fit calculations.
 
 ## License

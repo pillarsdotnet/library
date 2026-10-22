@@ -247,20 +247,27 @@ Sign-in is what makes a public address possible. Even then:
 
 ## Run it
 
-### From the Ubuntu PPA
+### From the Debian registry
 
 On Ubuntu 26.04 (`resolute`) or 26.10 (`stonking`), install the Debian package
-from [`ppa:pillarsdotnet/ppa`](https://launchpad.net/~pillarsdotnet/+archive/ubuntu/ppa):
+from the
+[package registry](https://forgejo.bobbalisa.org/pillarsdotnet/-/packages) on
+`forgejo.bobbalisa.org`:
 
 ```sh
-sudo add-apt-repository ppa:pillarsdotnet/ppa
+sudo install -d /etc/apt/keyrings
+curl -fsS https://forgejo.bobbalisa.org/api/packages/pillarsdotnet/debian/repository.key |
+  sudo tee /etc/apt/keyrings/forgejo-bobbalisa.asc > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/forgejo-bobbalisa.asc] https://forgejo.bobbalisa.org/api/packages/pillarsdotnet/debian $(lsb_release -cs) main" |
+  sudo tee /etc/apt/sources.list.d/forgejo-bobbalisa.list > /dev/null
+sudo apt update
 sudo apt install home-library
 ```
 
 The package runs the app as a `systemd` service, started on demand through a
 Unix socket, and ships an `nginx` snippet and an Apache configuration that serve
 it under `/library/`. Its data lives in `/var/lib/home-library`, and its
-settings in `/etc/home-library/home-library.env`. The PPA also carries the
+settings in `/etc/home-library/home-library.env`. The registry also carries the
 newer `libvips` it needs, and on 26.04 the Node.js 24 that the archive lacks.
 `/usr/share/doc/home-library/README.Debian` covers the web server setup.
 

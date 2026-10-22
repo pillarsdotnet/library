@@ -14,9 +14,9 @@ Build-Depends: debhelper-compat (= 13),
                python3,
                tzdata <!nocheck>,
 Standards-Version: 4.7.3
-Homepage: https://github.com/pillarsdotnet/library
-Vcs-Browser: https://github.com/pillarsdotnet/library
-Vcs-Git: https://github.com/pillarsdotnet/library.git
+Homepage: https://forgejo.bobbalisa.org/pillarsdotnet/library
+Vcs-Browser: https://forgejo.bobbalisa.org/pillarsdotnet/library
+Vcs-Git: https://forgejo.bobbalisa.org/pillarsdotnet/library.git
 Rules-Requires-Root: no
 
 Package: home-library

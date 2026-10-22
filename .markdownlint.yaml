@@ -1,0 +1,8 @@
+# markdownlint configuration — https://github.com/DavidAnson/markdownlint
+default: true
+# Prose, tables and example output legitimately exceed a fixed column width.
+MD013: false
+# CHANGELOG.md repeats "Added" / "Changed" / "Fixed" under every release, as
+# Keep a Changelog prescribes; only duplicates under the same parent are wrong.
+MD024:
+  siblings_only: true

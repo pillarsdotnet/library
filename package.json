@@ -13,7 +13,6 @@
     "lint:css": "stylelint \"public/**/*.css\"",
     "lint:fix": "eslint . --fix && stylelint \"public/**/*.css\" --fix",
     "test": "node --test",
-    "prepare": "git config core.hooksPath .githooks || true",
     "check:deps": "node check-deps.js"
   },
   "engines": {

@@ -1,0 +1,133 @@
+# Pre-commit hooks for home-library.
+#   * file hygiene — merge markers, JSON/YAML syntax, EOF, trailing whitespace
+#   * prettier     — format the Markdown and YAML
+#   * markdownlint — lint the Markdown
+#   * yamllint     — lint the YAML
+#   * vale         — check the prose in Markdown (see .vale.ini)
+#   * npm-lint     — eslint + stylelint, via `npm run lint` (needs node_modules,
+#                    so run `npm ci` first)
+#   * check-deps   — no known vulnerability or deprecated package (network)
+#   * asset-version / changelog-version — release hygiene, carried over from
+#     the old .githooks/pre-commit script
+#
+# Setup:   npm ci && pre-commit install
+# Run all: pre-commit run --all-files
+# Bump:    pre-commit autoupdate
+# .github/workflows/ belongs to the GitHub mirror (ci.yml, launchpad.yml) and
+# is left byte-for-byte alone here, so the hooks that would rewrite or fail it
+# exclude it; the syntax-only checks still read it. test/fixtures/ holds
+# captured upstream pages, kept verbatim so tests see what the scraper saw.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-json
+      - id: check-yaml
+      - id: end-of-file-fixer
+        exclude: ^(\.github/workflows/|test/fixtures/)
+      - id: trailing-whitespace
+        exclude: ^(\.github/workflows/|test/fixtures/)
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        # Markdown and YAML only: the app's own JS and CSS are formatted and
+        # linted by eslint and stylelint through the npm-lint hook below.
+        types_or: [markdown, yaml]
+        exclude: ^\.github/workflows/
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.49.0
+    hooks:
+      - id: markdownlint
+        # Like vale below: CLAUDE.md and .claude/ are instructions for an
+        # agent, not documentation for people.
+        exclude: ^(CLAUDE\.md|\.claude/)
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        exclude: ^\.github/workflows/
+
+  - repo: local
+    hooks:
+      - id: vale
+        name: vale
+        # The PyPI "vale" package wraps the official binary, so pre-commit
+        # installs it into the hook's own environment - nothing to install by
+        # hand, locally or in CI. CLAUDE.md and .claude/ are instructions for
+        # an agent, not prose for people, so they stay out of the prose check.
+        entry: vale
+        language: python
+        additional_dependencies: ["vale==3.19.0.0"]
+        types: [markdown]
+        exclude: ^(CLAUDE\.md|\.claude/)
+
+      - id: npm-lint
+        name: npm run lint
+        # eslint + stylelint, exactly what the old .githooks/pre-commit ran.
+        # Needs node_modules: run `npm ci` before `pre-commit run`.
+        entry: npm run lint
+        language: system
+        pass_filenames: false
+        files: \.(js|mjs|cjs|css)$
+
+      - id: check-deps
+        name: npm run check:deps
+        # No commit ships a known vulnerability or a deprecated package. This
+        # asks the npm registry, so it needs the network; CI runs the same
+        # check. Offline? Commit with SKIP=check-deps (or --no-verify).
+        entry: npm run -s check:deps
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: asset-version
+        name: version bump for served assets
+        # Assets are served with ?v=<version from package.json>, so the version
+        # is what makes a browser fetch them again. Change a stylesheet without
+        # moving the version and the fix reaches the server but not the phone
+        # that reported the bug. Carried over verbatim from .githooks/pre-commit.
+        entry: >
+          bash -c '
+          assets=$(git diff --cached --name-only --diff-filter=ACMR |
+            grep -E "^public/.*\.(css|js)$");
+          if [ -n "$assets" ]; then
+            if ! git diff --cached -U0 -- package.json | grep -q "^+.*\"version\""; then
+              echo "";
+              echo "These served assets changed but the version in package.json did not:";
+              echo "$assets" | sed "s/^/    /";
+              echo "";
+              echo "Browsers cache styles.css and app.js and will not always revalidate.";
+              echo "Bump \"version\" in package.json (and add a CHANGELOG entry) so the";
+              echo "?v= query changes and clients actually fetch the new files.";
+              echo "";
+              echo "Genuinely not user-visible? Commit with SKIP=asset-version.";
+              exit 1;
+            fi;
+          fi'
+        language: system
+        pass_filenames: false
+        files: ^(public/.*\.(css|js)|package\.json)$
+
+      - id: changelog-version
+        name: CHANGELOG entry for current version
+        # The version and its changelog note have drifted apart before - a
+        # release shipped with no entry because a scripted edit silently
+        # missed. Fail fast if the current version has no section in
+        # CHANGELOG.md. Carried over verbatim from .githooks/pre-commit.
+        entry: >
+          bash -c '
+          version=$(node -p "require(\"./package.json\").version" 2>/dev/null);
+          if [ -n "$version" ] && ! grep -qF "[$version]" CHANGELOG.md; then
+            echo "";
+            echo "package.json is at $version but CHANGELOG.md has no [$version] section.";
+            echo "Add the release note before committing.";
+            exit 1;
+          fi'
+        language: system
+        pass_filenames: false
+        always_run: true

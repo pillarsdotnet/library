@@ -1,0 +1,16 @@
+allowlists?
+[Aa]ntialiasing
+canonicalise[sd]?
+deduplicated
+dialogs?
+failovers?
+hostnames?
+keyless
+[Ll]ookups?
+onwards
+respawn(s|ing)?
+revalidated?
+snapshotted
+softcovers?
+tooltips?
+viewports?

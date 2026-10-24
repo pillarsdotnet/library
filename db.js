@@ -79,16 +79,9 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_library_users_user ON library_users(user_id);
 
-  -- One shareable wishlist address per USER (not per library: a wishlist is
-  -- personal, and one person's spans every library they use). A plain random
-  -- token: holding the URL is the permission to look. User 0 stands for the
-  -- anonymous user of a server running without sign-in, so no foreign key.
-  CREATE TABLE IF NOT EXISTS wishlist_tokens (
-    user_id     INTEGER PRIMARY KEY,
-    token       TEXT NOT NULL UNIQUE,
-    created_at  TEXT DEFAULT (datetime('now'))
-  );
-
+  -- Wishlist addresses used to be random tokens in a wishlist_tokens table;
+  -- they are readable now — /wishlist/<library>/<email> — and derived, so
+  -- nothing is stored (the table is dropped in the migrations below).
   CREATE TABLE IF NOT EXISTS shelves (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     library_id      INTEGER REFERENCES libraries(id),
@@ -855,6 +848,12 @@ function legacyAllowlist() {
   for (const [col, type] of [['wishlist_user_id', 'INTEGER'], ['purchased_by', 'TEXT'], ['purchase_date', 'TEXT']]) {
     if (!colsOf('copies').includes(col)) db.exec(`ALTER TABLE copies ADD COLUMN ${col} ${type}`);
   }
+
+  // Wishlist addresses are readable now — /wishlist/<library>/<email>, derived
+  // from rows that already exist — so the random tokens have nothing left to
+  // do. A bookmarked token URL 404s, which is honest: the page it named has a
+  // new address.
+  db.exec('DROP TABLE IF EXISTS wishlist_tokens');
 
   db.exec(`
     -- Identity and uniqueness are per library: two libraries may each own the

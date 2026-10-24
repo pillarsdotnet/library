@@ -14,7 +14,7 @@ import {
   olCredentials, olStatus, setOlCredentials, clearOlCredentials,
 } from './accounts.js';
 import { parseEpub } from './epub.js';
-import { mountWishlist, wishlistToken, todayLocalIso } from './wishlist.js';
+import { mountWishlist, wishlistPath, todayLocalIso } from './wishlist.js';
 import {
   fetchEdition, proposalsFor, login, sendField, sendCover,
   envCredentials, FIELD_LABELS, FIELD_COMMENTS, ADOPT_COVER,
@@ -1523,7 +1523,7 @@ router.get('/api/account', (req, res) => {
     // is the anonymous user's (user 0 — see wishlist.js).
     return res.json({
       email: null, founder: false, library, libraries: [],
-      wishlist_token: wishlistToken(0),
+      wishlist_path: wishlistPath(req.library.name, null),
       openlibrary: { active: !!envCredentials(), from_env: true },
     });
   }
@@ -1534,8 +1534,9 @@ router.get('/api/account', (req, res) => {
     founder: req.user.id === founderId(req.library),
     library,
     libraries: librariesOf(req.user.id).map((l) => ({ id: l.id, name: l.name })),
-    // The shareable address of this person's wishlist (see wishlist.js).
-    wishlist_token: wishlistToken(req.user.id),
+    // The shareable address of this person's wishlist in THIS library (see
+    // wishlist.js): the canonical lower-case spelling of library and email.
+    wishlist_path: wishlistPath(req.library.name, req.user.email),
     openlibrary: olStatus(req.user.id),
   });
 });

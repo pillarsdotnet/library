@@ -5,6 +5,18 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.11.0] — 2026-10-24
+
+### Changed
+
+- **Wish-list addresses are readable now.** A list's shareable URL names the
+  library and the person — `wishlist/<library>/<email>` — instead of a random
+  token, or the library's name alone on a server running without sign-in.
+  Library names and emails stay case-preserving but match case-insensitively,
+  so any casing of the address finds the same page, and the app offers the
+  lower-case spelling for sharing. Old token URLs stop working, and the page
+  now shows the person's wishes in the library the address names.
+
 ## [5.10.0] — 2026-10-24
 
 ### Changed

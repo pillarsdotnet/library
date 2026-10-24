@@ -468,17 +468,22 @@ first library, the only one there was, and re-issued naming it.
 ### Wish lists
 
 A book whose status is `wishlist` sits on _your_ wish list: statuses are each
-member's own, so the wish belongs to the person who set it, not to the library,
-and one person's list spans every library they use.
+member's own, so the wish belongs to the person who set it, not to the library.
 
-Filtering the Books tab to that status shows your list and its shareable
-address. Clicking the address copies it to the clipboard — it deliberately does
-not open the page, which is for other people, and might hold a spoiler meant
-for them. Share it however you like:
+Each list has a readable address naming the library and the person —
+`wishlist/<library>/<email>`, so `wishlist/bobbalisa/lghvincent@gmail.com` —
+or the library's name alone on a server running without sign-in, where there
+are no accounts. Library names and emails are case-preserving but match
+case-insensitively, here as everywhere else, so any casing of the address finds
+the same page; the app offers the lower-case spelling for sharing.
+
+Filtering the Books tab to the `wishlist` status shows your list and its
+shareable address. Clicking the address copies it to the clipboard — it
+deliberately does not open the page, which is for other people, and might hold
+a spoiler meant for them. Share it however you like:
 
 - **Anyone holding the URL may look** — no account, no sign-in — and only look.
-  The address is a long random token, and the page offers no way to edit
-  anything.
+  The page offers no way to edit anything.
 - **A signed-in visitor who is not the list's owner** gets a **🎁 Purchase**
   button on each book. It asks for a purchase date and records it with the
   buyer's own address; the record then replaces the button, so nobody buys a

@@ -2,8 +2,12 @@
 //
 // A user's wishlist is the books whose status is 'wishlist' in THEIR OWN
 // user_statuses rows (statuses are per user — see db.js), so it is personal by
-// construction, never the library's. Each user has one shareable address for
-// theirs, /wishlist/<token>, mounted in front of the sign-in gate:
+// construction, never the library's. Each one has a readable address naming
+// the library and the person, /wishlist/<library>/<email> — or /wishlist/
+// <library> alone on a server running without sign-in, where the wishlist is
+// the anonymous user's (user 0). Both parts match case-insensitively, like the
+// names themselves do everywhere else, and the address the app offers for
+// sharing is the lower-case spelling. Mounted in front of the sign-in gate:
 //
 //   - Anyone holding the URL may look at the books. Holding it IS the
 //     permission: the token is long and random, and the page offers no way to
@@ -19,55 +23,66 @@
 // The page is rendered here, plain HTML with no script: the purchase date is
 // asked for by a <details> fold, and the purchase itself is an ordinary form
 // POST. Nothing on it needs the app's bundle, and a visitor gets no cookie.
-import { randomBytes } from 'node:crypto';
 import express from 'express';
 import db from './db.js';
 import { coverPath, mimeForFile } from './covers.js';
 import { authConfigured, sessionFromRequest } from './auth.js';
-import { userByEmail, firstLibrary, displayName } from './accounts.js';
+import { userByEmail, libraryByName, isMember, displayName } from './accounts.js';
 
 // The calendar date here, not UTC — the same reasoning as the overdue filter:
 // whether a purchase may be shown is a question about the calendar on the
 // wall, and SQLite's localtime reads the process timezone the server logs.
 export const todayLocalIso = () => db.prepare("SELECT date('now', 'localtime') AS d").get().d;
 
-// ─── tokens ──────────────────────────────────────────────────────────────────
+// ─── the address ─────────────────────────────────────────────────────────────
 
-// The user's share token, minted on first use and stable after that: the URL
-// gets written into messages and bookmarks, so it must not churn.
-export function wishlistToken(userId) {
-  const uid = userId ?? 0;
-  const row = db.prepare('SELECT token FROM wishlist_tokens WHERE user_id = ?').get(uid);
-  if (row) return row.token;
-  const token = randomBytes(16).toString('base64url');
-  db.prepare('INSERT INTO wishlist_tokens (user_id, token) VALUES (?, ?)').run(uid, token);
-  return token;
+// The canonical, shareable spelling of a wishlist's path: the library and the
+// person, both lower-cased — names and addresses are case-preserving but
+// match case-insensitively, so every casing is the same page, and the one the
+// app hands out is the one that reads calmest in a message. No email names
+// the anonymous user of a server running without sign-in, whose wishlist is
+// the library's path alone.
+export function wishlistPath(libraryName, email) {
+  const seg = (s) => encodeURIComponent(String(s).toLowerCase());
+  return email ? `wishlist/${seg(libraryName)}/${seg(email)}` : `wishlist/${seg(libraryName)}`;
 }
 
-// The wishlist a token names, or null. No timing-safe comparison needed: the
-// lookup is by unique index, and guessing 128 random bits is not a plan.
-function userIdForToken(token) {
-  const row = db.prepare('SELECT user_id FROM wishlist_tokens WHERE token = ?').get(String(token ?? ''));
-  return row ? row.user_id : null;
+// The wishlist an address names — { library, uid } — or null. The library and
+// the member must both exist, and the email must name a member of THAT
+// library: the address says where the wish was made, not just whose it is.
+// Without an email the address is the anonymous user's, which only a server
+// running without sign-in has.
+function wishlistOf(params) {
+  const library = libraryByName(params.library);
+  if (!library) return null;
+  if (params.email === undefined) {
+    return authConfigured() ? null : { library, uid: 0 };
+  }
+  const user = userByEmail(params.email);
+  if (!user || !isMember(library.id, user.id)) return null;
+  return { library, uid: user.id };
 }
 
 // ─── the wishlist itself ─────────────────────────────────────────────────────
 
-// Per user across every library — a wishlist is personal, so the books follow
-// the person, not the tenancy.
-const wishlistBooks = (uid) => db.prepare(`
+// One person's wishes in one library — the library the address names, since
+// the address now says where as well as whose.
+const wishlistBooks = (uid, libraryId) => db.prepare(`
   SELECT c.id, us.purchased_by, us.purchase_date, c.cover_file, c.cover_token,
          e.title, e.authors, e.publisher, e.published_date, e.page_count, e.format,
          COALESCE(e.isbn13, e.isbn_text) AS isbn, e.cover_url AS edition_cover_url
   FROM user_statuses us
   JOIN copies c ON c.id = us.copy_id
   JOIN editions e ON e.id = c.edition_id
-  WHERE us.user_id = ? AND us.status = 'wishlist'
-  ORDER BY sort_title(e.title)`).all(uid);
+  WHERE us.user_id = ? AND us.status = 'wishlist' AND c.library_id = ?
+  ORDER BY sort_title(e.title)`).all(uid, libraryId);
 
-// Whose wishlist to call it. User 0 has no address, so the library speaks for them.
-function ownerName(uid) {
-  if (uid === 0) return displayName(firstLibrary().name);
+// Whose wishlist to call it, as the name was stored — displayed case-preserved
+// even though the URL was lower-cased. User 0 is the anonymous user of a
+// server running without sign-in: nobody has an account there, so there is no
+// email to name the page with, and the library speaks for them instead.
+function ownerName(uid, library) {
+  if (uid === 0) return displayName(library.name);
   return db.prepare('SELECT email FROM users WHERE id = ?').get(uid)?.email ?? 'Somebody';
 }
 
@@ -132,7 +147,7 @@ const notFound = (res) => res.status(404).type('html')
 // A signed-in visitor: the record, or the button that makes one. A stranger:
 // "spoken for" without the buyer's address — the URL travels further than the
 // owner can see, and an email address is not for everyone who holds it.
-function purchaseBlock(b, { isOwner, signedIn, base, token, today }) {
+function purchaseBlock(b, { isOwner, signedIn, base, path, today }) {
   if (b.purchased_by) {
     const record = `<p class="bought">🎁 Purchased by ${esc(b.purchased_by)} on ${esc(b.purchase_date)}</p>`;
     if (isOwner) return b.purchase_date < today ? record : '';
@@ -140,7 +155,7 @@ function purchaseBlock(b, { isOwner, signedIn, base, token, today }) {
   }
   if (!signedIn || isOwner) return '';
   return `<details class="buy"><summary>🎁 Purchase</summary>
-    <form method="post" action="${esc(base)}/wishlist/${esc(token)}/purchase">
+    <form method="post" action="${esc(base)}/${esc(path)}/purchase">
       <input type="hidden" name="book_id" value="${b.id}">
       <label>Purchase date
         <input type="date" name="purchase_date" value="${esc(today)}" required></label>
@@ -148,9 +163,9 @@ function purchaseBlock(b, { isOwner, signedIn, base, token, today }) {
     </form></details>`;
 }
 
-function bookRow(b, base, token, who) {
+function bookRow(b, base, who) {
   const cover = b.cover_file
-    ? `<img class="cover" src="${esc(base)}/wishlist/${esc(token)}/cover/${b.id}?v=${esc(b.cover_token)}" alt="" loading="lazy">`
+    ? `<img class="cover" src="${esc(base)}/${esc(who.path)}/cover/${b.id}?v=${esc(b.cover_token)}" alt="" loading="lazy">`
     : b.edition_cover_url
       ? `<img class="cover" src="${esc(b.edition_cover_url)}" alt="" loading="lazy">`
       : '<div class="cover placeholder">📖</div>';
@@ -166,7 +181,7 @@ function bookRow(b, base, token, who) {
       <h2>${esc(b.title)}</h2>
       <p class="authors">${esc(b.authors || 'Unknown author')}</p>
       ${facts ? `<p class="facts">${esc(facts)}</p>` : ''}
-      ${purchaseBlock(b, who)}
+      ${purchaseBlock(b, { ...who, base })}
     </div></li>`;
 }
 
@@ -177,20 +192,42 @@ function bookRow(b, base, token, who) {
  * leaks: a book is only ever shown or sold through the wishlist it is on.
  */
 export function mountWishlist(router, base = '') {
-  router.get('/wishlist/:token', (req, res) => {
-    const uid = userIdForToken(req.params.token);
-    if (uid == null) return notFound(res);
+  // The second pattern of each pair is the anonymous user's, library alone —
+  // only a server running without sign-in has one (see wishlistOf).
+  router.get(['/wishlist/:library/:email/cover/:id', '/wishlist/:library/cover/:id'],
+    (req, res) => {
+      // A wishlist book's own photograph. The edition's stock artwork is a
+      // plain URL and goes straight into the page; only the file needs serving.
+      const wl = wishlistOf(req.params);
+      if (!wl) return res.status(404).json({ error: 'Not found' });
+      const row = db.prepare(`SELECT c.cover_file FROM copies c
+        JOIN user_statuses us ON us.copy_id = c.id
+        WHERE c.id = ? AND c.library_id = ? AND us.user_id = ? AND us.status = 'wishlist'`)
+        .get(req.params.id, wl.library.id, wl.uid);
+      const path = row?.cover_file ? coverPath(row.cover_file) : null;
+      if (!path) return res.status(404).json({ error: 'Not found' });
+      res.set('Content-Type', mimeForFile(row.cover_file));
+      res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
+      return res.sendFile(path);
+    });
 
+  router.get(['/wishlist/:library/:email', '/wishlist/:library'], (req, res) => {
+    const wl = wishlistOf(req.params);
+    if (!wl) return notFound(res);
+
+    const name = ownerName(wl.uid, wl.library);
+    // Links on the page use the canonical lower-case spelling, whatever casing
+    // got the visitor here.
+    const path = wishlistPath(wl.library.name, wl.uid === 0 ? null : name);
     const viewer = viewerOf(req);
     const who = {
-      isOwner: !!viewer && viewer.id === uid,
+      isOwner: !!viewer && viewer.id === wl.uid,
       signedIn: !!viewer,
       base,
-      token: req.params.token,
+      path,
       today: todayLocalIso(),
     };
-    const books = wishlistBooks(uid);
-    const name = ownerName(uid);
+    const books = wishlistBooks(wl.uid, wl.library.id);
     // A stranger can sign in to earn the Purchase button — their own library
     // is fine, any signed-in identity counts — so say so instead of leaving
     // the page silently read-only.
@@ -198,55 +235,43 @@ export function mountWishlist(router, base = '') {
       ? 'Your wishlist, as visitors see it. A purchase stays hidden from you until its date has passed.'
       : who.signedIn || !authConfigured()
         ? 'Mark a book as purchased so nobody buys it twice.'
-        : `Looking is open to all. <a href="${esc(base)}/auth/login?to=${encodeURIComponent(`${base}/wishlist/${req.params.token}`)}">Sign in</a> to mark a book as purchased.`;
+        : `Looking is open to all. <a href="${esc(base)}/auth/login?to=${encodeURIComponent(`${base}/${path}`)}">Sign in</a> to mark a book as purchased.`;
     res.type('html').send(page(`${name} — wishlist`, `
       <h1>🎁 ${esc(name)}’s wishlist</h1>
       <p class="hint">${hint}</p>
       ${books.length
-        ? `<ul class="books">${books.map((b) => bookRow(b, base, req.params.token, who)).join('')}</ul>`
+        ? `<ul class="books">${books.map((b) => bookRow(b, base, who)).join('')}</ul>`
         : '<p class="empty">Nothing on this wishlist right now.</p>'}`));
-  });
-
-  // A wishlist book's own photograph. The edition's stock artwork is a plain
-  // URL and goes straight into the page; only the file needs serving.
-  router.get('/wishlist/:token/cover/:id', (req, res) => {
-    const uid = userIdForToken(req.params.token);
-    if (uid == null) return res.status(404).json({ error: 'Not found' });
-    const row = db.prepare(`SELECT c.cover_file FROM copies c
-      JOIN user_statuses us ON us.copy_id = c.id
-      WHERE c.id = ? AND us.user_id = ? AND us.status = 'wishlist'`).get(req.params.id, uid);
-    const path = row?.cover_file ? coverPath(row.cover_file) : null;
-    if (!path) return res.status(404).json({ error: 'Not found' });
-    res.set('Content-Type', mimeForFile(row.cover_file));
-    res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
-    return res.sendFile(path);
   });
 
   // Recording a purchase. Refused without a signed-in identity (the address is
   // the record), for the wishlist's own owner, and for a book already bought —
   // buying it twice is the thing this exists to prevent.
-  router.post('/wishlist/:token/purchase', express.urlencoded({ extended: false, limit: '4kb' }), (req, res) => {
-    const uid = userIdForToken(req.params.token);
-    if (uid == null) return notFound(res);
-    const back = `${base}/wishlist/${req.params.token}`;
-    const refuse = (status, msg) => res.status(status).type('html').send(page('Wishlist', `
+  router.post(['/wishlist/:library/:email/purchase', '/wishlist/:library/purchase'],
+    express.urlencoded({ extended: false, limit: '4kb' }), (req, res) => {
+      const wl = wishlistOf(req.params);
+      if (!wl) return notFound(res);
+      const name = ownerName(wl.uid, wl.library);
+      const back = `${base}/${wishlistPath(wl.library.name, wl.uid === 0 ? null : name)}`;
+      const refuse = (status, msg) => res.status(status).type('html').send(page('Wishlist', `
       <h1>🎁 Wishlist</h1><p class="err">${esc(msg)}</p>
       <p><a href="${esc(back)}">Back to the wishlist</a></p>`));
 
-    const viewer = viewerOf(req);
-    if (!viewer) return refuse(401, 'Sign in to mark a purchase.');
-    if (viewer.id === uid) return refuse(403, 'Your own wishlist is for other people to buy from.');
-    const date = String(req.body?.purchase_date ?? '');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return refuse(400, 'The purchase date must be a date.');
-    const book = db.prepare(`SELECT copy_id AS id, purchased_by FROM user_statuses
-      WHERE copy_id = ? AND user_id = ? AND status = 'wishlist'`)
-      .get(Number(req.body?.book_id), uid);
-    if (!book) return refuse(404, 'That book is not on this wishlist.');
-    if (book.purchased_by) return refuse(409, 'Somebody already purchased that one.');
-    // The purchase is recorded against the WISHER's row: it is their wish that
-    // is now spoken for, whoever is looking.
-    db.prepare('UPDATE user_statuses SET purchased_by = ?, purchase_date = ? WHERE copy_id = ? AND user_id = ?')
-      .run(viewer.email, date, book.id, uid);
-    res.redirect(303, back);
-  });
+      const viewer = viewerOf(req);
+      if (!viewer) return refuse(401, 'Sign in to mark a purchase.');
+      if (viewer.id === wl.uid) return refuse(403, 'Your own wishlist is for other people to buy from.');
+      const date = String(req.body?.purchase_date ?? '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return refuse(400, 'The purchase date must be a date.');
+      const book = db.prepare(`SELECT us.copy_id AS id, us.purchased_by FROM user_statuses us
+        JOIN copies c ON c.id = us.copy_id
+        WHERE us.copy_id = ? AND c.library_id = ? AND us.user_id = ? AND us.status = 'wishlist'`)
+        .get(Number(req.body?.book_id), wl.library.id, wl.uid);
+      if (!book) return refuse(404, 'That book is not on this wishlist.');
+      if (book.purchased_by) return refuse(409, 'Somebody already purchased that one.');
+      // The purchase is recorded against the WISHER's row: it is their wish
+      // that is now spoken for, whoever is looking.
+      db.prepare('UPDATE user_statuses SET purchased_by = ?, purchase_date = ? WHERE copy_id = ? AND user_id = ?')
+        .run(viewer.email, date, book.id, wl.uid);
+      res.redirect(303, back);
+    });
 }

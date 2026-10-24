@@ -133,7 +133,7 @@ function isoDay(offset) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-const purchase = (token, bookId, date, session = '') => fetch(`${BASE}/wishlist/${token}/purchase`, {
+const purchase = (path, bookId, date, session = '') => fetch(`${BASE}/${path}/purchase`, {
   method: 'POST',
   redirect: 'manual',
   headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...(session ? { Cookie: session } : {}) },
@@ -141,34 +141,46 @@ const purchase = (token, bookId, date, session = '') => fetch(`${BASE}/wishlist/
 });
 
 let alice, bob;      // sessions
-let token;           // alice's wishlist token
+let path;            // alice's wishlist path: wishlist/<library>/<email>
 let wished, plain;   // alice's books
 
 // ─── the wishlist and its URL ───────────────────────────────────────────────
 
-test('a wishlist book, its per-user token, and the filter that shows only yours', async () => {
+test('a wishlist book, its readable per-user address, and the filter that shows only yours', async () => {
   alice = await signIn('alice@gmail.com', 'Bobbalisa');
 
   wished = (await api('/books', { ...as(alice), method: 'POST', body: JSON.stringify({ title: 'Wished Dragon', status: 'wishlist' }) })).body;
   plain = (await api('/books', { ...as(alice), method: 'POST', body: JSON.stringify({ title: 'Plain Book', status: 'tbr' }) })).body;
   assert.equal(wished.status, 'wishlist');
 
+  // The address names the library and the person, forced to lower-case for
+  // sharing even though both are stored case-preserved ("Bobbalisa").
   const account = (await api('/account', as(alice))).body;
-  token = account.wishlist_token;
-  assert.match(token, /^[\w-]{20,}$/, 'the account carries a wishlist token');
-  const again = (await api('/account', as(alice))).body;
-  assert.equal(again.wishlist_token, token, 'the token is stable: the URL gets bookmarked');
+  path = account.wishlist_path;
+  assert.equal(path, 'wishlist/bobbalisa/alice%40gmail.com');
+
+  // …and matches case-insensitively: every casing is the same page.
+  for (const spelling of [path, 'wishlist/BobBalisa/Alice@Gmail.COM']) {
+    const r = await fetch(`${BASE}/${spelling}`);
+    assert.equal(r.status, 200, `${spelling} finds the page`);
+    assert.match(await r.text(), /Wished Dragon/);
+  }
 
   const mine = (await api('/books?status=wishlist', as(alice))).body;
   assert.deepEqual(mine.map((b) => b.title), ['Wished Dragon']);
 
-  // Bob founds his own library; his wishlist is his own, with its own token.
+  // Bob founds his own library; his wishlist is his own, at its own address.
   bob = await signIn('bob@gmail.com', 'Bobs Books');
   const bobAccount = (await api('/account', as(bob))).body;
-  assert.ok(bobAccount.wishlist_token, 'every user gets a token');
-  assert.notEqual(bobAccount.wishlist_token, token, 'and not the same one');
-  const bobsList = await fetch(`${BASE}/wishlist/${bobAccount.wishlist_token}`);
+  assert.equal(bobAccount.wishlist_path, 'wishlist/bobs%20books/bob%40gmail.com');
+  const bobsList = await fetch(`${BASE}/${bobAccount.wishlist_path}`);
   assert.doesNotMatch(await bobsList.text(), /Wished Dragon/, "alice's wishes are not on bob's list");
+
+  // An address must name a member OF that library: bob is not in Bobbalisa
+  // (alice, user 1, is the server's owner and so a member of every library,
+  // bob's included), and a library that does not exist holds nobody's wishes.
+  assert.equal((await fetch(`${BASE}/wishlist/bobbalisa/bob@gmail.com`)).status, 404);
+  assert.equal((await fetch(`${BASE}/wishlist/no-such-library/alice@gmail.com`)).status, 404);
 });
 
 test("status is each member's own: one copy, two readers, two truths", async () => {
@@ -203,7 +215,7 @@ test("status is each member's own: one copy, two readers, two truths", async () 
 });
 
 test('anyone holding the URL may look, and only look', async () => {
-  const page = await fetch(`${BASE}/wishlist/${token}`);
+  const page = await fetch(`${BASE}/${path}`);
   assert.equal(page.status, 200, 'no sign-in needed');
   const html = await page.text();
   assert.match(html, /Wished Dragon/);
@@ -211,33 +223,35 @@ test('anyone holding the URL may look, and only look', async () => {
   assert.doesNotMatch(html, /Purchase<\/summary>/, 'a stranger gets no purchase button');
   assert.match(html, /auth\/login/, 'but is told signing in earns one');
 
-  assert.equal((await fetch(`${BASE}/wishlist/not-a-real-token`)).status, 404);
-  const anon = await purchase(token, wished.id, isoDay(1));
+  // A bare library path is the ANONYMOUS user's wishlist, which a server with
+  // sign-in configured does not have.
+  assert.equal((await fetch(`${BASE}/wishlist/bobbalisa`)).status, 404);
+  const anon = await purchase(path, wished.id, isoDay(1));
   assert.equal(anon.status, 401, 'a purchase needs a signed-in identity');
 });
 
 // ─── buying ─────────────────────────────────────────────────────────────────
 
 test('a signed-in visitor may buy a book once; the owner may not buy at all', async () => {
-  const own = await purchase(token, wished.id, isoDay(1), alice);
+  const own = await purchase(path, wished.id, isoDay(1), alice);
   assert.equal(own.status, 403, 'your own wishlist is for other people');
 
-  const asBob = await fetch(`${BASE}/wishlist/${token}`, { headers: { Cookie: bob } });
+  const asBob = await fetch(`${BASE}/${path}`, { headers: { Cookie: bob } });
   assert.match(await asBob.text(), /Purchase<\/summary>/, 'a signed-in visitor gets the button');
 
-  const bad = await purchase(token, wished.id, 'next tuesday', bob);
+  const bad = await purchase(path, wished.id, 'next tuesday', bob);
   assert.equal(bad.status, 400, 'the date must be a date');
-  const missing = await purchase(token, plain.id, isoDay(1), bob);
+  const missing = await purchase(path, plain.id, isoDay(1), bob);
   assert.equal(missing.status, 404, 'a book not on the wishlist cannot be bought through it');
 
-  const bought = await purchase(token, wished.id, isoDay(1), bob);
+  const bought = await purchase(path, wished.id, isoDay(1), bob);
   assert.equal(bought.status, 303, 'the purchase lands and returns to the page');
 
-  const after = await (await fetch(`${BASE}/wishlist/${token}`, { headers: { Cookie: bob } })).text();
+  const after = await (await fetch(`${BASE}/${path}`, { headers: { Cookie: bob } })).text();
   assert.match(after, /Purchased by bob@gmail\.com on /, 'the record replaces the button');
   assert.doesNotMatch(after, /Purchase<\/summary>/);
 
-  const twice = await purchase(token, wished.id, isoDay(2), bob);
+  const twice = await purchase(path, wished.id, isoDay(2), bob);
   assert.equal(twice.status, 409, 'a book is bought once');
 });
 
@@ -248,12 +262,12 @@ test('the purchase is a surprise: hidden from the owner until its date has passe
   assert.equal(hidden.purchase_date, null, 'and so is the date');
 
   // …and on the public page, even signed in as themselves.
-  const ownPage = await (await fetch(`${BASE}/wishlist/${token}`, { headers: { Cookie: alice } })).text();
+  const ownPage = await (await fetch(`${BASE}/${path}`, { headers: { Cookie: alice } })).text();
   assert.doesNotMatch(ownPage, /bob@gmail\.com/, 'the owner sees no purchase on the page either');
 
   // A stranger with the URL learns the book is taken, but not by whom: the
   // address travels further than anyone controls.
-  const anonPage = await (await fetch(`${BASE}/wishlist/${token}`)).text();
+  const anonPage = await (await fetch(`${BASE}/${path}`)).text();
   assert.match(anonPage, /Spoken for/);
   assert.doesNotMatch(anonPage, /bob@gmail\.com/);
 
@@ -276,7 +290,7 @@ test('leaving the wishlist retires the entry, purchase and all', async () => {
   assert.equal(updated.purchased_by, null);
   assert.equal(updated.purchase_date, null);
 
-  const page = await (await fetch(`${BASE}/wishlist/${token}`)).text();
+  const page = await (await fetch(`${BASE}/${path}`)).text();
   assert.doesNotMatch(page, /Wished Dragon/, 'off the wishlist, off the page');
 
   // Back on: a fresh wish, not a resurrected purchase that would block buyers.
@@ -284,6 +298,6 @@ test('leaving the wishlist retires the entry, purchase and all', async () => {
     ...as(alice), method: 'PUT', body: JSON.stringify({ status: 'wishlist' }),
   })).body;
   assert.equal(rewished.purchased_by, null);
-  const asBob = await (await fetch(`${BASE}/wishlist/${token}`, { headers: { Cookie: bob } })).text();
+  const asBob = await (await fetch(`${BASE}/${path}`, { headers: { Cookie: bob } })).text();
   assert.match(asBob, /Purchase<\/summary>/, 'the book can be bought again');
 });

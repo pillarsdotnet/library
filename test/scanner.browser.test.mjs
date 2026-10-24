@@ -1613,7 +1613,9 @@ test('the Wishlist filter shows the shareable URL, clicking copies it, and the p
 
   assert.equal(await page.$eval('#wishlistShare', (el) => el.hidden), false, 'the URL appears with the filter');
   const url = await page.$eval('#wishlistUrlBtn', (el) => el.textContent);
-  assert.match(url, /\/library\/wishlist\/[\w-]{20,}$/, 'and names the wishlist page');
+  // No sign-in on this server, so the address is the anonymous user's: the
+  // library's name alone, lower-cased for sharing.
+  assert.match(url, /\/library\/wishlist\/bobbalisa$/, 'and names the wishlist page');
 
   // Clicking copies — it must never navigate away from the Books tab.
   await page.click('#wishlistUrlBtn');

@@ -190,8 +190,8 @@ function clearFilters() {
 // other people — the owner already sees these books right here, and opening it
 // risks spoiling a purchase meant as a surprise.
 // ---------------------------------------------------------------------------
-const wishlistUrl = () => (ACCOUNT?.wishlist_token
-  ? new URL(`wishlist/${ACCOUNT.wishlist_token}`, document.baseURI).href
+const wishlistUrl = () => (ACCOUNT?.wishlist_path
+  ? new URL(ACCOUNT.wishlist_path, document.baseURI).href
   : '');
 
 function showWishlistUrl(on) {

@@ -5,6 +5,27 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.16.0] — 2026-10-24
+
+### Removed
+
+- **All version-migration code.** The one deployment there is runs the current
+  schema, so the one-way 2.x "books table" split, the base64-cover extraction,
+  the column backfill steps and the per-user status seeding are gone; `db.js`
+  only creates the current schema and maintains it. A database older than the
+  current shape is no longer upgraded in place.
+- The README sections describing earlier versions, including "Upgrading from
+  2.x".
+
+### Changed
+
+- **The documentation is split three ways.** The README describes what the app
+  does; [INSTALLING.md](INSTALLING.md) covers installing and operating it (the
+  Debian package, Docker, plain Node, the environment, two-node failover,
+  HTTPS and the API); [CONTRIBUTING.md](CONTRIBUTING.md) covers the data
+  model, the pre-commit hooks, the versioning and dependency rules, and
+  contributing metadata back to Open Library.
+
 ## [5.15.0] — 2026-10-24
 
 ### Added

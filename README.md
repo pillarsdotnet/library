@@ -141,11 +141,7 @@ A photographed cover is a **file** in a `covers/` directory beside the database,
 named after the copy it belongs to. The row holds only that filename and
 `cover_token`, a hash of the bytes.
 
-They used to be base64 data-URLs in the row, which made them about half the
-database — carried by every backup, every failover handoff and every hourly sync.
-Moving them out took the live database from **15.4 MB to 459 KB**.
-
-**A copy of `library.db` on its own is therefore no longer a backup.** Every row
+**A copy of `library.db` on its own is therefore not a backup.** Every row
 naming a missing file is a broken picture, so the covers directory has to travel
 with it. Both mechanisms here already do: the handoff moves it through the
 `covers-send`/`covers-recv` verbs, and the hourly sync carries it alongside with `rsync`.
@@ -286,52 +282,28 @@ newer `libvips` it needs, and on 26.04 the Node.js 24 that the archive lacks.
 `/usr/share/doc/home-library/README.Debian` covers the web server setup.
 
 To run one library on two machines, with exactly one of them accepting changes
-at a time, add `home-library-failover` (26.10 only for now). It hands the
+at a time, add `home-library-failover` (26.10 only). It hands the
 live database and covers between the two, moves a `Tailscale` floating address
 with them, and can point a public DNS name at whichever machine is serving.
 Nothing changes until `home-library-failover enable`; see
 `/usr/share/doc/home-library-failover/README.Debian`.
 
-### With Docker (recommended for a self-hosted server)
+### With Docker
 
 ```bash
 docker compose up -d --build
 ```
 
-Then open `http://<your-server>:3000`. The SQLite database is stored in the
-`library-data` Docker volume, so it survives rebuilds. To back it up, copy
-`/data/library.db` out of the volume.
+Then open `http://<your-server>:3000`. The image is built locally from the
+[`Dockerfile`](Dockerfile) (Debian slim; the `zoneinfo` files are included, so
+due dates follow `TZ` instead of silently meaning UTC). The SQLite database is
+stored in the `library-data` Docker volume, so it survives rebuilds. To back it
+up, copy `/data/library.db` **and the `covers/` directory beside it** out of
+the volume — neither is whole without the other.
 
-Or skip the build and run a published image. Every merge to `main` that
-passes the Code Checker workflow pushes one to the GitHub Container Registry:
-Debian slim, for `amd64`, tagged `latest`, the `package.json` version and
-`sha-<commit>`.
-
-```bash
-docker run -d -p 3000:3000 -v library-data:/data -e TZ=America/New_York \
-  ghcr.io/pillarsdotnet/library:latest
-```
-
-Alpine and `arm64` images are no longer built. The `-alpine` tags and the
-`arm64` images already on `ghcr.io` stay where they are, but get no updates;
-move to the plain tags on `amd64`. A measured comparison of slim and Alpine
-(memory, CPU per request, image size) is what settled on slim; it is in the
-README as of commit `32b8709`, along with how it was measured. The scripts in
-[`bench/`](bench/) still compare any images, such as two releases, or slim with
-and without `MALLOC_ARENA_MAX=2`.
-
-Before the image is published, CI runs three checks inside it:
-
-- **Due dates follow `TZ`.** SQLite's `localtime` compares with Node's own
-  timezone data in four zones. Without the `zoneinfo` files in the image,
-  overdue books would be judged in UTC while the startup log named the right
-  zone.
-- **Garbage collection does not abort Node.** 300,000 prepared statements are
-  freed under allocation pressure. From Node 24.19.0, this aborts any `addon`
-  built on the older `node::ObjectWrap`
-  ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)), which
-  `better-sqlite3` 11 was.
-- **The due-date tests** run against that image's own server.
+The scripts in [`bench/`](bench/) compare any two images (memory, CPU per
+request, image size), such as two releases, or slim with and without
+`MALLOC_ARENA_MAX=2`.
 
 ### With Node directly
 
@@ -834,7 +806,7 @@ makes `systemd` **skip** them cleanly. The flag lives in `/run` deliberately: a 
 clears it, so every boot has to decide afresh.
 
 Cover images move with the database, through the `covers-send` / `covers-recv`
-verbs — they are files beside it now, and the two are worthless apart: a row
+verbs — they are files beside it, and the two are worthless apart: a row
 naming a missing file is a broken picture, and an image nothing refers to is
 landfill.
 

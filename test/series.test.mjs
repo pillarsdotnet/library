@@ -200,3 +200,30 @@ test('a book carries its series on the books API', async () => {
   assert.equal(body.series.title, series.title);
   assert.equal(body.series.order, 1);
 });
+
+test('a genre classification can be copied across a series, additively', async () => {
+  const { series, ids } = await makeSeriesWith(['Vol 1', 'Vol 2', 'Vol 3']);
+  const fantasy = (await api('/genres', send('POST', { name: `Fantasy ${Date.now()}` }))).body;
+  const dragons = (await api('/genres', send('POST', { name: `Dragons ${Date.now()}` }))).body;
+
+  // Vol 2 keeps a genre of its own: the copy must add, never replace.
+  await api(`/books/${ids[1]}`, send('PUT', { genre_ids: [dragons.id] }));
+
+  const copied = await api(`/series/${series.id}/genres`, send('POST', { genre_ids: [fantasy.id] }));
+  assert.equal(copied.status, 200);
+  assert.equal(copied.body.editions, 3);
+  assert.equal(copied.body.added, 3);
+
+  const got = async (id) => (await api(`/books/${id}`)).body.genre_ids.sort((a, b) => a - b);
+  assert.deepEqual(await got(ids[0]), [fantasy.id]);
+  assert.deepEqual(await got(ids[1]), [dragons.id, fantasy.id].sort((a, b) => a - b), 'existing genres are kept');
+  assert.deepEqual(await got(ids[2]), [fantasy.id]);
+
+  // Copying again changes nothing: every book already carries it.
+  assert.equal((await api(`/series/${series.id}/genres`, send('POST', { genre_ids: [fantasy.id] }))).body.added, 0);
+
+  // Refusals: a series that does not exist, and ids that name no genre here.
+  assert.equal((await api('/series/999999/genres', send('POST', { genre_ids: [fantasy.id] }))).status, 404);
+  assert.equal((await api(`/series/${series.id}/genres`, send('POST', { genre_ids: [999999] }))).status, 400);
+  assert.equal((await api(`/series/${series.id}/genres`, send('POST', {}))).status, 400);
+});

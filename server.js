@@ -1419,6 +1419,30 @@ router.post('/api/series/:id/books', (req, res) => {
     WHERE sb.series = ? ORDER BY sb."order", sort_title(b.title)`).all(seriesId));
 });
 
+// Copy a genre classification across a whole series: every id is ADDED to
+// every book in the series — nothing is removed, because this answers "also
+// tag the rest of the series", never "make them identical". The client asks
+// the person before calling it (see public/app.js), in both directions: when
+// a book joins a series, and when a series member gains new genres.
+router.post('/api/series/:id/genres', (req, res) => {
+  const seriesId = Number(req.params.id);
+  const lib = req.library.id;
+  if (!oneSeries(seriesId, lib)) return res.status(404).json({ error: 'series not found' });
+  // Another library's genre id is an unknown id here, same rule as setBookGenres.
+  const known = db.prepare('SELECT id FROM genres WHERE id = ? AND library_id = ?');
+  const ids = [...new Set((Array.isArray(req.body.genre_ids) ? req.body.genre_ids : []).map(Number))]
+    .filter((n) => n && known.get(n, lib));
+  if (!ids.length) return res.status(400).json({ error: 'genre_ids must name at least one genre' });
+  const editions = db.prepare('SELECT DISTINCT edition FROM series_books WHERE series = ?')
+    .all(seriesId).map((r) => r.edition);
+  const link = db.prepare('INSERT OR IGNORE INTO book_genres (edition_id, genre_id) VALUES (?, ?)');
+  let added = 0;
+  db.transaction(() => {
+    for (const ed of editions) for (const gid of ids) added += link.run(ed, gid).changes;
+  })();
+  res.json({ editions: editions.length, added });
+});
+
 // Removing a book leaves the other orders alone: they are the books' numbers in
 // the series, not positions in a list (renumbering would be wrong when several
 // editions share a number).

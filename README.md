@@ -19,6 +19,10 @@ both iOS Safari and Android Chrome.
 - **Physical description** — hardback/paperback/e-book/audiobook, dust-jacket
   present/missing/N/A, and book dimensions (height × width × spine thickness).
 - **Genre / subgenre** with autocomplete from what you've already entered.
+  Genres follow a series both ways, each time with a prompt first: a book
+  joining a series offers to take on the genres its other books carry, and
+  genres added by hand to a series member offer to spread to the rest of the
+  series (added to the others, never replacing what they have).
 - **Wish lists** — the `wishlist` status puts a book on your own wish list
   (yours, not the library's), which has a shareable page where signed-in
   visitors can quietly mark a book as purchased — kept secret from you until
@@ -917,6 +921,9 @@ All endpoints are under `/api`:
   means none.
 - `POST /bookcases` — same body: copies every shelf in that bookcase, without
   its books, under the new names. `409` if a bookcase by those names exists.
+- `POST /series/:id/genres` — body `{ genre_ids: [...] }`: adds those genres to
+  every book in the series (additive; nothing is removed). Backs the two
+  copy-across-the-series prompts in the book dialog.
 - `GET /lookup/:isbn` — merged Open Library + Google Books metadata.
 - `GET /meta` — distinct rooms, bookcases, genres for autocomplete + counts.
 

@@ -5,6 +5,18 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.12.0] — 2026-10-24
+
+### Added
+
+- **Genres follow a series, by invitation.** A book joining a series now
+  offers to take on the genres the series' other books carry — the chips land
+  in the dialog before saving, where they can still be pruned — and genres
+  added by hand to a series member offer, on save, to spread to the rest of
+  the series. Both directions ask first, both only add (nothing a book already
+  carries is removed), and a genre that arrived by the first prompt is never
+  offered back out by the second.
+
 ## [5.11.0] — 2026-10-24
 
 ### Changed

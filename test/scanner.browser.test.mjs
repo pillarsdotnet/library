@@ -1634,3 +1634,51 @@ test('the Wishlist filter shows the shareable URL, clicking copies it, and the p
   await shared.close();
   await page.close();
 });
+
+test('joining a series offers its genres, and new genres offer to spread back', { skip }, async () => {
+  const stamp = Date.now();
+  const mk = (path, data) => fetch(`${BASE}/api${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then((r) => r.json());
+  // A series whose one member already carries a genre…
+  const series = await mk('/series', { title: `Saga ${stamp}` });
+  const epic = await mk('/genres', { name: `Epic ${stamp}` });
+  const dragons = await mk('/genres', { name: `Dragons ${stamp}` });
+  const first = await mk('/books', { title: `Saga One ${stamp}`, genre_ids: [epic.id] });
+  await mk(`/series/${series.id}/books`, { book_id: first.id, order: 1 });
+
+  const page = await browser.newPage();
+  const dialogs = [];
+  page.on('dialog', async (d) => { dialogs.push(d.message()); await d.accept(); });
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+
+  // …so committing the series box on a NEW book offers that genre, and
+  // accepting the offer shows up as a chip, visible before anything is saved.
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+  await page.type('#bookForm [name="title"]', `Saga Two ${stamp}`);
+  await page.type('#seriesInput', `Saga ${stamp}`);
+  await page.$eval('#seriesInput', (el) => el.blur());
+  await new Promise((r) => setTimeout(r, 800));
+  assert.ok(dialogs.some((m) => m.includes(`Epic ${stamp}`)), `the offer names the series' genre (got: ${dialogs.join(' | ')})`);
+  const chips = await page.$$eval('#genreField .chip', (els) => els.map((e) => e.textContent.replace('✕', '').trim()));
+  assert.ok(chips.includes(`Epic ${stamp}`), 'accepting the offer adds the chip');
+
+  // A genre added by hand on top of that offers, on save, to spread to the
+  // rest of the series — and accepting tags the first book too.
+  await page.type('#genreInput', `Dragons ${stamp}`);
+  await page.keyboard.press('Enter');
+  await new Promise((r) => setTimeout(r, 300));
+  await page.click('#bookForm button[type="submit"]');
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(dialogs.some((m) => m.includes('rest of the series')), `the spread offer appeared (got: ${dialogs.join(' | ')})`);
+
+  const b1 = await (await fetch(`${BASE}/api/books/${first.id}`)).json();
+  assert.ok(b1.genre_ids.includes(dragons.id), 'the other series book gained the new genre');
+  assert.ok(b1.genre_ids.includes(epic.id), 'and kept its own');
+  // The genre copied IN from the series was not offered back out: only the
+  // hand-added one spread.
+  assert.ok(!dialogs.some((m) => m.includes('rest of the series') && m.includes(`Epic ${stamp}`)),
+    'the copied-in genre is not re-offered to the series');
+  await page.close();
+});

@@ -5,6 +5,25 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.9.0] — 2026-10-24
+
+### Added
+
+- **Wish lists.** A new `wishlist` status puts a book on your own wish list —
+  yours, not the library's: the wish belongs to whoever set the status, and
+  one person's list spans every library they use. Filtering the Books tab to
+  the status shows the list's shareable address, and clicking copies the
+  address rather than opening it, since the page is for other people. Anyone
+  holding the URL may look at the books, signed in or not, and only look. A
+  signed-in visitor who is not the list's owner may mark a book as purchased —
+  the date they choose, recorded with their own address — and the record then
+  replaces the button, so nobody buys a second copy in good faith. The owner
+  is told nothing until the purchase date has passed: the server withholds the
+  buyer and the date from the owner's own responses until then, so the
+  surprise never reaches their browser. Strangers with the URL see only that a
+  book is spoken for, never the buyer's address. Taking a book off the list
+  retires the entry, purchase and all.
+
 ## [5.8.1] — 2026-10-24
 
 ### Removed

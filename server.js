@@ -14,6 +14,7 @@ import {
   olCredentials, olStatus, setOlCredentials, clearOlCredentials,
 } from './accounts.js';
 import { parseEpub } from './epub.js';
+import { mountWishlist, wishlistToken, todayLocalIso } from './wishlist.js';
 import {
   fetchEdition, proposalsFor, login, sendField, sendCover,
   envCredentials, FIELD_LABELS, FIELD_COMMENTS, ADOPT_COVER,
@@ -81,6 +82,10 @@ const UNGATED_FILES = new Set(['/manifest.webmanifest', ...manifest.icons.map((i
 const ungatedStatic = express.static(join(__dirname, 'public'), { index: false });
 router.use((req, res, next) => (UNGATED_FILES.has(req.path) ? ungatedStatic(req, res, next) : next()));
 
+// Wishlist pages, also in front of the gate: the shareable URL exists for
+// people with no account here. See wishlist.js for what it will and won't show.
+mountWishlist(router, BASE);
+
 router.use(requireAuth(BASE));
 
 // Serve index.html with the right <base> href injected for the mount point,
@@ -128,6 +133,7 @@ const DEFAULT_PAGE = 20;         // books per page unless the client asks otherw
 const BOOK_SELECT = `b.id, b.edition_id, b.isbn, b.isbn13, b.ol_work_id, b.title, b.authors,
   b.publisher, b.published_date, b.page_count, b.format, b.height_mm, b.width_mm,
   b.thickness_mm, b.source, b.jacket, b.shelf_id, b.status, b.loaned_to,
+  b.wishlist_user_id, b.purchased_by, b.purchase_date,
   b.is_library_book, b.library_name, b.due_date, b.notes, b.spine_font, b.spine_split,
   b.created_at, b.updated_at,
   b.cover_file, b.cover_token, b.cover_source_file, b.cover_source_token, b.edition_cover_url`;
@@ -157,6 +163,23 @@ const coverRef = (b) => {
 };
 // A client echoing either reference back on save must not overwrite the image.
 const isCoverRef = (v) => typeof v === 'string' && /(^|\/)api\/books\/\d+\/cover(-source)?(\?.*)?$/.test(v);
+
+// A wishlist purchase is a surprise: who bought a book, and when, is withheld
+// from the wishlist's OWNER until the purchase date has passed — withheld here,
+// server-side, so the secret never even reaches their browser. Everyone else
+// who can see the book sees the purchase, which is what stops a second copy
+// being bought. Applied to every response that carries books.
+function hidePurchases(books, req) {
+  const me = req.user?.id ?? 0;
+  const today = todayLocalIso();
+  for (const b of books) {
+    if (b?.purchase_date && (b.wishlist_user_id ?? 0) === me && b.purchase_date >= today) {
+      b.purchased_by = null;
+      b.purchase_date = null;
+    }
+  }
+  return books;
+}
 const round1 = (n) => Math.round(n * 10) / 10;
 
 // ---------------------------------------------------------------------------
@@ -430,6 +453,13 @@ router.get('/api/books', (req, res) => {
   for (const [field, value] of [['status', status], ['format', format]]) {
     if (value) { where.push(`b.${field} = @${field}`); params[field] = value; }
   }
+  // A wishlist is yours, not the library's: filtering to the status shows the
+  // books on YOUR wishlist — the same set your shareable URL shows visitors —
+  // not every member's.
+  if (status === 'wishlist') {
+    where.push('COALESCE(b.wishlist_user_id, 0) = @wisher');
+    params.wisher = req.user?.id ?? 0;
+  }
   if (genre_id === 'none') {
     where.push('NOT EXISTS (SELECT 1 FROM book_genres bg WHERE bg.edition_id = b.edition_id)');
   } else if (genre_id) {
@@ -488,7 +518,7 @@ router.get('/api/books', (req, res) => {
   const sql = `SELECT ${BOOK_SELECT}, s.room, s.bookcase, s.label AS shelf_label ${from}
     ORDER BY ${orderBy}${page}`;
   res.set('X-Total-Count', String(total));
-  res.json(attachGenres(db.prepare(sql).all(params)).map(coverRef));
+  res.json(hidePurchases(attachGenres(db.prepare(sql).all(params)).map(coverRef), req));
 });
 
 // Inline (data:) covers are served from their own endpoint instead of being
@@ -532,7 +562,7 @@ const oneBook = (id, lib) => db.prepare(`SELECT ${BOOK_SELECT} FROM books b WHER
 router.get('/api/books/:id', (req, res) => {
   const book = oneBook(req.params.id, req.library.id);
   if (!book) return res.status(404).json({ error: 'Not found' });
-  res.json(coverRef(attachGenres([book])[0]));
+  res.json(hidePurchases([coverRef(attachGenres([book])[0])], req)[0]);
 });
 
 router.post('/api/books', (req, res) => {
@@ -543,6 +573,8 @@ router.post('/api/books', (req, res) => {
   const lib = req.library.id;
   if (!shelfInLibrary(data.shelf_id, lib)) return badShelf(res);
   const { edition, copy, images } = splitBookData(data);
+  // A book born onto the wishlist is on the wishlist of whoever is adding it.
+  if (copy.status === 'wishlist') copy.wishlist_user_id = req.user?.id ?? 0;
   // One transaction: a copy without its edition, or genres attached to an
   // edition whose copy failed to insert, would both be worse than no book.
   const create = db.transaction(() => {
@@ -553,7 +585,7 @@ router.post('/api/books', (req, res) => {
   });
   const id = create();
   applyImages(id, images, lib);
-  res.status(201).json(coverRef(attachGenres([oneBook(id, lib)])[0]));
+  res.status(201).json(hidePurchases([coverRef(attachGenres([oneBook(id, lib)])[0])], req)[0]);
 });
 
 // The cached spine typography (see /api/spine-fonts) is derived from the
@@ -567,7 +599,7 @@ const clearSpineForShelf = db.prepare('UPDATE copies SET spine_font = NULL, spin
 
 router.put('/api/books/:id', (req, res) => {
   const lib = req.library.id;
-  const current = db.prepare('SELECT id, edition_id FROM copies WHERE id = ? AND library_id = ?').get(req.params.id, lib);
+  const current = db.prepare('SELECT id, edition_id, status FROM copies WHERE id = ? AND library_id = ?').get(req.params.id, lib);
   if (!current) return res.status(404).json({ error: 'Not found' });
   // The client may echo back "api/books/:id/cover"; that means "unchanged".
   if (isCoverRef(req.body.cover_url)) delete req.body.cover_url;
@@ -575,6 +607,22 @@ router.put('/api/books/:id', (req, res) => {
   const data = pick(req.body, BOOK_COLS);
   if (!shelfInLibrary(data.shelf_id, lib)) return badShelf(res);
   const { edition, copy, images } = splitBookData(data);
+  // The wishlist fields live and die with the status. Moving ONTO the wishlist
+  // claims the book for whoever is editing; moving off it retires the entry,
+  // purchase and all — off the list means no longer wanted, so there is
+  // nothing left for the record to guard. An edit that keeps the status keeps
+  // the entry's owner: another member tidying a title must not steal the wish.
+  if (copy.status !== undefined && copy.status !== current.status) {
+    if (copy.status === 'wishlist') {
+      copy.wishlist_user_id = req.user?.id ?? 0;
+      copy.purchased_by = null;
+      copy.purchase_date = null;
+    } else if (current.status === 'wishlist') {
+      copy.wishlist_user_id = null;
+      copy.purchased_by = null;
+      copy.purchase_date = null;
+    }
+  }
   applyImages(current.id, images, lib);
 
   const save = db.transaction(() => {
@@ -608,7 +656,7 @@ router.put('/api/books/:id', (req, res) => {
     else if (copy.shelf_id !== undefined) clearSpineForCopy.run(current.id, lib);
   });
   save();
-  res.json(coverRef(attachGenres([oneBook(req.params.id, lib)])[0]));
+  res.json(hidePurchases([coverRef(attachGenres([oneBook(req.params.id, lib)])[0])], req)[0]);
 });
 
 // Deletes the copy. The edition stays: it is shared metadata that another copy
@@ -1463,8 +1511,13 @@ const needsSignIn = (req, res, next) => (req.user ? next()
 router.get('/api/account', (req, res) => {
   const library = { id: req.library.id, name: req.library.name, display: displayName(req.library.name) };
   if (!req.user) {
-    // Sign-in off: the keys, if any, are the environment's.
-    return res.json({ email: null, founder: false, library, libraries: [], openlibrary: { active: !!envCredentials(), from_env: true } });
+    // Sign-in off: the keys, if any, are the environment's, and the wishlist
+    // is the anonymous user's (user 0 — see wishlist.js).
+    return res.json({
+      email: null, founder: false, library, libraries: [],
+      wishlist_token: wishlistToken(0),
+      openlibrary: { active: !!envCredentials(), from_env: true },
+    });
   }
   res.json({
     email: req.user.email,
@@ -1473,6 +1526,8 @@ router.get('/api/account', (req, res) => {
     founder: req.user.id === founderId(req.library),
     library,
     libraries: librariesOf(req.user.id).map((l) => ({ id: l.id, name: l.name })),
+    // The shareable address of this person's wishlist (see wishlist.js).
+    wishlist_token: wishlistToken(req.user.id),
     openlibrary: olStatus(req.user.id),
   });
 });

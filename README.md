@@ -19,6 +19,10 @@ both iOS Safari and Android Chrome.
 - **Physical description** — hardback/paperback/e-book/audiobook, dust-jacket
   present/missing/N/A, and book dimensions (height × width × spine thickness).
 - **Genre / subgenre** with autocomplete from what you've already entered.
+- **Wish lists** — the `wishlist` status puts a book on your own wish list
+  (yours, not the library's), which has a shareable page where signed-in
+  visitors can quietly mark a book as purchased — kept secret from you until
+  the purchase date has passed. See [Wish lists](#wish-lists).
 - **Shelves as real objects** — model each shelf with room, bookcase, label,
   grid **cell** (its spot in the bookcase: column letter + row number, A1 top
   left — separate from the label, which stays free text like "Horror" or a
@@ -434,8 +438,9 @@ Signing in names a library, and the header then says whose it is: a user in the
 - **The form remembers you.** Signing in leaves a year-long `hl_last` cookie with
   your address and library, so the form is filled in next time and Google offers
   the same account first. Signing out keeps it.
-- **Members are managed in the app.** The ⚙ Account screen lists the library's
-  members; any member can add an address or remove someone else. Removing
+- **Members are managed on the Users tab**, shown to the library's creator
+  alone: list who may sign in, add an address, edit one in place (fixing a typo
+  moves the membership to the corrected address), or remove it. Removing
   yourself, the owner, or the last member, is refused. Membership is checked on
   every request, so a removed member is out on their next click.
 - **The owner is in every library.** User 1, the first account the database
@@ -455,6 +460,35 @@ it is created. The file is not read after that.
 
 A session from before libraries names none; it is honoured for members of the
 first library, the only one there was, and re-issued naming it.
+
+### Wish lists
+
+A book whose status is `wishlist` sits on _your_ wish list: the wish belongs to
+the person who set the status, not to the library, and one person's list spans
+every library they use.
+
+Filtering the Books tab to that status shows your list and its shareable
+address. Clicking the address copies it to the clipboard — it deliberately does
+not open the page, which is for other people, and might hold a spoiler meant
+for them. Share it however you like:
+
+- **Anyone holding the URL may look** — no account, no sign-in — and only look.
+  The address is a long random token, and the page offers no way to edit
+  anything.
+- **A signed-in visitor who is not the list's owner** gets a **🎁 Purchase**
+  button on each book. It asks for a purchase date and records it with the
+  buyer's own address; the record then replaces the button, so nobody buys a
+  second copy in good faith. (Visitors can sign in to any library they belong
+  to, or found their own — any signed-in identity counts.)
+- **The owner is told nothing until the purchase date has passed.** The server
+  withholds the buyer and the date from every response to the owner until
+  then, so the surprise never even reaches their browser; afterwards the book's
+  card and dialog say who bought it and when. Signed-in visitors see the full
+  record; strangers with the URL see only that the book is spoken for, never
+  the buyer's address.
+
+Taking a book off the wish list retires the entry, purchase record and all;
+putting it back on starts a fresh wish that can be bought again.
 
 ### ISBN lookup sources & the Google Books quota
 

@@ -1592,3 +1592,43 @@ test('clicking a parent genre collapses and expands its subgenres', { skip }, as
 
   await page.close();
 });
+
+test('the Wishlist filter shows the shareable URL, clicking copies it, and the page serves the books', { skip }, async () => {
+  const stamp = Date.now();
+  await fetch(`${BASE}/api/books`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Wish ' + stamp, status: 'wishlist' }) });
+  await fetch(`${BASE}/api/books`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Owned ' + stamp, status: 'tbr' }) });
+
+  const page = await browser.newPage();
+  // Filters are remembered across visits now; this test asserts from a clean one.
+  await page.evaluateOnNewDocument(() => localStorage.clear());
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+
+  assert.equal(await page.$eval('#wishlistShare', (el) => el.hidden), true, 'no URL while the filter is off');
+  await page.select('#filterStatus', 'wishlist');
+  await new Promise((r) => setTimeout(r, 400));
+
+  const titles = await page.$$eval('#list .card h3', (els) => els.map((e) => e.textContent));
+  assert.ok(titles.includes('Wish ' + stamp), 'the wishlist book is listed');
+  assert.ok(!titles.includes('Owned ' + stamp), 'the owned book is not');
+
+  assert.equal(await page.$eval('#wishlistShare', (el) => el.hidden), false, 'the URL appears with the filter');
+  const url = await page.$eval('#wishlistUrlBtn', (el) => el.textContent);
+  assert.match(url, /\/library\/wishlist\/[\w-]{20,}$/, 'and names the wishlist page');
+
+  // Clicking copies — it must never navigate away from the Books tab.
+  await page.click('#wishlistUrlBtn');
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(await page.$eval('#wishlistUrlBtn', (el) => el.textContent), '✓ Copied');
+  assert.match(page.url(), /\/library\/$/, 'still on the app');
+  await new Promise((r) => setTimeout(r, 1600));
+  assert.equal(await page.$eval('#wishlistUrlBtn', (el) => el.textContent), url, 'the address comes back after the confirmation');
+
+  // The copied address works with no sign-in and shows only wishlist books.
+  const shared = await browser.newPage();
+  await shared.goto(url, { waitUntil: 'networkidle0' });
+  const html = await shared.content();
+  assert.match(html, new RegExp('Wish ' + stamp));
+  assert.doesNotMatch(html, new RegExp('Owned ' + stamp));
+  await shared.close();
+  await page.close();
+});

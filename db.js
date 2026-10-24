@@ -79,6 +79,16 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_library_users_user ON library_users(user_id);
 
+  -- One shareable wishlist address per USER (not per library: a wishlist is
+  -- personal, and one person's spans every library they use). A plain random
+  -- token: holding the URL is the permission to look. User 0 stands for the
+  -- anonymous user of a server running without sign-in, so no foreign key.
+  CREATE TABLE IF NOT EXISTS wishlist_tokens (
+    user_id     INTEGER PRIMARY KEY,
+    token       TEXT NOT NULL UNIQUE,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS shelves (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     library_id      INTEGER REFERENCES libraries(id),
@@ -170,8 +180,19 @@ db.exec(`
     shelf_id        INTEGER REFERENCES shelves(id) ON DELETE SET NULL,
 
     -- status
-    status          TEXT DEFAULT 'tbr',         -- tbr | reading | read | loaned
+    status          TEXT DEFAULT 'tbr',         -- tbr | reading | read | loaned | wishlist
     loaned_to       TEXT,
+
+    -- Status 'wishlist' puts the copy on one USER's wishlist — whoever set the
+    -- status — not the library's. Somebody else visiting that user's wishlist
+    -- page may record buying it: their address and the date they chose. The
+    -- purchase is kept from the wishlist's owner until that date has passed
+    -- (a gift is a surprise); see hidePurchase in server.js. All three are
+    -- cleared when the copy leaves the wishlist. User 0 is the anonymous user
+    -- of a server running without sign-in.
+    wishlist_user_id INTEGER,
+    purchased_by    TEXT,
+    purchase_date   TEXT,
 
     -- borrowed from a public library and currently checked out. borrowed_from
     -- was library_name, renamed because a per-tenant library_id is coming and
@@ -806,6 +827,12 @@ function legacyAllowlist() {
       WHERE id != (SELECT MIN(id) FROM libraries)`);
   }
 
+  // Wishlists (see the copies schema above and wishlist.js): a database from
+  // before them gains the per-copy columns here.
+  for (const [col, type] of [['wishlist_user_id', 'INTEGER'], ['purchased_by', 'TEXT'], ['purchase_date', 'TEXT']]) {
+    if (!colsOf('copies').includes(col)) db.exec(`ALTER TABLE copies ADD COLUMN ${col} ${type}`);
+  }
+
   db.exec(`
     -- Identity and uniqueness are per library: two libraries may each own the
     -- same ISBN, or each have a genre called Fantasy.
@@ -873,7 +900,7 @@ function legacyAllowlist() {
 // derived, so dropping one loses nothing, and a stale definition would silently
 // deprive the list query of the columns that keep the images off the read path.
 if (objectKind('books') === 'view'
-    && !['cover_file', 'library_id', 'spine_font'].every((col) => db.prepare('PRAGMA table_info(books)').all().some((c) => c.name === col))) {
+    && !['cover_file', 'library_id', 'spine_font', 'purchased_by'].every((col) => db.prepare('PRAGMA table_info(books)').all().some((c) => c.name === col))) {
   db.exec('DROP VIEW books');
 }
 if (objectKind('books') !== 'view') {
@@ -908,6 +935,9 @@ if (objectKind('books') !== 'view') {
       c.shelf_id                        AS shelf_id,
       c.status                          AS status,
       c.loaned_to                       AS loaned_to,
+      c.wishlist_user_id                AS wishlist_user_id,
+      c.purchased_by                    AS purchased_by,
+      c.purchase_date                   AS purchase_date,
       c.is_library_book                 AS is_library_book,
       c.borrowed_from                   AS library_name,
       c.due_date                        AS due_date,

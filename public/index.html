@@ -43,6 +43,7 @@
         <option value="reading">Reading</option>
         <option value="read">Read</option>
         <option value="loaned">Loaned out</option>
+        <option value="wishlist">Wishlist</option>
       </select>
       <select id="filterLibrary">
         <option value="">All books</option>
@@ -66,6 +67,14 @@
         <option value="none">Unshelved</option>
       </select>
       <button id="clearFiltersBtn" type="button" hidden>✕ Clear</button>
+    </section>
+
+    <!-- Your wishlist's shareable address, shown while the status filter says
+         Wishlist. Clicking copies it to the clipboard; it never navigates —
+         the page it opens is for OTHER people (see app.js). -->
+    <section id="wishlistShare" class="toolbar" hidden>
+      <span class="hint">Anyone with this address can see these books:</span>
+      <button id="wishlistUrlBtn" type="button" class="wishlist-url" title="Copy your wishlist's address"></button>
     </section>
 
     <main id="list" class="grid"></main>
@@ -270,10 +279,14 @@
               <option value="reading">Reading</option>
               <option value="read">Read</option>
               <option value="loaned">Loaned out</option>
+              <option value="wishlist">Wishlist</option>
             </select>
           </label>
           <label id="loanedField" hidden>Loaned to <input name="loaned_to" /></label>
         </div>
+        <!-- A visitor to your wishlist page bought this book. Filled by the
+             server only once the purchase date has passed; see hidePurchases. -->
+        <p id="purchaseNote" class="msg ok" hidden></p>
         <label class="checkbox">
           <input type="checkbox" name="is_library_book" id="isLibraryBook" />
           This is a library book I have checked out

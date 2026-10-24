@@ -13,7 +13,7 @@ const api = (path, opts) => fetch('api' + path, opts).then(async (r) => {
   return r.status === 204 ? null : r.json();
 });
 
-const STATUS_LABELS = { tbr: 'To be read', reading: 'Reading', read: 'Read', loaned: 'Loaned out' };
+const STATUS_LABELS = { tbr: 'To be read', reading: 'Reading', read: 'Read', loaned: 'Loaned out', wishlist: 'Wishlist' };
 const FORMAT_LABELS = { paperback: 'Paperback', hardback: 'Hardback', ebook: 'E-book', audiobook: 'Audiobook', other: 'Other' };
 const SOURCE_LABELS = { openlibrary: 'Open Library', googlebooks: 'Google Books', barnesnoble: 'Barnes & Noble', bookofthemonth: 'Book of the Month', epub: 'EPUB file', kindle: 'Kindle', manual: 'Manual' };
 
@@ -155,6 +155,7 @@ async function loadBooks(appendArg = false) {
   }
   $('#clearFiltersBtn').hidden = !anyActive;
   saveFilters();
+  showWishlistUrl($('#filterStatus').value === 'wishlist');
 
   if (!append) booksOffset = 0;
   params.set('limit', String(PAGE_SIZE));
@@ -182,6 +183,40 @@ function clearFilters() {
   for (const [sel] of FILTER_CONTROLS) $(sel).value = '';
   loadBooks();
 }
+
+// ---------------------------------------------------------------------------
+// The wishlist's shareable address, shown while the status filter says
+// Wishlist. Clicking COPIES it, never opens it: the page is for sending to
+// other people — the owner already sees these books right here, and opening it
+// risks spoiling a purchase meant as a surprise.
+// ---------------------------------------------------------------------------
+const wishlistUrl = () => (ACCOUNT?.wishlist_token
+  ? new URL(`wishlist/${ACCOUNT.wishlist_token}`, document.baseURI).href
+  : '');
+
+function showWishlistUrl(on) {
+  const url = wishlistUrl();
+  $('#wishlistShare').hidden = !(on && url);
+  if (on && url) $('#wishlistUrlBtn').textContent = url;
+}
+
+$('#wishlistUrlBtn').addEventListener('click', async () => {
+  const url = wishlistUrl();
+  try {
+    await navigator.clipboard.writeText(url);
+  } catch {
+    // No clipboard API (a plain-http page, mostly): a selected throwaway
+    // textarea and the old command still copy.
+    const ta = document.createElement('textarea');
+    ta.value = url;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  $('#wishlistUrlBtn').textContent = '✓ Copied';
+  setTimeout(() => showWishlistUrl($('#filterStatus').value === 'wishlist'), 1500);
+});
 
 function renderBookCard(b) {
   const card = document.createElement('article');
@@ -211,6 +246,7 @@ function renderBookCard(b) {
       ${location ? `<p class="loc">📍 ${esc(location)}</p>` : '<p class="loc muted-text">Unshelved</p>'}
       ${dims ? `<p class="loc">📐 ${dims}</p>` : ''}
       ${b.status === 'loaned' && b.loaned_to ? `<p class="loc">👤 ${esc(b.loaned_to)}</p>` : ''}
+      ${b.purchased_by ? `<p class="loc">🎁 Purchased by ${esc(b.purchased_by)} on ${esc(b.purchase_date)}</p>` : ''}
       ${b.is_library_book && b.due_date
         // The word matters as much as the colour: colour alone conveys nothing to a
         // screen reader, or to anyone who cannot distinguish it.
@@ -850,6 +886,7 @@ function openAddBook() {
   $('#fitWarning').hidden = true;
   $('#suggestResult').hidden = true;
   $('#dupWarning').hidden = true;
+  $('#purchaseNote').hidden = true;
   genreTags.set([]);
   $('#seriesInput').value = '';
   $('#seriesPosition').value = '';
@@ -889,6 +926,11 @@ function openEditBook(book) {
   $('#lookupMsg').hidden = true;
   $('#suggestResult').hidden = true;
   $('#dupWarning').hidden = true;
+  // Only ever present once the server is willing to show it (hidePurchases).
+  $('#purchaseNote').hidden = !book.purchased_by;
+  if (book.purchased_by) {
+    $('#purchaseNote').textContent = `🎁 Purchased by ${book.purchased_by} on ${book.purchase_date}`;
+  }
   setScanUI('📷 Scan', null);
   syncBookFields();
   bookDialog.showModal();

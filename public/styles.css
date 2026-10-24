@@ -107,6 +107,23 @@ header h1 .count { font-size: 0.8rem; font-weight: 400; opacity: 0.85; margin-le
    document scrolls sideways, <dialog> centres itself on the scrollable width,
    so every dialog drifts partly off-screen and has to be scrolled to. */
 .toolbar select { flex: 0 1 auto; width: auto; min-width: 0; max-width: 100%; }
+/* The wishlist's shareable address reads as a link but acts as a copy button.
+   An ellipsis rather than a wrap: the address's tail is noise, and the whole
+   of it goes to the clipboard either way. */
+.wishlist-url {
+  font: inherit;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: copy;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .hint { font-size: 0.8rem; color: var(--muted); margin: 0; }
 .muted-text { opacity: 0.7; }
 
@@ -206,12 +223,14 @@ a.btn {
 .status-reading { background: #dcefe1; color: #2e7d4f; }
 .status-read { background: #e3e8ef; color: #4a5a72; }
 .status-loaned { background: #fbe6d4; color: #b3651e; }
+.status-wishlist { background: #fbe0ec; color: #a8336d; }
 .badge.library { background: #d9ecfb; color: #1f6fb0; }
 @media (prefers-color-scheme: dark) {
   .status-tbr { background: #3a3152; color: #c3aef0; }
   .status-reading { background: #21402e; color: #86d3a2; }
   .status-read { background: #2b3547; color: #a9bad6; }
   .status-loaned { background: #4a3320; color: #e0a86a; }
+  .status-wishlist { background: #472337; color: #efa0c8; }
   .badge.library { background: #1e3548; color: #8fc7f0; }
   /* #b3261e is unreadable on a dark surface. */
   .loc.due.overdue { color: #ff9a90; }

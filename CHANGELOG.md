@@ -5,6 +5,17 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.8.1] — 2026-10-24
+
+### Removed
+
+- **The retired `docker` deploy script.** `deploy/deploy.sh` pulled the
+  `ghcr.io` image that CI no longer publishes, so it could not deploy
+  anything. Deployment is the Debian package from the registry on
+  `forgejo.bobbalisa.org`, installed and upgraded with `apt`; the README
+  section describing the old script goes with it, replaced by a pointer at
+  the package.
+
 ## [5.8.0] — 2026-10-24
 
 ### Added

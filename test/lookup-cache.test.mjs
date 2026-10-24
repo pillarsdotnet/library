@@ -74,6 +74,7 @@ test.before(async () => {
       OPENLIBRARY_BASE: `http://127.0.0.1:${OL_PORT}`,
       GOOGLE_BOOKS_BASE: `http://127.0.0.1:${GB_PORT}`,
       BARNESNOBLE_BASE: `http://127.0.0.1:${OL_PORT}`,   // kept off the internet; returns nothing useful
+      LOC_BASE: `http://127.0.0.1:${OL_PORT}`,           // likewise
     },
     stdio: 'ignore',
   });

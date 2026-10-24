@@ -5,6 +5,17 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.14.0] — 2026-10-24
+
+### Added
+
+- **The Library of Congress joins the ISBN lookup chain**, third of four:
+  consulted through its free, keyless SRU gateway when Open Library and Google
+  Books leave a field blank that the catalog could fill (title, author,
+  publisher, date, page count, spine height), ahead of the Barnes & Noble
+  scrape. Its reach includes plenty of books the commercial sources miss. The
+  gateway host can be overridden with `LOC_BASE`.
+
 ## [5.13.0] — 2026-10-24
 
 ### Changed

@@ -1,5 +1,6 @@
-// ISBN metadata lookup: merges Open Library and Google Books, including physical
-// size. fetch and the Google Books API key are injectable so this is unit-testable.
+// ISBN metadata lookup: merges Open Library, Google Books, the Library of
+// Congress and Barnes & Noble, including physical size. fetch and the Google
+// Books API key are injectable so this is unit-testable.
 
 // Thrown when a source refuses due to rate limiting / quota, so the caller can
 // tell "temporarily throttled" apart from "book genuinely not found".
@@ -16,6 +17,9 @@ export class RateLimitError extends Error {
 const OL_BASE = process.env.OPENLIBRARY_BASE || 'https://openlibrary.org';
 const GB_BASE = process.env.GOOGLE_BOOKS_BASE || 'https://www.googleapis.com';
 const BN_BASE = process.env.BARNESNOBLE_BASE || 'https://www.barnesandnoble.com';
+// The Library of Congress SRU gateway (plain HTTP on the SRU port; there is no
+// TLS endpoint for it). Returns MODS XML; no key, no quota worth noting.
+const LOC_BASE = process.env.LOC_BASE || 'http://lx2.loc.gov:210';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -170,6 +174,83 @@ async function fetchBarnesNoble(isbn, doFetch) {
   }
 }
 
+// Parse a MODS record from the Library of Congress SRU gateway. MODS is XML,
+// but the handful of fields wanted here sit in flat, stable elements, so a few
+// targeted patterns beat taking on an XML dependency. Returns null for
+// anything that is not a MODS record with a title.
+export function parseLocMods(xml) {
+  const s = String(xml || '');
+  if (!/<mods[\s>]/.test(s)) return null;
+  const text = (m) => (m ? decodeEntities(m.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim() : '');
+  const grab = (re, from) => text(re.exec(from)?.[1]);
+
+  // The first untyped titleInfo is the title proper; typed ones are variants.
+  let title = '';
+  for (const m of s.matchAll(/<titleInfo((?:\s[^>]*)?)>([\s\S]*?)<\/titleInfo>/g)) {
+    if (/\btype=/.test(m[1])) continue;
+    const nonSort = grab(/<nonSort[^>]*>([\s\S]*?)<\/nonSort>/, m[2]);
+    const main = grab(/<title[^>]*>([\s\S]*?)<\/title>/, m[2]);
+    const sub = grab(/<subTitle[^>]*>([\s\S]*?)<\/subTitle>/, m[2]);
+    title = `${nonSort} ${main}`.replace(/\s+/g, ' ').trim() + (sub ? `: ${sub}` : '');
+    break;
+  }
+  if (!title) return null;
+
+  // Names elsewhere in the record — subjects, related items — are not authors.
+  const body = s.replace(/<subject[\s\S]*?<\/subject>/g, '').replace(/<relatedItem[\s\S]*?<\/relatedItem>/g, '');
+  // MARC writes a person inverted with their dates in a separate, typed part:
+  // "Salinger, J. D. (Jerome David)," plus type="date". Natural order, like
+  // the other sources speak, is one flip and a dropped parenthetical away.
+  const person = (raw) => {
+    const n = text(raw).replace(/\s*\([^)]*\)/g, '').replace(/[,\s]+$/, '').trim();
+    const m = /^([^,]+),\s*(.+)$/.exec(n);
+    return m ? `${m[2].trim()} ${m[1].trim()}` : n;
+  };
+  const authors = [];
+  for (const m of body.matchAll(/<name(?:\s[^>]*)?>([\s\S]*?)<\/name>/g)) {
+    const part = /<namePart>([\s\S]*?)<\/namePart>/.exec(m[1]);
+    const who = part ? person(part[1]) : '';
+    if (who && !authors.includes(who)) authors.push(who);
+  }
+
+  const origin = /<originInfo(?:\s[^>]*)?>([\s\S]*?)<\/originInfo>/.exec(s)?.[1] ?? '';
+  const publisher = grab(/<publisher[^>]*>([\s\S]*?)<\/publisher>/, origin)
+    || grab(/<agent[^>]*>[\s\S]*?<namePart[^>]*>([\s\S]*?)<\/namePart>/, origin);
+
+  // "xi, 234 p. ; 24 cm" — the arabic pagination and the spine height. MARC
+  // records only the height, so width and thickness stay blank.
+  const extent = grab(/<extent[^>]*>([\s\S]*?)<\/extent>/, s);
+  const pages = [...extent.matchAll(/(\d+)\s*p(?:ages)?\b/g)].map((m) => Number(m[1])).pop() ?? null;
+  const cm = /([\d.]+)\s*cm/.exec(extent);
+
+  return {
+    title,
+    authors: authors.join(', '),
+    publisher,
+    published_date: grab(/<dateIssued[^>]*>([\s\S]*?)<\/dateIssued>/, origin),
+    page_count: pages,
+    cover_url: '',   // the catalog carries no artwork
+    format: '',      // and records the carrier, not the binding
+    height_mm: cm ? toMm(`${cm[1]} cm`) : null,
+    width_mm: null, thickness_mm: null,
+  };
+}
+
+// Best-effort, like the B&N scrape: a public gateway's bad day must not break
+// the lookup, so any failure is just "nothing from this source".
+async function fetchLoc(isbn, doFetch) {
+  try {
+    const r = await doFetch(
+      `${LOC_BASE}/lcdb?version=1.1&operation=searchRetrieve&query=bath.isbn=${isbn}&maximumRecords=1&recordSchema=mods`,
+      { signal: AbortSignal.timeout(8000) },
+    );
+    if (!r.ok) return null;
+    return parseLocMods(await r.text());
+  } catch {
+    return null;
+  }
+}
+
 // Open Library keeps a series in two places, and neither is structured. An
 // edition carries a free-text `series` array whose numbering follows no
 // convention anyone agreed on — "Discworld (1)", "Discworld #1", "Discworld --
@@ -300,13 +381,15 @@ function fillBlanks(target, src) {
 // Open Library carries a usable series, so no fallback is asked for one.
 const GOOGLE_FIELDS = ['title', 'authors', 'publisher', 'published_date',
   'page_count', 'cover_url', 'height_mm', 'width_mm', 'thickness_mm'];
+const LOC_FIELDS = ['title', 'authors', 'publisher', 'published_date',
+  'page_count', 'height_mm'];
 const BN_FIELDS = ['title', 'authors', 'publisher', 'published_date',
   'page_count', 'cover_url', 'format'];
 
 // Look up an ISBN, consulting sources in order and stopping as soon as the
-// answer is complete: Open Library first, then Google Books only if a field it
-// could supply is still blank, then Barnes & Noble on the same condition. Each
-// source fills only the blanks the previous ones left. Returns the merged
+// answer is complete: Open Library first, then Google Books, the Library of
+// Congress and Barnes & Noble, each only if a field it could supply is still
+// blank. Each source fills only the blanks the previous ones left. Returns the merged
 // record, null if no source has the book, or throws RateLimitError if a source
 // was throttled and nothing else answered.
 export async function lookupIsbn(isbn, opts = {}) {
@@ -336,12 +419,19 @@ export async function lookupIsbn(isbn, opts = {}) {
   // 1. Open Library.
   await consult('openlibrary', () => fetchOpenLibrary(isbn, doFetch));
 
-  // 2-3. Google Books, only if it could fill something still blank.
+  // 2. Google Books, only if it could fill something still blank.
   if (!allFilled(result, GOOGLE_FIELDS)) {
     await consult('googlebooks', () => fetchGoogleBooks(isbn, doFetch, apiKey));
   }
 
-  // 4-5. Barnes & Noble, likewise — a heavy scrape, so only when it might help.
+  // 3. The Library of Congress catalog, likewise. Free, keyless and reaching
+  // plenty of books the commercial sources miss — but it carries no cover, no
+  // binding, and only the height, so the scrape below still has work.
+  if (!allFilled(result, LOC_FIELDS)) {
+    await consult('loc', () => fetchLoc(isbn, baseFetch));
+  }
+
+  // 4. Barnes & Noble, last — a heavy scrape, so only when it might help.
   // Uses baseFetch (it has its own single-shot timeout, no retry). Opt out with
   // { bindingFallback: false }.
   if (opts.bindingFallback !== false && !allFilled(result, BN_FIELDS)) {

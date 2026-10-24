@@ -15,7 +15,7 @@ const api = (path, opts) => fetch('api' + path, opts).then(async (r) => {
 
 const STATUS_LABELS = { tbr: 'To be read', reading: 'Reading', read: 'Read', loaned: 'Loaned out', wishlist: 'Wishlist' };
 const FORMAT_LABELS = { paperback: 'Paperback', hardback: 'Hardback', ebook: 'E-book', audiobook: 'Audiobook', other: 'Other' };
-const SOURCE_LABELS = { openlibrary: 'Open Library', googlebooks: 'Google Books', barnesnoble: 'Barnes & Noble', bookofthemonth: 'Book of the Month', epub: 'EPUB file', kindle: 'Kindle', manual: 'Manual' };
+const SOURCE_LABELS = { openlibrary: 'Open Library', googlebooks: 'Google Books', loc: 'Library of Congress', barnesnoble: 'Barnes & Noble', bookofthemonth: 'Book of the Month', epub: 'EPUB file', kindle: 'Kindle', manual: 'Manual' };
 
 // --- Bookcase visual view ---
 // A spine with no cover photo, or one whose cover's pixels cannot be read

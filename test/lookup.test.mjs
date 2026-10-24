@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { lookupIsbn, RateLimitError, toMm, parseBarnesNoble, normalizeFormat, parseSeries } from '../lookup.js';
+import { lookupIsbn, RateLimitError, toMm, parseBarnesNoble, parseLocMods, normalizeFormat, parseSeries } from '../lookup.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const bnFoxglove = readFileSync(join(FIXTURES, 'barnesnoble-foxglove.html'), 'utf8');
@@ -19,10 +19,12 @@ function fakeFetch(routes, calls) {
     const which = url.includes('openlibrary.org/isbn/') ? 'olEdition'
       : url.includes('openlibrary.org/works/') ? 'olWork'
       : url.includes('openlibrary.org') ? 'ol'
-      : url.includes('barnesandnoble.com') ? 'bn' : 'gb';
-    // The edition record is optional; absent unless a test supplies one.
+      : url.includes('barnesandnoble.com') ? 'bn'
+      : url.includes('/lcdb?') ? 'loc' : 'gb';
+    // The edition record is optional; absent unless a test supplies one, and
+    // so is the Library of Congress.
     const res = routes[which]
-      ?? ((which === 'olEdition' || which === 'olWork') ? { status: 404 } : { status: 200, body: {}, text: '' });
+      ?? ((which === 'olEdition' || which === 'olWork' || which === 'loc') ? { status: 404 } : { status: 200, body: {}, text: '' });
     const status = res.status ?? 200;
     return {
       status,
@@ -405,4 +407,90 @@ test('a book in no series reports none, and a work miss is harmless', async () =
   });
   assert.equal(data.series, '');
   assert.equal(data.series_order, null);
+});
+
+// A trimmed MODS record as lx2.loc.gov returns it (namespaced, nonSort title,
+// inverted name with a separate date part, agent-style publisher).
+const locMods = `<?xml version="1.0"?>
+<zs:searchRetrieveResponse xmlns:zs="http://www.loc.gov/zing/srw/"><zs:records><zs:record><zs:recordData>
+<mods xmlns="http://www.loc.gov/mods/v3" version="3.8">
+  <titleInfo><nonSort xml:space="preserve">The  </nonSort><title>catcher in the rye</title></titleInfo>
+  <titleInfo type="alternative"><title>Not this one</title></titleInfo>
+  <name type="personal" usage="primary"><namePart>Salinger, J. D. (Jerome David),</namePart><namePart type="date">1919-2010</namePart></name>
+  <originInfo><place><placeTerm type="text">Boston, MA</placeTerm></place>
+    <agent><namePart>Little, Brown and Company</namePart></agent>
+    <dateIssued>2001</dateIssued></originInfo>
+  <physicalDescription><form authority="marcform">print</form><extent>xi, 234 p. ; 24 cm</extent></physicalDescription>
+  <subject><name><namePart>Caulfield, Holden</namePart></name></subject>
+  <identifier type="isbn">9780316769174</identifier>
+</mods></zs:recordData></zs:record></zs:records></zs:searchRetrieveResponse>`;
+
+test('parseLocMods reads title, author, publisher, date, pages and height from MODS', () => {
+  const d = parseLocMods(locMods);
+  assert.equal(d.title, 'The catcher in the rye');
+  assert.equal(d.authors, 'J. D. Salinger', 'inverted MARC name is flipped, dates and parentheticals dropped');
+  assert.equal(d.publisher, 'Little, Brown and Company');
+  assert.equal(d.published_date, '2001');
+  assert.equal(d.page_count, 234, 'the arabic pagination, not the roman front matter');
+  assert.equal(d.height_mm, 240);
+  assert.equal(d.width_mm, null, 'MARC records only the height');
+  assert.equal(d.format, '', 'the carrier is not a binding');
+  assert.equal(d.cover_url, '', 'the catalog has no artwork');
+});
+
+test('parseLocMods returns null for an empty result and a non-MODS page', () => {
+  assert.equal(parseLocMods('<zs:searchRetrieveResponse><zs:numberOfRecords>0</zs:numberOfRecords></zs:searchRetrieveResponse>'), null);
+  assert.equal(parseLocMods('<!doctype html><html>captcha</html>'), null);
+});
+
+test('falls back to the Library of Congress when Open Library and Google Books miss', async () => {
+  const calls = [];
+  const d = await lookupIsbn('9780316769174', {
+    apiKey: null,
+    bindingFallback: false,   // keep B&N out of this test
+    fetch: fakeFetch({
+      ol: { status: 200, body: {} },
+      gb: { status: 200, body: {} },
+      loc: { text: locMods },
+    }, calls),
+  });
+  assert.equal(d.source, 'loc');
+  assert.equal(d.title, 'The catcher in the rye');
+  assert.ok(calls.some((u) => u.includes('/lcdb?')), 'the SRU gateway was asked');
+});
+
+test('skips the Library of Congress when every field it could supply is already filled', async () => {
+  const isbn = '9780593820247';
+  const calls = [];
+  await lookupIsbn(isbn, {
+    apiKey: null,
+    bindingFallback: false,
+    fetch: fakeFetch({
+      ol: {
+        body: {
+          [`ISBN:${isbn}`]: {
+            title: 'DCC', authors: [{ name: 'Matt Dinniman' }], publishers: [{ name: 'Ace' }],
+            publish_date: '2024', number_of_pages: 425, cover: { large: 'https://covers/OL1-L.jpg' },
+            dimensions: '22.9 x 15.2 x 3.3 centimeters',
+          },
+        },
+      },
+      loc: { text: locMods },
+    }, calls),
+  });
+  assert.ok(!calls.some((u) => u.includes('/lcdb?')), 'nothing left for the catalog to fill');
+});
+
+test('a Library of Congress outage is harmless: the lookup still answers from the rest', async () => {
+  const isbn = '9780316769174';
+  const d = await lookupIsbn(isbn, {
+    apiKey: null,
+    bindingFallback: false,
+    fetch: fakeFetch({
+      ol: { body: { [`ISBN:${isbn}`]: { title: 'Catcher', authors: [{ name: 'J. D. Salinger' }] } } },
+      loc: { status: 500 },
+    }),
+  });
+  assert.equal(d.source, 'openlibrary');
+  assert.equal(d.title, 'Catcher');
 });

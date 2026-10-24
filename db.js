@@ -148,8 +148,9 @@ db.exec(`
     -- photograph of one particular copy belongs on that copy, not here.
     cover_url       TEXT,
 
-    -- where the metadata came from: openlibrary | googlebooks | barnesnoble |
-    -- bookofthemonth | manual (auto-filled from lookup, user-editable)
+    -- where the metadata came from: openlibrary | googlebooks | loc |
+    -- barnesnoble | bookofthemonth | manual (auto-filled from lookup,
+    -- user-editable)
     source          TEXT,
 
     created_at      TEXT DEFAULT (datetime('now')),

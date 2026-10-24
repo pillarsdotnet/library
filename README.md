@@ -4,8 +4,8 @@ A self-hosted web app to catalogue the books in your private library, or in
 several: one server holds any number of libraries, each with its own books,
 shelves, genres, series and members. Works from
 any phone or desktop browser (Android + iPhone), scans ISBN barcodes with the
-camera, auto-fills metadata from Open Library / Google Books / Barnes & Noble,
-tracks where each
+camera, auto-fills metadata from Open Library / Google Books / Library of
+Congress / Barnes & Noble, tracks where each
 book physically lives, and calculates how many books fit on each shelf.
 
 No native app required — barcode scanning runs client-side in the browser
@@ -16,11 +16,12 @@ both iOS Safari and Android Chrome.
 
 - **ISBN scan & auto-fill** — point your camera at the barcode; title, author,
   publisher, page count, cover image, and (when available) physical dimensions
-  are pulled from **Open Library**, then **Google Books**, then
-  **Barnes & Noble**, each consulted only for the blanks the ones before it
-  left (Barnes & Noble has no API, so its public product page is scraped, and
-  only as the last resort — it is also the fallback that can supply the
-  binding, which Google Books never carries).
+  are pulled from **Open Library**, then **Google Books**, then the
+  **Library of Congress**, then **Barnes & Noble**, each consulted only for
+  the blanks the ones before it left (Barnes & Noble has no API, so its public
+  product page is scraped, and only as the last resort — it is also the
+  fallback that can supply the binding, which neither Google Books nor the
+  catalog carries).
 - **Physical description** — hardback/paperback/e-book/audiobook, dust-jacket
   present/missing/N/A, and book dimensions (height × width × spine thickness).
 - **Genre / subgenre** with autocomplete from what you've already entered.
@@ -487,15 +488,20 @@ putting it back on starts a fresh wish that can be bought again.
 
 ### ISBN lookup sources & the Google Books quota
 
-Lookups draw on three sources, **in order, stopping as soon as the record is
+Lookups draw on four sources, **in order, stopping as soon as the record is
 complete**:
 
 1. **Open Library** — always consulted first.
 2. **Google Books** — only if a field it could supply is still blank (title,
    author, publisher, date, page count, cover, dimensions; it has no binding).
-3. **Barnes & Noble** — only if a field it could supply is still blank (as above
-   plus binding, but no dimensions). This is a page scrape, so it runs last and
-   only when it might actually help.
+3. **Library of Congress** — only if a field it could supply is still blank
+   (title, author, publisher, date, page count, spine height). The catalog's
+   SRU gateway is free and keyless and reaches plenty of books the commercial
+   sources miss, but it carries no cover, no binding, and only the one
+   dimension MARC records.
+4. **Barnes & Noble** — only if a field it could supply is still blank (cover
+   and binding included, but no dimensions). This is a page scrape, so it runs
+   last and only when it might actually help.
 
 Each source fills only the blanks the previous ones left, so a book Open Library
 describes completely costs a single request. Series information comes from Open
@@ -513,8 +519,8 @@ small shared daily quota** — when it's exhausted the API returns HTTP 429, and
 book that's only on Google Books will fail to auto-fill (the app says it's
 rate-limited rather than "not found"). A free Google Books API key raises the
 quota to ~1,000 lookups/day and makes this reliable. The hosts can be overridden
-(`OPENLIBRARY_BASE`, `GOOGLE_BOOKS_BASE`, `BARNESNOBLE_BASE`) for a mirror or a
-test double; they default to the real services.
+(`OPENLIBRARY_BASE`, `GOOGLE_BOOKS_BASE`, `LOC_BASE`, `BARNESNOBLE_BASE`) for a
+mirror or a test double; they default to the real services.
 
 #### Obtain a key (free, no billing required)
 
@@ -906,8 +912,9 @@ All endpoints are under `/api`:
 - `POST /series/:id/genres` — body `{ genre_ids: [...] }`: adds those genres to
   every book in the series (additive; nothing is removed). Backs the two
   copy-across-the-series prompts in the book dialog.
-- `GET /lookup/:isbn` — merged Open Library + Google Books + Barnes & Noble
-  metadata, each later source filling only the blanks the earlier ones left.
+- `GET /lookup/:isbn` — merged Open Library + Google Books + Library of
+  Congress + Barnes & Noble metadata, each later source filling only the
+  blanks the earlier ones left.
 - `GET /meta` — distinct rooms, bookcases, genres for autocomplete + counts.
 
 ## Notes

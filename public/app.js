@@ -73,8 +73,6 @@ let scanner = null;
 let shelvesCache = [];
 let genreTags = null;      // multi-select genres field (id-based)
 let bookSeriesOriginal = null; // series the edited book already belongs to
-let bookGenresOriginal = [];   // genre ids when the dialog opened: the baseline "newly added" is measured from
-let seriesCopiedGenreIds = []; // ids copied IN from the series this visit — not the person's own additions
 
 // ---------------------------------------------------------------------------
 // Tabs
@@ -890,8 +888,6 @@ function openAddBook() {
   $('#dupWarning').hidden = true;
   $('#purchaseNote').hidden = true;
   genreTags.set([]);
-  bookGenresOriginal = [];
-  seriesCopiedGenreIds = [];
   $('#seriesInput').value = '';
   $('#seriesPosition').value = '';
   pendingSeries = null;
@@ -917,8 +913,6 @@ function openEditBook(book) {
     else field.value = value ?? '';
   }
   genreTags.set(book.genre_ids || []);
-  bookGenresOriginal = (book.genre_ids || []).slice();
-  seriesCopiedGenreIds = [];
   pendingSeries = null;
   bookSeriesOriginal = book.series ? { ...book.series } : null;
   $('#seriesInput').value = book.series ? book.series.title : '';
@@ -2482,24 +2476,24 @@ async function offerSeriesGenres(series) {
     const names = missing.map((id) => genreLabel(genreById(id))).join(', ');
     if (!confirm(`Copy the genres of the other "${series.title}" books onto this one?\n\n${names}`)) return;
     genreTags.set([...genreTags.get(), ...missing]);
-    seriesCopiedGenreIds.push(...missing);
   } catch { /* nothing to offer */ }
 }
 
-// The mirror image, after a save: genres the person added by hand (not ones
-// copied in from the series above) can spread to the rest of the series — but
-// only if asked for, and only when some other book actually lacks one.
+// The mirror image, after a save: whenever the saved book's genres differ from
+// the rest of its series — any of its genres missing from any other member —
+// offer to spread those to the others. Add-only, like everything here: nothing
+// a book already carries is ever removed.
 async function offerGenresToSeries(series, saved, chosen) {
   try {
-    const skip = new Set([...bookGenresOriginal, ...seriesCopiedGenreIds]);
-    const added = chosen.filter((id) => !skip.has(id) && genreById(id));
-    if (!added.length) return;
+    const mine = chosen.filter((id) => genreById(id));
+    if (!mine.length) return;
     const others = (await api(`/books?series_id=${series.id}&limit=0`))
       .filter((b) => b.edition_id !== saved.edition_id);
-    if (!others.some((b) => added.some((id) => !(b.genre_ids || []).includes(id)))) return;
-    const names = added.map((id) => genreLabel(genreById(id))).join(', ');
-    if (!confirm(`Copy the new genres to the rest of the series?\n\nAdd ${names} to the other "${series.title}" books.`)) return;
-    await api(`/series/${series.id}/genres`, { method: 'POST', headers: json(), body: JSON.stringify({ genre_ids: added }) });
+    const missing = mine.filter((id) => others.some((b) => !(b.genre_ids || []).includes(id)));
+    if (!others.length || !missing.length) return;
+    const names = missing.map((id) => genreLabel(genreById(id))).join(', ');
+    if (!confirm(`This book's genres differ from the rest of the series. Copy them over?\n\nAdd ${names} to the other "${series.title}" books.`)) return;
+    await api(`/series/${series.id}/genres`, { method: 'POST', headers: json(), body: JSON.stringify({ genre_ids: missing }) });
   } catch (err) { alert('Could not copy the genres to the series: ' + err.message); }
 }
 

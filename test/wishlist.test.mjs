@@ -214,14 +214,19 @@ test("status is each member's own: one copy, two readers, two truths", async () 
     "another member's edit cannot take a book off alice's wishlist");
 });
 
-test('anyone holding the URL may look, and only look', async () => {
+test('anyone holding the URL may look — and a stranger’s Purchase button leads through sign-in', async () => {
   const page = await fetch(`${BASE}/${path}`);
   assert.equal(page.status, 200, 'no sign-in needed');
   const html = await page.text();
   assert.match(html, /Wished Dragon/);
   assert.doesNotMatch(html, /Plain Book/, 'only wishlist books are on the page');
-  assert.doesNotMatch(html, /Purchase<\/summary>/, 'a stranger gets no purchase button');
-  assert.match(html, /auth\/login/, 'but is told signing in earns one');
+  assert.doesNotMatch(html, /Purchase<\/summary>/, 'a stranger gets no date form');
+  // The stranger's Purchase button is a sign-in link that comes back to this
+  // page with the book marked (?buy=), where the date form will be open.
+  const buy = html.match(/class="buy-link" href="([^"]+)"/);
+  assert.ok(buy, 'a stranger sees the Purchase button');
+  assert.match(buy[1], /auth\/login\?to=/, 'it leads through sign-in');
+  assert.match(decodeURIComponent(buy[1]), new RegExp(`\\?buy=${wished.id}`), 'and remembers which book');
 
   // A bare library path is the ANONYMOUS user's wishlist, which a server with
   // sign-in configured does not have.
@@ -231,6 +236,36 @@ test('anyone holding the URL may look, and only look', async () => {
 });
 
 // ─── buying ─────────────────────────────────────────────────────────────────
+
+test('signing in from the Purchase button opens that book’s date form; refusing returns to the list', async () => {
+  // Signed in and arriving with ?buy=<id>, the fold is already open: the
+  // person is being asked for the purchase date, nothing more.
+  const cont = await (await fetch(`${BASE}/${path}?buy=${wished.id}`, { headers: { Cookie: bob } })).text();
+  assert.match(cont, /<details class="buy" open>/, 'the date form is open');
+
+  // Refusing at Google's consent screen lands back on the wishlist, with no
+  // session and nothing purchased: start a login aimed at the wishlist, then
+  // finish it with error= instead of a code.
+  const to = `/${path}?buy=${wished.id}`;
+  const post = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ to, library: 'Bobbalisa' }).toString(),
+  });
+  const flowCookie = cookiesOf(post).join('; ');
+  const state = new URL(post.headers.get('location')).searchParams.get('state');
+  const refused = await fetch(`${BASE}/auth/callback?state=${encodeURIComponent(state)}&error=access_denied`, {
+    redirect: 'manual',
+    headers: { Cookie: flowCookie },
+  });
+  assert.equal(refused.status, 303, 'a refusal is a redirect, not an error page');
+  assert.equal(refused.headers.get('location'), to, 'back to the wishlist it came from');
+  assert.equal(cookiesOf(refused).some((c) => c.startsWith('hl_session=') && !c.includes('hl_session=;')), false,
+    'and no session was minted');
+  const after = (await api(`/books/${wished.id}`, as(alice))).body;
+  assert.equal(after.purchased_by, null, 'nothing was purchased');
+});
 
 test('a signed-in visitor may buy a book once; the owner may not buy at all', async () => {
   const own = await purchase(path, wished.id, isoDay(1), alice);

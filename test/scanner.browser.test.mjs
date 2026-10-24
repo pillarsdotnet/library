@@ -1676,9 +1676,9 @@ test('joining a series offers its genres, and new genres offer to spread back', 
   const b1 = await (await fetch(`${BASE}/api/books/${first.id}`)).json();
   assert.ok(b1.genre_ids.includes(dragons.id), 'the other series book gained the new genre');
   assert.ok(b1.genre_ids.includes(epic.id), 'and kept its own');
-  // The genre copied IN from the series was not offered back out: only the
-  // hand-added one spread.
+  // The spread offer names only what some other book LACKS: the other book
+  // already carries Epic, so only the hand-added Dragons was offered.
   assert.ok(!dialogs.some((m) => m.includes('rest of the series') && m.includes(`Epic ${stamp}`)),
-    'the copied-in genre is not re-offered to the series');
+    'a genre every other book already carries is not offered');
   await page.close();
 });

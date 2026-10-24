@@ -19,10 +19,11 @@ both iOS Safari and Android Chrome.
 - **Physical description** — hardback/paperback/e-book/audiobook, dust-jacket
   present/missing/N/A, and book dimensions (height × width × spine thickness).
 - **Genre / subgenre** with autocomplete from what you've already entered.
-  Genres follow a series both ways, each time with a prompt first: a book
-  joining a series offers to take on the genres its other books carry, and
-  genres added by hand to a series member offer to spread to the rest of the
-  series (added to the others, never replacing what they have).
+  Genres follow a series both ways, each time with a prompt first: leaving the
+  series field after naming one offers to take on the genres its other books
+  carry, and saving a series member whose genres differ from the rest offers
+  to spread the difference to the other books (added to them, never replacing
+  what they have).
 - **Wish lists** — the `wishlist` status puts a book on your own wish list
   (yours, not the library's), which has a shareable page where signed-in
   visitors can quietly mark a book as purchased — kept secret from you until
@@ -488,11 +489,14 @@ a spoiler meant for them. Share it however you like:
 
 - **Anyone holding the URL may look** — no account, no sign-in — and only look.
   The page offers no way to edit anything.
-- **A signed-in visitor who is not the list's owner** gets a **🎁 Purchase**
-  button on each book. It asks for a purchase date and records it with the
+- **Every visitor who is not the list's owner** gets a **🎁 Purchase** button
+  on each book. Signed in, it asks for a purchase date and records it with the
   buyer's own address; the record then replaces the button, so nobody buys a
-  second copy in good faith. (Visitors can sign in to any library they belong
-  to, or found their own — any signed-in identity counts.)
+  second copy in good faith. A visitor who is not signed in is first led
+  through sign-in — library name and Google account; any library they belong
+  to counts, and a new name founds their own — and comes back to the list with
+  that book's date form open. Refusing to sign in just returns to the list,
+  with nothing recorded.
 - **The owner is told nothing until the purchase date has passed.** The server
   withholds the buyer and the date from every response to the owner until
   then, so the surprise never even reaches their browser; afterwards the book's

@@ -5,6 +5,21 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.13.0] — 2026-10-24
+
+### Changed
+
+- **A stranger on a wish-list page now sees the 🎁 Purchase button too.**
+  Clicking it leads through sign-in — library name and Google account — and
+  back to the list with that book's date form already open, so the purchase
+  completes only once they are somebody. Refusing or failing the sign-in
+  returns to the list with nothing recorded (a refused Google sign-in now goes
+  back to where the person was headed instead of an error page).
+- **The spread-to-series genre prompt now asks whenever a saved book's genres
+  differ from the rest of its series** — any of its genres missing from any
+  other member — not only about genres added in that edit. Still add-only,
+  still asked first, and still silent when the series already agrees.
+
 ## [5.12.0] — 2026-10-24
 
 ### Added

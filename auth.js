@@ -360,8 +360,11 @@ export function mountAuth(router, base = '', doFetch = globalThis.fetch) {
     if (!req.query.state || req.query.state !== flow.state) {
       return res.status(400).type('text').send('Sign-in could not be verified — try again.');
     }
-    if (req.query.error) return res.status(400).type('text').send('Google declined the sign-in.');
-    if (!req.query.code) return res.status(400).type('text').send('Google sent no authorization code.');
+    // Refused or failed at Google's end: back to wherever the person was
+    // headed, signed out as they arrived. For a public page — a wishlist,
+    // say — that is the page itself, with nothing done on their behalf; a
+    // gated one simply asks again.
+    if (req.query.error || !req.query.code) return res.redirect(303, safeReturnPath(flow.to, base));
     const name = normalizeLibraryName(flow.library);
     if (!name) return res.status(400).type('text').send('Sign-in did not say which library — try again.');
 
@@ -408,7 +411,7 @@ export function mountAuth(router, base = '', doFetch = globalThis.fetch) {
         <p>${esc(claims.email)} is not a member of ${esc(displayName(library.name))}.</p>
         <p class="hint">The person who created that library can add you from its Users tab. Or sign in with
           another account, or to another library.</p>
-        <a class="btn" href="${esc(base)}/auth/login">Back to sign in</a>`));
+        <a class="btn" href="${esc(base)}/auth/login?to=${encodeURIComponent(safeReturnPath(flow.to, base))}">Back to sign in</a>`));
     }
 
     res.cookie(SESSION_COOKIE, sessionFor(user.email, library.id), cookieOptions(req, sessionIdleMs()));

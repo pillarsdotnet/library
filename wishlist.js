@@ -127,6 +127,8 @@ function page(title, body) {
   .bought { margin: 8px 0 0; font-size: 0.9rem; color: var(--ok); font-weight: 600; }
   details.buy { margin-top: 8px; }
   details.buy summary { display: inline-block; cursor: pointer; font-weight: 600; padding: 7px 14px; border-radius: 8px; background: var(--accent); color: var(--bg); }
+  p.buy { margin: 8px 0 0; }
+  a.buy-link { display: inline-block; font-weight: 600; padding: 7px 14px; border-radius: 8px; background: var(--accent); color: var(--bg); text-decoration: none; }
   details.buy summary::-webkit-details-marker { display: none; }
   details.buy form { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
   details.buy label { display: block; font-size: 0.85rem; color: var(--muted); }
@@ -146,15 +148,23 @@ const notFound = (res) => res.status(404).type('html')
 // looking. The owner: nothing until the date has passed, then the full record.
 // A signed-in visitor: the record, or the button that makes one. A stranger:
 // "spoken for" without the buyer's address — the URL travels further than the
-// owner can see, and an email address is not for everyone who holds it.
-function purchaseBlock(b, { isOwner, signedIn, base, path, today }) {
+// owner can see, and an email address is not for everyone who holds it — or
+// the same Purchase button, which for them leads through sign-in (library and
+// account) and back here with the date form open (?buy=<id>), so the purchase
+// completes only once they are somebody. Refusing to sign in just comes back
+// to the list, nothing done.
+function purchaseBlock(b, { isOwner, signedIn, base, path, today, buyId }) {
   if (b.purchased_by) {
     const record = `<p class="bought">🎁 Purchased by ${esc(b.purchased_by)} on ${esc(b.purchase_date)}</p>`;
     if (isOwner) return b.purchase_date < today ? record : '';
     return signedIn ? record : '<p class="bought">🎁 Spoken for</p>';
   }
-  if (!signedIn || isOwner) return '';
-  return `<details class="buy"><summary>🎁 Purchase</summary>
+  if (isOwner) return '';
+  if (!signedIn) {
+    const back = `${base}/${path}?buy=${b.id}`;
+    return `<p class="buy"><a class="buy-link" href="${esc(base)}/auth/login?to=${encodeURIComponent(back)}">🎁 Purchase</a></p>`;
+  }
+  return `<details class="buy"${buyId === b.id ? ' open' : ''}><summary>🎁 Purchase</summary>
     <form method="post" action="${esc(base)}/${esc(path)}/purchase">
       <input type="hidden" name="book_id" value="${b.id}">
       <label>Purchase date
@@ -226,16 +236,16 @@ export function mountWishlist(router, base = '') {
       base,
       path,
       today: todayLocalIso(),
+      // Arriving back from the sign-in that a Purchase click started: open
+      // that book's date form, so the purchase carries on where it left off.
+      buyId: Number(req.query.buy) || 0,
     };
     const books = wishlistBooks(wl.uid, wl.library.id);
-    // A stranger can sign in to earn the Purchase button — their own library
-    // is fine, any signed-in identity counts — so say so instead of leaving
-    // the page silently read-only.
     const hint = who.isOwner
       ? 'Your wishlist, as visitors see it. A purchase stays hidden from you until its date has passed.'
       : who.signedIn || !authConfigured()
         ? 'Mark a book as purchased so nobody buys it twice.'
-        : `Looking is open to all. <a href="${esc(base)}/auth/login?to=${encodeURIComponent(`${base}/${path}`)}">Sign in</a> to mark a book as purchased.`;
+        : 'Looking is open to all. Marking a purchase asks you to sign in first — any library, your own included.';
     res.type('html').send(page(`${name} — wishlist`, `
       <h1>🎁 ${esc(name)}’s wishlist</h1>
       <p class="hint">${hint}</p>

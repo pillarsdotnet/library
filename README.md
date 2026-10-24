@@ -25,9 +25,10 @@ both iOS Safari and Android Chrome.
   to spread the difference to the other books (added to them, never replacing
   what they have).
 - **Wish lists** — the `wishlist` status puts a book on your own wish list
-  (yours, not the library's), which has a shareable page where signed-in
-  visitors can quietly mark a book as purchased — kept secret from you until
-  the purchase date has passed. See [Wish lists](#wish-lists).
+  (yours, not the library's), which has a shareable page where visitors can
+  quietly mark a book as purchased, signing in along the way if they were not
+  already — kept secret from you until the purchase date has passed. See
+  [Wish lists](#wish-lists).
 - **Shelves as real objects** — model each shelf with room, bookcase, label,
   grid **cell** (its spot in the bookcase: column letter + row number, A1 top
   left — separate from the label, which stays free text like "Horror" or a

@@ -5,6 +5,21 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.10.0] — 2026-10-24
+
+### Changed
+
+- **Reading status is each member's own, not the copy's.** One member marking
+  a book read, loaned or wished-for no longer changes what anybody else sees:
+  every member of a library keeps their own status per book, a book somebody
+  else added reads as to-be-read until you touch it, and the status filter —
+  `wishlist` included — answers against yours alone. Existing statuses carry
+  over: every member starts from what the library showed yesterday, except a
+  wish-list entry, which stays with its wisher alone (everyone else starts at
+  to-be-read). The wish-list purchase record now lives on the wisher's own
+  entry, so another member editing a title can neither see, spoil nor disturb
+  it.
+
 ## [5.9.0] — 2026-10-24
 
 ### Added

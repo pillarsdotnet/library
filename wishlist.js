@@ -1,7 +1,8 @@
 // Wishlists: the one page of this app that strangers may see.
 //
-// A book whose status is 'wishlist' sits on one USER's wishlist — whoever set
-// the status — not the library's. Each user has one shareable address for
+// A user's wishlist is the books whose status is 'wishlist' in THEIR OWN
+// user_statuses rows (statuses are per user — see db.js), so it is personal by
+// construction, never the library's. Each user has one shareable address for
 // theirs, /wishlist/<token>, mounted in front of the sign-in gate:
 //
 //   - Anyone holding the URL may look at the books. Holding it IS the
@@ -55,11 +56,13 @@ function userIdForToken(token) {
 // Per user across every library — a wishlist is personal, so the books follow
 // the person, not the tenancy.
 const wishlistBooks = (uid) => db.prepare(`
-  SELECT c.id, c.purchased_by, c.purchase_date, c.cover_file, c.cover_token,
+  SELECT c.id, us.purchased_by, us.purchase_date, c.cover_file, c.cover_token,
          e.title, e.authors, e.publisher, e.published_date, e.page_count, e.format,
          COALESCE(e.isbn13, e.isbn_text) AS isbn, e.cover_url AS edition_cover_url
-  FROM copies c JOIN editions e ON e.id = c.edition_id
-  WHERE c.status = 'wishlist' AND COALESCE(c.wishlist_user_id, 0) = ?
+  FROM user_statuses us
+  JOIN copies c ON c.id = us.copy_id
+  JOIN editions e ON e.id = c.edition_id
+  WHERE us.user_id = ? AND us.status = 'wishlist'
   ORDER BY sort_title(e.title)`).all(uid);
 
 // Whose wishlist to call it. User 0 has no address, so the library speaks for them.
@@ -209,8 +212,9 @@ export function mountWishlist(router, base = '') {
   router.get('/wishlist/:token/cover/:id', (req, res) => {
     const uid = userIdForToken(req.params.token);
     if (uid == null) return res.status(404).json({ error: 'Not found' });
-    const row = db.prepare(`SELECT cover_file FROM copies
-      WHERE id = ? AND status = 'wishlist' AND COALESCE(wishlist_user_id, 0) = ?`).get(req.params.id, uid);
+    const row = db.prepare(`SELECT c.cover_file FROM copies c
+      JOIN user_statuses us ON us.copy_id = c.id
+      WHERE c.id = ? AND us.user_id = ? AND us.status = 'wishlist'`).get(req.params.id, uid);
     const path = row?.cover_file ? coverPath(row.cover_file) : null;
     if (!path) return res.status(404).json({ error: 'Not found' });
     res.set('Content-Type', mimeForFile(row.cover_file));
@@ -234,13 +238,15 @@ export function mountWishlist(router, base = '') {
     if (viewer.id === uid) return refuse(403, 'Your own wishlist is for other people to buy from.');
     const date = String(req.body?.purchase_date ?? '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return refuse(400, 'The purchase date must be a date.');
-    const book = db.prepare(`SELECT id, purchased_by FROM copies
-      WHERE id = ? AND status = 'wishlist' AND COALESCE(wishlist_user_id, 0) = ?`)
+    const book = db.prepare(`SELECT copy_id AS id, purchased_by FROM user_statuses
+      WHERE copy_id = ? AND user_id = ? AND status = 'wishlist'`)
       .get(Number(req.body?.book_id), uid);
     if (!book) return refuse(404, 'That book is not on this wishlist.');
     if (book.purchased_by) return refuse(409, 'Somebody already purchased that one.');
-    db.prepare("UPDATE copies SET purchased_by = ?, purchase_date = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(viewer.email, date, book.id);
+    // The purchase is recorded against the WISHER's row: it is their wish that
+    // is now spoken for, whoever is looking.
+    db.prepare('UPDATE user_statuses SET purchased_by = ?, purchase_date = ? WHERE copy_id = ? AND user_id = ?')
+      .run(viewer.email, date, book.id, uid);
     res.redirect(303, back);
   });
 }

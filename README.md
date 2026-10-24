@@ -54,7 +54,10 @@ both iOS Safari and Android Chrome.
   is used vs. free, roughly how many more books fit, and warns about books that
   are **too tall** or **too deep** for the shelf. The book editor warns you if a
   book won't fit the shelf you're assigning it to.
-- **Status** — To be read / Reading / Read / Loaned out (with borrower name).
+- **Status** — To be read / Reading / Read / Loaned out (with borrower name) /
+  `wishlist`. **Status is yours, not the book's**: each member of a library keeps
+  their own — a book one person has read can still be to-be-read for the next,
+  and a book you add starts as to-be-read for everyone else.
 - **Library books** — flag books you've checked out from a public library and
   track the library name and due date. Filter to **just the borrowed ones, ordered
   by due date** (soonest first, undated last), or to **overdue only** — the list
@@ -73,13 +76,14 @@ both iOS Safari and Android Chrome.
 
 SQLite — see [`db.js`](./db.js). Book data is split along the ISBN:
 
-| Table                    | Holds                                                                                                                   | Why                                                                   |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `editions`               | Title, authors, publisher, published date, page count, **format**, **dimensions**, stock cover artwork, metadata source | Everything an ISBN determines, and therefore identical for every copy |
-| `copies`                 | Dust jacket, shelf, status, loan, library borrowing + due date, notes, a photograph of _this_ copy                      | Everything true of one physical object on one shelf                   |
-| `shelves`                | Room, bookcase, label, grid cell, bookcase color, clearances                                                            | Where copies live                                                     |
-| `libraries`              | Name                                                                                                                    | A tenant: everything above belongs to exactly one                     |
-| `users`, `library_users` | Email address and encrypted Open Library keys; who belongs to which library                                             | Who may sign in to what                                               |
+| Table                    | Holds                                                                                                                   | Why                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `editions`               | Title, authors, publisher, published date, page count, **format**, **dimensions**, stock cover artwork, metadata source | Everything an ISBN determines, and therefore identical for every copy     |
+| `copies`                 | Dust jacket, shelf, loan, library borrowing + due date, notes, a photograph of _this_ copy                              | Everything true of one physical object on one shelf                       |
+| `user_statuses`          | Each member's own reading status per copy, and the wish-list purchase made against it                                   | Status is personal: one member's "read" is the next member's "to be read" |
+| `shelves`                | Room, bookcase, label, grid cell, bookcase color, clearances                                                            | Where copies live                                                         |
+| `libraries`              | Name                                                                                                                    | A tenant: everything above belongs to exactly one                         |
+| `users`, `library_users` | Email address and encrypted Open Library keys; who belongs to which library                                             | Who may sign in to what                                                   |
 
 Every table a library owns carries its `library_id`: shelves, editions, copies,
 genres, series and Open Library proposals. The link tables (`book_genres`,
@@ -463,9 +467,9 @@ first library, the only one there was, and re-issued naming it.
 
 ### Wish lists
 
-A book whose status is `wishlist` sits on _your_ wish list: the wish belongs to
-the person who set the status, not to the library, and one person's list spans
-every library they use.
+A book whose status is `wishlist` sits on _your_ wish list: statuses are each
+member's own, so the wish belongs to the person who set it, not to the library,
+and one person's list spans every library they use.
 
 Filtering the Books tab to that status shows your list and its shareable
 address. Clicking the address copies it to the clipboard — it deliberately does

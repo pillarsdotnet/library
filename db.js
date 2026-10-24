@@ -179,17 +179,16 @@ db.exec(`
     -- location: a copy lives on a modelled shelf (or nowhere yet)
     shelf_id        INTEGER REFERENCES shelves(id) ON DELETE SET NULL,
 
-    -- status
-    status          TEXT DEFAULT 'tbr',         -- tbr | reading | read | loaned | wishlist
+    -- Who the copy is physically lent to: a fact about the object, so it stays
+    -- here even though the 'loaned' status that usually accompanies it is each
+    -- member's own (see user_statuses below).
     loaned_to       TEXT,
 
-    -- Status 'wishlist' puts the copy on one USER's wishlist — whoever set the
-    -- status — not the library's. Somebody else visiting that user's wishlist
-    -- page may record buying it: their address and the date they chose. The
-    -- purchase is kept from the wishlist's owner until that date has passed
-    -- (a gift is a surprise); see hidePurchase in server.js. All three are
-    -- cleared when the copy leaves the wishlist. User 0 is the anonymous user
-    -- of a server running without sign-in.
+    -- RETIRED: status is per USER now, not per copy — one member's "read" is
+    -- another's "to be read" — so it lives in user_statuses below. These four
+    -- columns stay only as the seed that migration reads once; nothing writes
+    -- or reads them afterwards.
+    status          TEXT DEFAULT 'tbr',
     wishlist_user_id INTEGER,
     purchased_by    TEXT,
     purchase_date   TEXT,
@@ -235,6 +234,28 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_copies_edition ON copies(edition_id);
   CREATE INDEX IF NOT EXISTS idx_copies_shelf   ON copies(shelf_id);
   CREATE INDEX IF NOT EXISTS idx_copies_status  ON copies(status);
+
+  -- Where each USER stands with each copy: tbr | reading | read | loaned |
+  -- wishlist. Status is personal, not the copy's — a book one member has read
+  -- is still to-be-read for the next — so the row is keyed by both, and a
+  -- member with no row simply has not touched the book: they read as 'tbr'.
+  -- User 0 is the anonymous user of a server running without sign-in.
+  --
+  -- A 'wishlist' row is a wish, and the purchase made against it lives on the
+  -- same row: somebody visiting the wisher's public page records their address
+  -- and the date they chose (see wishlist.js), and both are kept from the
+  -- wisher until that date has passed — a gift is a surprise (hidePurchases in
+  -- server.js). Both clear whenever the status changes: off the list means no
+  -- longer wanted, and back on it is a fresh wish, buyable again.
+  CREATE TABLE IF NOT EXISTS user_statuses (
+    user_id       INTEGER NOT NULL,
+    copy_id       INTEGER NOT NULL REFERENCES copies(id) ON DELETE CASCADE,
+    status        TEXT NOT NULL DEFAULT 'tbr',
+    purchased_by  TEXT,
+    purchase_date TEXT,
+    PRIMARY KEY (user_id, copy_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_statuses_copy ON user_statuses(copy_id);
 
   CREATE TABLE IF NOT EXISTS genres (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -513,7 +534,7 @@ if (LEGACY_BOOKS) {
     // itself, because merging on an unverified or ambiguous key would fuse two
     // different things and silently rewrite one of them.
     const byIsbn = new Map();
-    const key = (canon, format) => `${canon} ${format ?? 'paperback'}`;
+    const key = (canon, format) => `${canon}\0${format ?? 'paperback'}`;
 
     for (const r of rows) {
       const now = "datetime('now')";
@@ -827,8 +848,10 @@ function legacyAllowlist() {
       WHERE id != (SELECT MIN(id) FROM libraries)`);
   }
 
-  // Wishlists (see the copies schema above and wishlist.js): a database from
-  // before them gains the per-copy columns here.
+  // Wishlist columns on copies are retired (statuses are per user now), but a
+  // database from before them still gains them here: the user_statuses seed
+  // below reads them, and it must see the same shape whatever version the
+  // database is coming from.
   for (const [col, type] of [['wishlist_user_id', 'INTEGER'], ['purchased_by', 'TEXT'], ['purchase_date', 'TEXT']]) {
     if (!colsOf('copies').includes(col)) db.exec(`ALTER TABLE copies ADD COLUMN ${col} ${type}`);
   }
@@ -890,6 +913,33 @@ function legacyAllowlist() {
   if (joined) console.log(`👤 user ${OWNER_ID} is now a member of ${joined} more library(ies)`);
 }
 
+// ─── per-user statuses out of the shared copy row ───────────────────────────────
+// A database from before user_statuses holds one shared status per copy. Each
+// member of the copy's library starts from that shared value — it is what they
+// all saw yesterday, and least surprising to see today — EXCEPT a wishlist
+// entry, which was already one user's (wishlist_user_id): the wisher keeps it,
+// purchase and all, and everyone else starts at 'tbr'. User 0, the anonymous
+// user of a server running without sign-in, is seeded the same way so such a
+// server migrates too. Runs once: rows exist only after it has.
+{
+  if (!db.prepare('SELECT 1 FROM user_statuses LIMIT 1').get()) {
+    const mineOrTbr = (uid) => `
+      CASE WHEN c.status = 'wishlist' AND COALESCE(c.wishlist_user_id, 0) <> ${uid}
+           THEN 'tbr' ELSE COALESCE(c.status, 'tbr') END,
+      CASE WHEN c.status = 'wishlist' AND COALESCE(c.wishlist_user_id, 0) = ${uid}
+           THEN c.purchased_by END,
+      CASE WHEN c.status = 'wishlist' AND COALESCE(c.wishlist_user_id, 0) = ${uid}
+           THEN c.purchase_date END`;
+    const seeded = db.transaction(() =>
+      db.prepare(`INSERT INTO user_statuses (user_id, copy_id, status, purchased_by, purchase_date)
+                  SELECT lu.user_id, c.id, ${mineOrTbr('lu.user_id')}
+                  FROM copies c JOIN library_users lu ON lu.library_id = c.library_id`).run().changes
+      + db.prepare(`INSERT INTO user_statuses (user_id, copy_id, status, purchased_by, purchase_date)
+                    SELECT 0, c.id, ${mineOrTbr('0')} FROM copies c`).run().changes)();
+    if (seeded) console.log(`📚 seeded ${seeded} per-user reading status(es) from the shared copy statuses`);
+  }
+}
+
 // ─── the `books` compatibility view ─────────────────────────────────────────────
 // Reads keep working exactly as before: one row per copy, edition columns folded
 // in. `library_name` is preserved as an alias so existing queries and API
@@ -899,9 +949,15 @@ function legacyAllowlist() {
 // Recreated rather than left alone when its shape is out of date: a view is
 // derived, so dropping one loses nothing, and a stale definition would silently
 // deprive the list query of the columns that keep the images off the read path.
-if (objectKind('books') === 'view'
-    && !['cover_file', 'library_id', 'spine_font', 'purchased_by'].every((col) => db.prepare('PRAGMA table_info(books)').all().some((c) => c.name === col))) {
-  db.exec('DROP VIEW books');
+if (objectKind('books') === 'view') {
+  const viewCols = db.prepare('PRAGMA table_info(books)').all().map((c) => c.name);
+  // Stale when a column is missing — or still present: status and the wishlist
+  // purchase fields are per user now (user_statuses), joined per request in
+  // server.js, and a view that still carries the copy's own would shadow them.
+  if (!['cover_file', 'library_id', 'spine_font'].every((col) => viewCols.includes(col))
+      || viewCols.includes('status')) {
+    db.exec('DROP VIEW books');
+  }
 }
 if (objectKind('books') !== 'view') {
   db.exec(`
@@ -933,11 +989,9 @@ if (objectKind('books') !== 'view') {
       e.cover_url                       AS edition_cover_url,
       c.jacket                          AS jacket,
       c.shelf_id                        AS shelf_id,
-      c.status                          AS status,
+      -- No status here: status is each user's own (user_statuses), and a view
+      -- has no way of knowing who is asking. Queries join it per request.
       c.loaned_to                       AS loaned_to,
-      c.wishlist_user_id                AS wishlist_user_id,
-      c.purchased_by                    AS purchased_by,
-      c.purchase_date                   AS purchase_date,
       c.is_library_book                 AS is_library_book,
       c.borrowed_from                   AS library_name,
       c.due_date                        AS due_date,

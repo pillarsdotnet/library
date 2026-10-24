@@ -28,10 +28,13 @@ test('db.js adds the source column to a pre-existing books table, preserving row
   const cols = db.prepare('PRAGMA table_info(books)').all().map((c) => c.name);
   assert.ok(cols.includes('source'), 'source column should be added');
 
-  const row = db.prepare('SELECT title, status, source FROM books WHERE isbn = ?').get('123');
+  const row = db.prepare('SELECT id, title, source FROM books WHERE isbn = ?').get('123');
   assert.equal(row.title, 'Existing Book', 'existing row preserved');
-  assert.equal(row.status, 'read', 'existing data intact');
   assert.equal(row.source, null, 'existing rows get NULL source');
+  // Status is per user now, so the view no longer carries it; the old shared
+  // value seeds the anonymous user's own row (user 0 — no sign-in here).
+  const st = db.prepare('SELECT status FROM user_statuses WHERE user_id = 0 AND copy_id = ?').get(row.id);
+  assert.equal(st.status, 'read', 'existing status seeded to the anonymous user');
 
   // Writes go to the tables; reading it back through the `books` view checks
   // both that the column works and that the view still presents it.

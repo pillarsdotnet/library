@@ -171,6 +171,37 @@ test('a wishlist book, its per-user token, and the filter that shows only yours'
   assert.doesNotMatch(await bobsList.text(), /Wished Dragon/, "alice's wishes are not on bob's list");
 });
 
+test("status is each member's own: one copy, two readers, two truths", async () => {
+  // Alice (user 1, the owner-founder) lets carol into the same library.
+  const added = await api('/library/members', {
+    ...as(alice), method: 'POST', body: JSON.stringify({ email: 'carol@gmail.com' }),
+  });
+  assert.equal(added.status, 201);
+  const carol = await signIn('carol@gmail.com', 'Bobbalisa');
+
+  // Alice's wish is not carol's: the same copy reads as untouched for her.
+  const hers = (await api(`/books/${wished.id}`, as(carol))).body;
+  assert.equal(hers.status, 'tbr', "alice's wishlist book is plain 'tbr' to carol");
+  assert.deepEqual((await api('/books?status=wishlist', as(carol))).body, [],
+    "the wishlist filter shows carol's empty wishlist, not alice's");
+
+  // Carol reads the other book; alice's copy of the truth is unmoved.
+  const read = (await api(`/books/${plain.id}`, {
+    ...as(carol), method: 'PUT', body: JSON.stringify({ status: 'read' }),
+  })).body;
+  assert.equal(read.status, 'read', 'carol has read it');
+  assert.equal((await api(`/books/${plain.id}`, as(alice))).body.status, 'tbr',
+    'alice has not, and carol finishing it does not change that');
+
+  // Carol retitling the wished book edits shared edition data, but the status
+  // she sends along is HER status: alice's wish survives other people's tidying.
+  await api(`/books/${wished.id}`, {
+    ...as(carol), method: 'PUT', body: JSON.stringify({ title: 'Wished Dragon', status: 'tbr' }),
+  });
+  assert.equal((await api(`/books/${wished.id}`, as(alice))).body.status, 'wishlist',
+    "another member's edit cannot take a book off alice's wishlist");
+});
+
 test('anyone holding the URL may look, and only look', async () => {
   const page = await fetch(`${BASE}/wishlist/${token}`);
   assert.equal(page.status, 200, 'no sign-in needed');
@@ -226,9 +257,10 @@ test('the purchase is a surprise: hidden from the owner until its date has passe
   assert.match(anonPage, /Spoken for/);
   assert.doesNotMatch(anonPage, /bob@gmail\.com/);
 
-  // Time passes. Backdate the purchase in the database rather than waiting a day.
+  // Time passes. Backdate the purchase in the database rather than waiting a
+  // day. It lives on the wisher's own status row — statuses are per user.
   const db = new Database(DB_PATH);
-  db.prepare('UPDATE copies SET purchase_date = ? WHERE id = ?').run(isoDay(-1), wished.id);
+  db.prepare('UPDATE user_statuses SET purchase_date = ? WHERE copy_id = ?').run(isoDay(-1), wished.id);
   db.close();
 
   const shown = (await api(`/books/${wished.id}`, as(alice))).body;

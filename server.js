@@ -132,11 +132,30 @@ const DEFAULT_PAGE = 20;         // books per page unless the client asks otherw
 // 0.79 ms without, on 20 rows — and none of those bytes ever reached a client.
 const BOOK_SELECT = `b.id, b.edition_id, b.isbn, b.isbn13, b.ol_work_id, b.title, b.authors,
   b.publisher, b.published_date, b.page_count, b.format, b.height_mm, b.width_mm,
-  b.thickness_mm, b.source, b.jacket, b.shelf_id, b.status, b.loaned_to,
-  b.wishlist_user_id, b.purchased_by, b.purchase_date,
+  b.thickness_mm, b.source, b.jacket, b.shelf_id, b.loaned_to,
+  COALESCE(us.status, 'tbr') AS status, us.purchased_by, us.purchase_date,
   b.is_library_book, b.library_name, b.due_date, b.notes, b.spine_font, b.spine_split,
   b.created_at, b.updated_at,
   b.cover_file, b.cover_token, b.cover_source_file, b.cover_source_token, b.edition_cover_url`;
+
+// Status is the REQUESTER's, not the copy's: one member's "read" is another's
+// "to be read", so every book query joins the asker's own user_statuses rows
+// (see db.js). No row means untouched, which reads as 'tbr' above. @me is the
+// signed-in user, or 0 for the anonymous user of a server running without
+// sign-in.
+const STATUS_JOIN = 'LEFT JOIN user_statuses us ON us.copy_id = b.id AND us.user_id = @me';
+const userId = (req) => req.user?.id ?? 0;
+
+// Writing a status writes the sender's own row. The wishlist purchase fields
+// live and die with the status: any change clears them — off the list means no
+// longer wanted, and back on it is a fresh wish, buyable again — while an edit
+// that keeps the status keeps the purchase the row may still be hiding.
+const setUserStatus = db.prepare(`
+  INSERT INTO user_statuses (user_id, copy_id, status) VALUES (@me, @copy, @status)
+  ON CONFLICT (user_id, copy_id) DO UPDATE SET
+    purchased_by  = CASE WHEN user_statuses.status = excluded.status THEN user_statuses.purchased_by END,
+    purchase_date = CASE WHEN user_statuses.status = excluded.status THEN user_statuses.purchase_date END,
+    status = excluded.status`);
 
 // Turn the stored tokens back into the cover URLs the API has always returned.
 // A copy's own photograph is served from its own endpoint, carrying a token
@@ -165,15 +184,16 @@ const coverRef = (b) => {
 const isCoverRef = (v) => typeof v === 'string' && /(^|\/)api\/books\/\d+\/cover(-source)?(\?.*)?$/.test(v);
 
 // A wishlist purchase is a surprise: who bought a book, and when, is withheld
-// from the wishlist's OWNER until the purchase date has passed — withheld here,
-// server-side, so the secret never even reaches their browser. Everyone else
-// who can see the book sees the purchase, which is what stops a second copy
+// from the wisher until the purchase date has passed — withheld here,
+// server-side, so the secret never even reaches their browser. Every book in a
+// response carries the requester's OWN status row (STATUS_JOIN), so any
+// purchase present is always against the requester's own wish; visitors see
+// purchases on the wishlist page instead, which is what stops a second copy
 // being bought. Applied to every response that carries books.
-function hidePurchases(books, req) {
-  const me = req.user?.id ?? 0;
+function hidePurchases(books) {
   const today = todayLocalIso();
   for (const b of books) {
-    if (b?.purchase_date && (b.wishlist_user_id ?? 0) === me && b.purchase_date >= today) {
+    if (b?.purchase_date && b.purchase_date >= today) {
       b.purchased_by = null;
       b.purchase_date = null;
     }
@@ -189,7 +209,8 @@ const round1 = (n) => Math.round(n * 10) / 10;
 // the ISBN settles (including format and dimensions: a hardback and a paperback
 // carry different ISBNs) belongs to the edition and is therefore shared by every
 // copy. Only these four groups differ between two copies of one book: whether
-// the dust jacket survived, where it sits, its reading status, and its notes.
+// the dust jacket survived, where it sits, who it is lent to, and its notes.
+// Reading status is in neither list: it is the SENDER's, not the copy's.
 const EDITION_COLS = [
   'title', 'authors', 'publisher', 'published_date', 'page_count',
   'format', 'height_mm', 'width_mm', 'thickness_mm', 'source',
@@ -197,13 +218,14 @@ const EDITION_COLS = [
 const COPY_COLS = [
   'jacket',
   'shelf_id',
-  'status', 'loaned_to',
+  'loaned_to',
   'is_library_book', 'due_date',
   'notes',
 ];
 // Accepted from clients; `isbn` and the cover fields are routed by hand because
-// each needs a decision rather than a column copy.
-const BOOK_COLS = [...EDITION_COLS, ...COPY_COLS, 'isbn', 'cover_url', 'cover_source', 'library_name'];
+// each needs a decision rather than a column copy, and `status` because it is
+// the sender's own (user_statuses), not a copy column at all.
+const BOOK_COLS = [...EDITION_COLS, ...COPY_COLS, 'status', 'isbn', 'cover_url', 'cover_source', 'library_name'];
 const SHELF_COLS = ['room', 'bookcase', 'label', 'cell', 'height_mm', 'width_mm', 'depth_mm', 'notes'];
 const NUMERIC = new Set(['page_count', 'height_mm', 'width_mm', 'thickness_mm', 'depth_mm', 'shelf_id']);
 // Dimensions are whole millimetres; round whatever a client sends.
@@ -450,16 +472,11 @@ router.get('/api/books', (req, res) => {
     where.push('(b.title LIKE @q OR b.authors LIKE @q OR b.isbn LIKE @q)');
     params.q = `%${q}%`;
   }
-  for (const [field, value] of [['status', status], ['format', format]]) {
-    if (value) { where.push(`b.${field} = @${field}`); params[field] = value; }
-  }
-  // A wishlist is yours, not the library's: filtering to the status shows the
-  // books on YOUR wishlist — the same set your shareable URL shows visitors —
-  // not every member's.
-  if (status === 'wishlist') {
-    where.push('COALESCE(b.wishlist_user_id, 0) = @wisher');
-    params.wisher = req.user?.id ?? 0;
-  }
+  if (format) { where.push('b.format = @format'); params.format = format; }
+  // Against YOUR status, like everything else about status: filtering to
+  // `wishlist` shows the books on your wishlist — the same set your shareable
+  // URL shows visitors — and `read` the ones you, not anybody else, have read.
+  if (status) { where.push("COALESCE(us.status, 'tbr') = @status"); params.status = status; }
   if (genre_id === 'none') {
     where.push('NOT EXISTS (SELECT 1 FROM book_genres bg WHERE bg.edition_id = b.edition_id)');
   } else if (genre_id) {
@@ -492,7 +509,8 @@ router.get('/api/books', (req, res) => {
   }
 
   const whereSql = 'WHERE ' + where.join(' AND ');
-  const from = `FROM books b LEFT JOIN shelves s ON s.id = b.shelf_id ${whereSql}`;
+  const from = `FROM books b ${STATUS_JOIN} LEFT JOIN shelves s ON s.id = b.shelf_id ${whereSql}`;
+  params.me = userId(req);
   const total = db.prepare(`SELECT COUNT(*) AS n ${from}`).get(params).n;
 
   // Paginated by default so the list stays small; limit=0 returns everything.
@@ -518,7 +536,7 @@ router.get('/api/books', (req, res) => {
   const sql = `SELECT ${BOOK_SELECT}, s.room, s.bookcase, s.label AS shelf_label ${from}
     ORDER BY ${orderBy}${page}`;
   res.set('X-Total-Count', String(total));
-  res.json(hidePurchases(attachGenres(db.prepare(sql).all(params)).map(coverRef), req));
+  res.json(hidePurchases(attachGenres(db.prepare(sql).all(params)).map(coverRef)));
 });
 
 // Inline (data:) covers are served from their own endpoint instead of being
@@ -557,12 +575,14 @@ router.get('/api/books/:id/cover-source', (req, res) => {
   return sendCoverFile(res, row.cover_source_file, !!req.query.v);
 });
 
-const oneBook = (id, lib) => db.prepare(`SELECT ${BOOK_SELECT} FROM books b WHERE b.id = ? AND b.library_id = ?`).get(id, lib);
+const oneBook = (id, lib, me) => db.prepare(
+  `SELECT ${BOOK_SELECT} FROM books b ${STATUS_JOIN} WHERE b.id = @id AND b.library_id = @lib`,
+).get({ id, lib, me });
 
 router.get('/api/books/:id', (req, res) => {
-  const book = oneBook(req.params.id, req.library.id);
+  const book = oneBook(req.params.id, req.library.id, userId(req));
   if (!book) return res.status(404).json({ error: 'Not found' });
-  res.json(hidePurchases([coverRef(attachGenres([book])[0])], req)[0]);
+  res.json(hidePurchases([coverRef(attachGenres([book])[0])])[0]);
 });
 
 router.post('/api/books', (req, res) => {
@@ -573,19 +593,19 @@ router.post('/api/books', (req, res) => {
   const lib = req.library.id;
   if (!shelfInLibrary(data.shelf_id, lib)) return badShelf(res);
   const { edition, copy, images } = splitBookData(data);
-  // A book born onto the wishlist is on the wishlist of whoever is adding it.
-  if (copy.status === 'wishlist') copy.wishlist_user_id = req.user?.id ?? 0;
   // One transaction: a copy without its edition, or genres attached to an
   // edition whose copy failed to insert, would both be worse than no book.
   const create = db.transaction(() => {
     const editionId = resolveEdition(edition, data.isbn, lib);
     const id = insert('copies', { ...copy, edition_id: editionId, library_id: lib });
+    // The status is the adder's own; other members meet the book as 'tbr'.
+    setUserStatus.run({ me: userId(req), copy: id, status: data.status ?? 'tbr' });
     if (req.body.genre_ids !== undefined) setBookGenres(editionId, req.body.genre_ids, lib);
     return id;
   });
   const id = create();
   applyImages(id, images, lib);
-  res.status(201).json(hidePurchases([coverRef(attachGenres([oneBook(id, lib)])[0])], req)[0]);
+  res.status(201).json(hidePurchases([coverRef(attachGenres([oneBook(id, lib, userId(req))])[0])])[0]);
 });
 
 // The cached spine typography (see /api/spine-fonts) is derived from the
@@ -599,7 +619,7 @@ const clearSpineForShelf = db.prepare('UPDATE copies SET spine_font = NULL, spin
 
 router.put('/api/books/:id', (req, res) => {
   const lib = req.library.id;
-  const current = db.prepare('SELECT id, edition_id, status FROM copies WHERE id = ? AND library_id = ?').get(req.params.id, lib);
+  const current = db.prepare('SELECT id, edition_id FROM copies WHERE id = ? AND library_id = ?').get(req.params.id, lib);
   if (!current) return res.status(404).json({ error: 'Not found' });
   // The client may echo back "api/books/:id/cover"; that means "unchanged".
   if (isCoverRef(req.body.cover_url)) delete req.body.cover_url;
@@ -607,22 +627,6 @@ router.put('/api/books/:id', (req, res) => {
   const data = pick(req.body, BOOK_COLS);
   if (!shelfInLibrary(data.shelf_id, lib)) return badShelf(res);
   const { edition, copy, images } = splitBookData(data);
-  // The wishlist fields live and die with the status. Moving ONTO the wishlist
-  // claims the book for whoever is editing; moving off it retires the entry,
-  // purchase and all — off the list means no longer wanted, so there is
-  // nothing left for the record to guard. An edit that keeps the status keeps
-  // the entry's owner: another member tidying a title must not steal the wish.
-  if (copy.status !== undefined && copy.status !== current.status) {
-    if (copy.status === 'wishlist') {
-      copy.wishlist_user_id = req.user?.id ?? 0;
-      copy.purchased_by = null;
-      copy.purchase_date = null;
-    } else if (current.status === 'wishlist') {
-      copy.wishlist_user_id = null;
-      copy.purchased_by = null;
-      copy.purchase_date = null;
-    }
-  }
   applyImages(current.id, images, lib);
 
   const save = db.transaction(() => {
@@ -651,12 +655,16 @@ router.put('/api/books/:id', (req, res) => {
       update('editions', editionId, edition, lib);
     }
     if (Object.keys(copy).length) update('copies', current.id, copy, lib);
+    // The status in the edit is the editor's own; see setUserStatus for how a
+    // change retires any wishlist purchase along the way. Nobody else's row —
+    // nobody else's wish — is touched by somebody tidying a title.
+    if (data.status !== undefined) setUserStatus.run({ me: userId(req), copy: current.id, status: data.status });
     if (req.body.genre_ids !== undefined) setBookGenres(editionId, req.body.genre_ids, lib);
     if (SPINE_EDITION_FIELDS.some((f) => edition[f] !== undefined)) clearSpineForEdition.run(editionId, lib);
     else if (copy.shelf_id !== undefined) clearSpineForCopy.run(current.id, lib);
   });
   save();
-  res.json(hidePurchases([coverRef(attachGenres([oneBook(req.params.id, lib)])[0])], req)[0]);
+  res.json(hidePurchases([coverRef(attachGenres([oneBook(req.params.id, lib, userId(req))])[0])])[0]);
 });
 
 // Deletes the copy. The edition stays: it is shared metadata that another copy
@@ -1698,14 +1706,16 @@ router.post('/api/import/epub', express.raw({ type: () => true, limit: '80mb' })
   const { edition, copy } = splitBookData(data);
   const create = db.transaction(() => {
     const editionId = resolveEdition(edition, data.isbn, lib);
-    return insert('copies', { ...copy, edition_id: editionId, library_id: lib });
+    const id = insert('copies', { ...copy, edition_id: editionId, library_id: lib });
+    setUserStatus.run({ me: userId(req), copy: id, status: data.status ?? 'tbr' });
+    return id;
   });
   const id = create();
   if (coverJpeg) applyImages(id, { cover: { buf: coverJpeg, mime: 'image/jpeg' } }, lib);
   // Through coverRef like every other book response: the client just uploaded
   // this file and has no use for its cover echoed back as half a megabyte of
   // base64. It gets the same reference URL the rest of the API returns.
-  res.status(201).json(coverRef(oneBook(id, lib)));
+  res.status(201).json(coverRef(oneBook(id, lib, userId(req))));
 });
 
 app.use(BASE || '/', router);

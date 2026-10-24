@@ -10,7 +10,7 @@ import { lookupIsbn, RateLimitError } from './lookup.js';
 import { mailConfig } from './mail.js';
 import { authConfigured, mountAuth, requireAuth, sessionSecretIsEphemeral, sessionIdleDays } from './auth.js';
 import {
-  displayName, members, addMember, removeMember, librariesOf, OWNER_ID,
+  displayName, members, addMember, editMember, removeMember, librariesOf, founderId, OWNER_ID,
   olCredentials, olStatus, setOlCredentials, clearOlCredentials,
 } from './accounts.js';
 import { parseEpub } from './epub.js';
@@ -1464,10 +1464,13 @@ router.get('/api/account', (req, res) => {
   const library = { id: req.library.id, name: req.library.name, display: displayName(req.library.name) };
   if (!req.user) {
     // Sign-in off: the keys, if any, are the environment's.
-    return res.json({ email: null, library, libraries: [], openlibrary: { active: !!envCredentials(), from_env: true } });
+    return res.json({ email: null, founder: false, library, libraries: [], openlibrary: { active: !!envCredentials(), from_env: true } });
   }
   res.json({
     email: req.user.email,
+    // Whether this is the member who created the library — the one the Users
+    // tab is shown to.
+    founder: req.user.id === founderId(req.library),
     library,
     libraries: librariesOf(req.user.id).map((l) => ({ id: l.id, name: l.name })),
     openlibrary: olStatus(req.user.id),
@@ -1494,23 +1497,37 @@ router.delete('/api/account/openlibrary', needsSignIn, (req, res) => {
   res.json(olStatus(req.user.id));
 });
 
-// Any member may see and change who else is a member.
-router.get('/api/library/members', needsSignIn, (req, res) => {
-  res.json(members(req.library.id).map((m) => ({ ...m, you: m.id === req.user.id })));
+// Who may sign in is the founder's business alone: only the member who
+// created the library may see or change its users (the Users tab).
+const needsFounder = (req, res, next) => (req.user.id === founderId(req.library) ? next()
+  : res.status(403).json({ error: 'Only the person who created this library may manage its users.' }));
+
+const memberList = (req) => members(req.library.id).map((m) => ({ ...m, you: m.id === req.user.id }));
+
+router.get('/api/library/members', needsSignIn, needsFounder, (req, res) => {
+  res.json(memberList(req));
 });
 
 // Enough of a check to catch a typo; Google decides whether the address is real
 // when that person signs in.
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-router.post('/api/library/members', needsSignIn, (req, res) => {
+router.post('/api/library/members', needsSignIn, needsFounder, (req, res) => {
   const email = String(req.body?.email ?? '').trim().toLowerCase();
   if (!EMAIL.test(email) || email.length > 254) return res.status(400).json({ error: 'That is not an email address.' });
   addMember(req.library.id, email, req.user.id);
-  res.status(201).json(members(req.library.id).map((m) => ({ ...m, you: m.id === req.user.id })));
+  res.status(201).json(memberList(req));
 });
 
-router.delete('/api/library/members/:userId', needsSignIn, (req, res) => {
+router.put('/api/library/members/:userId', needsSignIn, needsFounder, (req, res) => {
+  const email = String(req.body?.email ?? '').trim().toLowerCase();
+  if (!EMAIL.test(email) || email.length > 254) return res.status(400).json({ error: 'That is not an email address.' });
+  const refusal = editMember(req.library.id, Number(req.params.userId), email, req.user.id);
+  if (refusal) return res.status(409).json({ error: refusal });
+  res.json(memberList(req));
+});
+
+router.delete('/api/library/members/:userId', needsSignIn, needsFounder, (req, res) => {
   const refusal = removeMember(req.library.id, Number(req.params.userId), req.user.id);
   if (refusal) return res.status(409).json({ error: refusal });
   res.status(204).end();

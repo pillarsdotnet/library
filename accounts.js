@@ -56,12 +56,17 @@ export function librariesOf(userId) {
                      WHERE lu.user_id = ? ORDER BY l.name COLLATE NOCASE`).all(userId);
 }
 
+// The founder: the member who created the library, and the only one who may
+// manage its users. A library with nobody on record — the server's first, or
+// one from before founders were recorded — is the owner's.
+export const founderId = (library) => library.founder_id ?? OWNER_ID;
+
 // A new library, its founding member and its starter genres, all or nothing.
 // A library that exists without a member is one nobody can ever sign in to.
 // OR IGNORE because the owner founding one is already in it, by trigger.
 export function createLibrary(name, userId) {
   return db.transaction(() => {
-    const id = db.prepare('INSERT INTO libraries (name) VALUES (?)').run(name).lastInsertRowid;
+    const id = db.prepare('INSERT INTO libraries (name, founder_id) VALUES (?, ?)').run(name, userId).lastInsertRowid;
     db.prepare('INSERT OR IGNORE INTO library_users (library_id, user_id) VALUES (?, ?)').run(id, userId);
     seedGenres(id);
     return libraryById(id);
@@ -81,6 +86,27 @@ export function addMember(libraryId, email, addedBy) {
   db.prepare('INSERT OR IGNORE INTO library_users (library_id, user_id, added_by) VALUES (?, ?, ?)')
     .run(libraryId, user.id, addedBy ?? null);
   return user;
+}
+
+// Change which address a membership admits — fixing a typo before that person
+// ever signs in, mostly. The membership moves to the new address; the old
+// user row stays, since it may be real in another library. Refused for
+// yourself (the session is keyed by your address, so swapping it out signs
+// you out with nobody able to undo it) and for the owner. Returns an error
+// message, or null when done.
+export function editMember(libraryId, userId, email, actingUserId) {
+  if (userId === actingUserId) return 'You cannot edit yourself.';
+  if (userId === OWNER_ID) return 'The server\'s owner is a member of every library.';
+  const row = db.prepare('SELECT added_by FROM library_users WHERE library_id = ? AND user_id = ?').get(libraryId, userId);
+  if (!row) return 'Not a member of this library.';
+  db.transaction(() => {
+    const user = findOrCreateUser(email);
+    if (user.id === userId) return;   // the same address, differently cased
+    db.prepare('INSERT OR IGNORE INTO library_users (library_id, user_id, added_by) VALUES (?, ?, ?)')
+      .run(libraryId, user.id, row.added_by ?? actingUserId);
+    db.prepare('DELETE FROM library_users WHERE library_id = ? AND user_id = ?').run(libraryId, userId);
+  })();
+  return null;
 }
 
 // Refused for yourself — a slip of the finger would lock you out with nobody

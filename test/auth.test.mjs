@@ -262,9 +262,12 @@ test('naming an unused library creates it, with the person signing in and the ow
   nextIdentity = { email: 'owner@gmail.com', email_verified: true };
 });
 
-test('a member added from the Members screen gets in, and loses access when removed', async () => {
+test('a user added from the Users tab gets in, and loses access when removed', async () => {
   nextIdentity = { email: 'keeper@gmail.com', email_verified: true };
   const keeper = sessionFrom((await signIn('/', 'Keepers Hall')).setCookies);
+
+  const account = await (await fetch(`${BASE}/api/account`, as(keeper))).json();
+  assert.equal(account.founder, true, 'creating the library makes you its founder');
 
   const added = await fetch(`${BASE}/api/library/members`, { method: 'POST', ...as(keeper), body: JSON.stringify({ email: 'Guest@Gmail.com' }) });
   assert.equal(added.status, 201);
@@ -275,6 +278,13 @@ test('a member added from the Members screen gets in, and loses access when remo
   const guest = sessionFrom((await signIn('/', 'Keepers Hall')).setCookies);
   assert.ok(guest, 'the added address can now sign in');
   assert.equal((await fetch(`${BASE}/api/books`, as(guest))).status, 200);
+
+  // Managing users is the founder's alone: a plain member may use the library,
+  // not decide who else does.
+  assert.equal((await (await fetch(`${BASE}/api/account`, as(guest))).json()).founder, false);
+  assert.equal((await fetch(`${BASE}/api/library/members`, as(guest))).status, 403, 'a member cannot even list');
+  const memberAdds = await fetch(`${BASE}/api/library/members`, { method: 'POST', ...as(guest), body: JSON.stringify({ email: 'friend@gmail.com' }) });
+  assert.equal(memberAdds.status, 403, 'nor add');
 
   const list = await (await fetch(`${BASE}/api/library/members`, as(keeper))).json();
   const guestRow = list.find((m) => m.email === 'guest@gmail.com');
@@ -295,6 +305,41 @@ test('a member added from the Members screen gets in, and loses access when remo
   // The last member cannot be removed by anyone: it would strand the library.
   const onlyOne = await fetch(`${BASE}/api/library/members/${keeperRow.id}`, { method: 'DELETE', ...as(guest) });
   assert.equal(onlyOne.status, 401, 'and a non-member cannot even ask');
+  nextIdentity = { email: 'owner@gmail.com', email_verified: true };
+});
+
+test('the founder can edit a user\'s address, which moves the membership', async () => {
+  nextIdentity = { email: 'editor@gmail.com', email_verified: true };
+  const editor = sessionFrom((await signIn('/', 'Edit Hall')).setCookies);
+
+  // A typo'd address, fixed before — and after — that person signs in.
+  await fetch(`${BASE}/api/library/members`, { method: 'POST', ...as(editor), body: JSON.stringify({ email: 'typo@gmial.com' }) });
+  let list = await (await fetch(`${BASE}/api/library/members`, as(editor))).json();
+  const typoRow = list.find((m) => m.email === 'typo@gmial.com');
+
+  const edited = await fetch(`${BASE}/api/library/members/${typoRow.id}`, { method: 'PUT', ...as(editor), body: JSON.stringify({ email: 'typo@gmail.com' }) });
+  assert.equal(edited.status, 200);
+  list = await edited.json();
+  assert.ok(list.find((m) => m.email === 'typo@gmail.com'), 'the corrected address is a member');
+  assert.ok(!list.find((m) => m.email === 'typo@gmial.com'), 'the typo is not');
+
+  nextIdentity = { email: 'typo@gmail.com', email_verified: true };
+  const typo = sessionFrom((await signIn('/', 'Edit Hall')).setCookies);
+  assert.ok(typo, 'the corrected address signs in');
+
+  const fixedRow = list.find((m) => m.email === 'typo@gmail.com');
+  const moved = await fetch(`${BASE}/api/library/members/${fixedRow.id}`, { method: 'PUT', ...as(editor), body: JSON.stringify({ email: 'renamed@gmail.com' }) });
+  assert.equal(moved.status, 200);
+  assert.equal((await fetch(`${BASE}/api/books`, as(typo))).status, 401, 'the old address is out on its next request');
+
+  const editorRow = list.find((m) => m.email === 'editor@gmail.com');
+  const self = await fetch(`${BASE}/api/library/members/${editorRow.id}`, { method: 'PUT', ...as(editor), body: JSON.stringify({ email: 'elsewhere@gmail.com' }) });
+  assert.equal(self.status, 409, 'nobody edits themselves — the session is the address');
+  const ownerRow = list.find((m) => m.email === 'owner@gmail.com');
+  const ownerPut = await fetch(`${BASE}/api/library/members/${ownerRow.id}`, { method: 'PUT', ...as(editor), body: JSON.stringify({ email: 'usurper@gmail.com' }) });
+  assert.equal(ownerPut.status, 409, 'nor the owner');
+  const garbled = await fetch(`${BASE}/api/library/members/${fixedRow.id}`, { method: 'PUT', ...as(editor), body: JSON.stringify({ email: 'not an address' }) });
+  assert.equal(garbled.status, 400, 'a typo in the new address is caught');
   nextIdentity = { email: 'owner@gmail.com', email_verified: true };
 });
 

@@ -12,5 +12,6 @@ respawn(s|ing)?
 revalidated?
 snapshotted
 softcovers?
+[Ss]ubgenres?
 tooltips?
 viewports?

@@ -982,6 +982,8 @@ test('series filter narrows the list, orders by series position, and finds stand
   assert.deepEqual(standalone.map((b) => b.id), [solo.id], '"Not in a series" finds standalone books');
 
   const page = await browser.newPage();
+  // Filters are remembered across visits now; this test asserts from a clean one.
+  await page.evaluateOnNewDocument(() => localStorage.clear());
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
   const opts = await page.$$eval('#filterSeries option', (els) => els.map((o) => o.textContent));
   assert.ok(opts.some((o) => o.includes(`Filter Series ${stamp}`)), 'series listed in the filter');
@@ -1000,6 +1002,8 @@ test('genre filter has an Uncategorized option that finds books with no genres',
   await fetch(`${BASE}/api/books`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'HasGenre ' + stamp, genre_ids: [g.id] }) });
 
   const page = await browser.newPage();
+  // Filters are remembered across visits now; this test asserts from a clean one.
+  await page.evaluateOnNewDocument(() => localStorage.clear());
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
   const hasOpt = await page.$$eval('#filterGenre option', (els) => els.some((o) => o.value === 'none' && /uncategor/i.test(o.textContent)));
   assert.ok(hasOpt, 'Uncategorized option present in genre filter');
@@ -1077,6 +1081,8 @@ test('Genres tab lists the taxonomy and can edit a definition', { skip }, async 
 
 test('Clear filters button resets all filters and is hidden when none are active', { skip }, async () => {
   const page = await browser.newPage();
+  // Filters are remembered across visits now; this test asserts from a clean one.
+  await page.evaluateOnNewDocument(() => localStorage.clear());
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
 
   assert.equal(await page.$eval('#clearFiltersBtn', (el) => el.hidden), true, 'hidden with no filters');
@@ -1473,5 +1479,116 @@ test('the phone header is two lines: title with the count, then one row of butto
   assert.equal(header.addBtnAccent, false, 'Add book is a visible chip, not accent-on-accent');
   assert.equal(header.rightGap, 16, `the button row keeps the right edge (gap: ${header.rightGap}px)`);
   assert.equal(header.overflows, false, 'the header does not scroll the document sideways');
+  await page.close();
+});
+
+// Unchecking "This is a library book I have checked out" is how a borrowed
+// book goes home: the form shelves it under the library's own name — creating
+// a bookcase and shelf of that name in a Library room when none exists — and
+// only then clears the borrowing fields.
+test('unchecking "library book" shelves the book under the library\'s name', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('#addBtn');
+  await page.waitForSelector('#editDialog[open]');
+
+  const uncheckAs = async (library) => {
+    await page.click('#isLibraryBook');
+    await page.evaluate((name) => {
+      const form = document.querySelector('#bookForm');
+      form.elements.library_name.value = name;
+      form.elements.due_date.value = '2026-11-15';
+    }, library);
+    await page.click('#isLibraryBook');
+    await page.waitForFunction(() => document.querySelector('#bookForm').elements.shelf_id.value !== '');
+    return page.evaluate(() => {
+      const form = document.querySelector('#bookForm');
+      return {
+        shelfId: Number(form.elements.shelf_id.value),
+        libraryName: form.elements.library_name.value,
+        dueDate: form.elements.due_date.value,
+      };
+    });
+  };
+
+  // No shelf called County Library exists, so one is made in the Library room.
+  const first = await uncheckAs('County Library');
+  const shelves = await (await fetch(`${BASE}/api/shelves`)).json();
+  const made = shelves.find((s) => s.id === first.shelfId);
+  assert.ok(made, 'the chosen shelf exists');
+  assert.equal(made.room, 'Library');
+  assert.equal(made.bookcase, 'County Library');
+  assert.equal(made.label, 'County Library');
+  assert.equal(first.libraryName, '', 'the Library field is cleared after use');
+  assert.equal(first.dueDate, '', 'and the due date with it');
+
+  // The same library again reuses that shelf rather than minting a twin.
+  await page.evaluate(() => { document.querySelector('#bookForm').elements.shelf_id.value = ''; });
+  const again = await uncheckAs('county library');
+  assert.equal(again.shelfId, first.shelfId, 'matching ignores case and makes no duplicate');
+  const after = await (await fetch(`${BASE}/api/shelves`)).json();
+  assert.equal(after.filter((s) => /county library/i.test(s.label)).length, 1);
+
+  await page.close();
+});
+
+// The Books tab's filters are remembered per person and library, and restored
+// on the next visit — including the search text, and dropped cleanly when the
+// saved id no longer exists.
+test('the Books tab restores its filters on the next visit', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+
+  // Earlier tests typed into the search box, and that typing is now remembered
+  // too — start this one from a clean slate.
+  await page.evaluate(() => { document.querySelector('#search').value = ''; });
+  await page.select('#filterStatus', 'read');
+  await page.type('#search', 'tolkien');
+  // The search box debounces for 250ms before loadBooks saves the filters.
+  await page.waitForFunction(() => Object.entries(localStorage)
+    .some(([k, v]) => k.startsWith('libFilters:') && v.includes('tolkien')));
+
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(() => document.querySelector('#filterStatus').value === 'read');
+  assert.equal(await page.$eval('#search', (e) => e.value), 'tolkien', 'the search text comes back');
+  const clearVisible = await page.$eval('#clearFiltersBtn', (e) => !e.hidden);
+  assert.ok(clearVisible, 'restored filters count as active');
+
+  // Clearing the filters clears the memory with them.
+  await page.click('#clearFiltersBtn');
+  await page.waitForFunction(() => document.querySelector('#search').value === '');
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(() => document.querySelector('#count').textContent.trim().length > 0);
+  assert.equal(await page.$eval('#search', (e) => e.value), '', 'nothing is restored after a clear');
+  assert.equal(await page.$eval('#filterStatus', (e) => e.value), '');
+
+  await page.close();
+});
+
+// A parent genre's title folds its subgenres away and back.
+test('clicking a parent genre collapses and expands its subgenres', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+  await page.click('.tab[data-tab="genres"]');
+  await page.waitForSelector('#genreList .genre-caret');
+
+  const rows = () => page.$$eval('#genreList .genre-row', (els) => els.length);
+  const all = await rows();
+
+  await page.click('#genreList .genre-name.has-subs');
+  const folded = await rows();
+  assert.ok(folded < all, `collapsing hides the subgenres (${folded} of ${all} rows left)`);
+  const first = await page.$eval('#genreList .genre-name.has-subs', (el) => ({
+    caret: el.querySelector('.genre-caret').textContent,
+    expanded: el.querySelector('.genre-caret').getAttribute('aria-expanded'),
+    hint: el.textContent,
+  }));
+  assert.equal(first.caret, '▸');
+  assert.equal(first.expanded, 'false');
+  assert.match(first.hint, /subgenres hidden/);
+
+  await page.click('#genreList .genre-name.has-subs');
+  assert.equal(await rows(), all, 'clicking again brings them back');
+
   await page.close();
 });

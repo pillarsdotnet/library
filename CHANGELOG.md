@@ -5,6 +5,36 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.8.0] — 2026-10-24
+
+### Added
+
+- **A Users tab, for the library's creator alone.** To the right of Genres,
+  and shown only to the member who founded the library: list who may sign
+  in, add an address, edit one in place (fixing a typo moves the membership
+  to the corrected address), or remove it. The server refuses everyone else,
+  so a plain member can use the library but not decide who else does.
+  Managing users moves out of the account dialog, which keeps the Open
+  Library keys and signing out. Each library now records its founder;
+  libraries from before the column fall back to their earliest member who
+  was not added by somebody, and the server's first library belongs to the
+  owner.
+- **The Books tab remembers its filters.** The search text and every filter
+  dropdown are saved as you use them — per person and per library, since a
+  filter names genre, series and shelf ids that mean nothing elsewhere — and
+  restored on the next visit. A saved id whose genre, series or shelf has
+  since been deleted falls away quietly, and Clear filters forgets them.
+- **Subgenres fold away.** On the Genres tab, clicking a parent genre's title
+  collapses its subgenres to a single line that says how many are hidden, and
+  clicking again brings them back.
+- **Clearing the "library book" checkbox shelves the book under its library's
+  name.**
+  A borrowed book going home now lands on a shelf named after the Library
+  field — an existing shelf of that name when there is one, otherwise a new
+  bookcase and shelf of that name in a Library room, created on the spot —
+  and only then are the Library and Due date fields cleared, so a failure
+  leaves them intact to try again.
+
 ## [5.7.0] — 2026-10-18
 
 ### Added

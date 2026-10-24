@@ -20,7 +20,7 @@
       <button id="unitToggle" class="unit-toggle" title="Toggle units">mm</button>
       <!-- Hidden until the account says it can send; see loadAccount() in app.js. -->
       <button id="contributeBtn" type="button" title="Contribute missing data to Open Library" hidden>↑ Give back</button>
-      <button id="accountBtn" type="button" class="icon-btn" title="Your account and this library's members" aria-label="Account">⚙</button>
+      <button id="accountBtn" type="button" class="icon-btn" title="Your account" aria-label="Account">⚙</button>
       <button id="addBtn">+ Add book</button>
     </div>
   </header>
@@ -29,6 +29,8 @@
     <button class="tab active" data-tab="books">Books</button>
     <button class="tab" data-tab="shelves">Shelves</button>
     <button class="tab" data-tab="genres">Genres</button>
+    <!-- Hidden unless the account says you created this library; see loadAccount() in app.js. -->
+    <button class="tab" data-tab="users" id="usersTab" hidden>Users</button>
   </nav>
 
   <!-- ============ BOOKS TAB ============ -->
@@ -92,6 +94,22 @@
       <button id="addGenreBtn" class="primary">+ Add genre</button>
     </section>
     <main id="genreList"></main>
+  </div>
+
+  <!-- ============ USERS TAB ============ -->
+  <div id="tab-users" class="tab-panel" hidden>
+    <section class="toolbar">
+      <p class="hint grow">Who may sign in to this library. Only you, as the one who created it, can see and
+        change this list.</p>
+    </section>
+    <main class="users-panel">
+      <ul id="memberList" class="member-list"></ul>
+      <form id="memberForm" class="member-add">
+        <input name="email" type="email" required placeholder="name@gmail.com" aria-label="Email address to add" />
+        <button type="submit" class="primary">Add</button>
+      </form>
+      <p id="memberMsg" class="msg err" role="alert" hidden></p>
+    </main>
   </div>
 
   <!-- ============ GENRE DIALOG ============ -->
@@ -443,7 +461,7 @@
     </div>
   </dialog>
 
-  <!-- ============ ACCOUNT & MEMBERS ============ -->
+  <!-- ============ ACCOUNT ============ -->
   <dialog id="accountDialog" class="pad-dialog">
     <div class="dialog-head">
       <h2>Account</h2>
@@ -473,17 +491,6 @@
           <button type="submit" class="primary" id="olSaveBtn">Check and save</button>
         </div>
       </form>
-    </section>
-
-    <section id="membersSection" class="account-section">
-      <h3>Members</h3>
-      <p class="hint">Everyone here can use this library, and add or remove other members.</p>
-      <ul id="memberList" class="member-list"></ul>
-      <form id="memberForm" class="member-add">
-        <input name="email" type="email" required placeholder="name@gmail.com" aria-label="Email address to add" />
-        <button type="submit">Add</button>
-      </form>
-      <p id="memberMsg" class="msg err" role="alert" hidden></p>
     </section>
   </dialog>
 

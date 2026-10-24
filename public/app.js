@@ -81,6 +81,7 @@ const ADD_BY_TAB = {
   books: { label: '+ Add book', fn: () => openAddBook() },
   shelves: { label: '+ Add shelf', fn: () => openAddShelf() },
   genres: { label: '+ Add genre', fn: () => openAddGenre() },
+  users: { label: '+ Add user', fn: () => $('#memberForm [name="email"]').focus() },
 };
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => {
@@ -89,9 +90,11 @@ document.querySelectorAll('.tab').forEach((tab) => {
     $('#tab-books').hidden = which !== 'books';
     $('#tab-shelves').hidden = which !== 'shelves';
     $('#tab-genres').hidden = which !== 'genres';
+    $('#tab-users').hidden = which !== 'users';
     // Visual bookcases scale themselves to the panel's width, which is 0 while
     // the panel is hidden — so they are drawn on arrival, not at load.
     if (which === 'shelves') renderShelves();
+    if (which === 'users') renderMembers().catch((e) => alert(e.message));
     $('#addBtn').textContent = ADD_BY_TAB[which].label;
     $('#addBtn').onclick = ADD_BY_TAB[which].fn;
   });
@@ -109,6 +112,32 @@ const FILTER_CONTROLS = [
   ['#filterShelf', 'shelf_id'],
 ];
 
+// What the Books tab was showing, remembered per person and library (filters
+// name genre/shelf/series ids, which are another library's gibberish) and
+// restored on the next visit — localStorage, like the unit toggle. Saved by
+// loadBooks, which every filter change already funnels through.
+const filterStoreKey = () => `libFilters:${ACCOUNT?.email ?? ''}:${ACCOUNT?.library?.id ?? ''}`;
+
+function saveFilters() {
+  const values = {};
+  for (const [sel, param] of FILTER_CONTROLS) {
+    const v = $(sel).value;
+    if (v) values[param] = v;
+  }
+  localStorage.setItem(filterStoreKey(), JSON.stringify(values));
+}
+
+// Only once the selects hold their options: assigning a value a select does
+// not offer leaves it blank, which is also what retires a saved id whose
+// genre, series or shelf has since been deleted.
+function restoreFilters() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(filterStoreKey())) || {}; } catch { saved = {}; }
+  for (const [sel, param] of FILTER_CONTROLS) {
+    if (saved[param] != null) $(sel).value = saved[param];
+  }
+}
+
 const PAGE_SIZE = 20;
 let booksOffset = 0;   // how many books are already on screen
 let booksTotal = 0;
@@ -125,6 +154,7 @@ async function loadBooks(appendArg = false) {
     if (v) { params.set(param, v); anyActive = true; }
   }
   $('#clearFiltersBtn').hidden = !anyActive;
+  saveFilters();
 
   if (!append) booksOffset = 0;
   params.set('limit', String(PAGE_SIZE));
@@ -1097,6 +1127,31 @@ function checkFit() {
   warn.textContent = issues.length ? '⚠️ On this shelf: ' + issues.join('; ') : '';
 }
 
+// Unchecking "library book" means the book went back: it leaves your hands for
+// a shelf named after the library it belongs to. An existing shelf of that
+// name is chosen (one in the Library room first); failing that, a bookcase and
+// shelf of that name are created in the Library room — which creates the room
+// too, since a room exists only as its shelves' address. Only then are the
+// borrowing fields cleared, so a failure leaves them intact to try again.
+async function returnLibraryBook() {
+  const name = bookForm.elements.library_name.value.trim();
+  if (name) {
+    const match = (s) => (s.label || '').toLowerCase() === name.toLowerCase();
+    let shelf = shelvesCache.filter(match).sort((a, b) => (b.room === 'Library') - (a.room === 'Library'))[0];
+    if (!shelf) {
+      shelf = await api('/shelves', {
+        method: 'POST', headers: json(),
+        body: JSON.stringify({ room: 'Library', bookcase: name, label: name }),
+      });
+      await loadShelves();   // the new shelf into the cache and both selects
+    }
+    bookForm.elements.shelf_id.value = String(shelf.id);
+  }
+  bookForm.elements.library_name.value = '';
+  bookForm.elements.due_date.value = '';
+  checkFit();
+}
+
 // Books already in the library with the same ISBN (excluding the one being edited).
 async function findByIsbn(isbn) {
   const norm = String(isbn || '').replace(/[^0-9Xx]/g, '');
@@ -1953,28 +2008,49 @@ async function loadGenres() {
   populateGenreFilter();
 }
 
+// Parents whose subgenres are folded away. Survives re-renders (an edit, a
+// delete) but not a reload: the tab opens with everything showing.
+const collapsedGenres = new Set();
+
 function renderGenres() {
   const list = $('#genreList');
   list.innerHTML = '';
   const byName = (a, b) => a.name.localeCompare(b.name);
   const walk = (g, depth) => {
-    list.appendChild(renderGenreRow(g, depth));
-    for (const c of subGenres(g.id).sort(byName)) walk(c, depth + 1);
+    const children = subGenres(g.id).sort(byName);
+    list.appendChild(renderGenreRow(g, depth, children.length));
+    if (collapsedGenres.has(g.id)) return;
+    for (const c of children) walk(c, depth + 1);
   };
   for (const g of topGenres().sort(byName)) walk(g, 0);
 }
 
-function renderGenreRow(g, depth) {
+function renderGenreRow(g, depth, childCount) {
   const row = document.createElement('div');
   row.className = `genre-row${depth ? ' sub' : ''}`;
   if (depth) row.style.marginLeft = `${depth * 24}px`;
   const count = g.book_count ? `<span class="genre-count">${g.book_count} book${g.book_count === 1 ? '' : 's'}</span>` : '';
+  // A parent's title folds its subgenres away and back. The caret is a real
+  // button for the keyboard; its click bubbles to the title's one handler.
+  const collapsed = collapsedGenres.has(g.id);
+  const caret = childCount
+    ? `<button type="button" class="genre-caret" aria-expanded="${!collapsed}"
+         aria-label="${collapsed ? 'Show' : 'Hide'} the subgenres of ${esc(g.name)}">${collapsed ? '▸' : '▾'}</button>`
+    : '';
+  const hidden = collapsed
+    ? `<span class="genre-count">${childCount} subgenre${childCount === 1 ? '' : 's'} hidden</span>` : '';
   row.innerHTML = `
     <div class="genre-main">
-      <span class="genre-name">${esc(g.name)} ${count}</span>
+      <span class="genre-name${childCount ? ' has-subs' : ''}">${caret}${esc(g.name)} ${count} ${hidden}</span>
       <span class="genre-def">${esc(g.definition || 'No definition yet.')}</span>
     </div>
     <button type="button" class="link" data-edit-genre="${g.id}">Edit</button>`;
+  if (childCount) {
+    row.querySelector('.genre-name').onclick = () => {
+      if (!collapsedGenres.delete(g.id)) collapsedGenres.add(g.id);
+      renderGenres();
+    };
+  }
   row.querySelector('[data-edit-genre]').onclick = () => openEditGenre(g);
   return row;
 }
@@ -2351,8 +2427,13 @@ async function applyPendingSeries(bookId) {
   pendingSeries = null;
 }
 
+let filtersRestored = false;
+
 async function refresh() {
   await Promise.all([loadShelves(), loadGenres(), loadSeries()]); // before book cards/selects
+  // Only on the first load, now that the selects offer their options — a
+  // refresh after an edit must keep what the person has since picked.
+  if (!filtersRestored) { filtersRestored = true; restoreFilters(); }
   await Promise.all([loadBooks(), loadMeta()]);
 }
 
@@ -2464,7 +2545,10 @@ $('#closeCropDialog').addEventListener('click', closeCropDialog);
 cropDialog.addEventListener('cancel', (e) => { e.preventDefault(); closeCropDialog(); });
 $('#deleteBtn').addEventListener('click', deleteBook);
 $('#statusSelect').addEventListener('change', syncBookFields);
-$('#isLibraryBook').addEventListener('change', syncBookFields);
+$('#isLibraryBook').addEventListener('change', () => {
+  syncBookFields();
+  if (!$('#isLibraryBook').checked) returnLibraryBook().catch((err) => alert(err.message));
+});
 $('#shelfSelect').addEventListener('change', checkFit);
 ['height_mm', 'width_mm', 'thickness_mm'].forEach((n) => bookForm.elements[n].addEventListener('input', checkFit));
 bookForm.addEventListener('submit', saveBook);
@@ -2696,7 +2780,7 @@ $('#contributeCloseBtn').addEventListener('click', () => contributeDialog.close(
 
 applyUnitLabels();
 // ---------------------------------------------------------------------------
-// Your account and this library's members. The account also decides whether
+// Your account and this library's users. The account also decides whether
 // Give back is offered at all: it is for somebody whose own Open Library keys
 // are saved and verified. With sign-in off there are no accounts, and the
 // dialog stays as it always was.
@@ -2707,6 +2791,9 @@ let ACCOUNT = null;
 async function loadAccount() {
   ACCOUNT = await api('/account');
   $('#contributeBtn').hidden = !(ACCOUNT.openlibrary.from_env || ACCOUNT.openlibrary.active);
+  // The Users tab is the founder's alone: whoever created this library manages
+  // who may sign in to it.
+  $('#usersTab').hidden = !ACCOUNT.founder;
   return ACCOUNT;
 }
 
@@ -2718,7 +2805,6 @@ function renderAccount() {
   $('#accountSignedIn').hidden = !signedIn;
   $('#accountSignedOff').hidden = signedIn;
   $('#olSection').hidden = !signedIn;
-  $('#membersSection').hidden = !signedIn;
   if (!signedIn) return;
 
   const ol = ACCOUNT.openlibrary;
@@ -2731,21 +2817,10 @@ function renderAccount() {
   $('#olSaveBtn').textContent = ol.active ? 'Replace keys' : 'Check and save';
 }
 
-async function renderMembers() {
-  const list = await api('/library/members');
-  $('#memberList').innerHTML = list.map((m) => `
-    <li>
-      <span class="member-email">${esc(m.email)}${m.you ? ' <span class="hint">(you)</span>' : ''}${m.owner ? ' <span class="hint">(owner)</span>' : ''}</span>
-      ${m.you || m.owner ? '' : `<button type="button" class="danger" data-remove="${m.id}" data-email="${esc(m.email)}">Remove</button>`}
-    </li>`).join('');
-}
-
 async function openAccount() {
   await loadAccount();
   renderAccount();
-  $('#memberMsg').hidden = true;
   accountDialog.showModal();
-  if (ACCOUNT.email) await renderMembers();
 }
 
 $('#accountBtn').addEventListener('click', () => openAccount().catch((e) => alert(e.message)));
@@ -2784,34 +2859,83 @@ $('#olRemoveBtn').addEventListener('click', async () => {
   await loadAccount();
 });
 
+// ---------------------------------------------------------------------------
+// The Users tab: who may sign in to this library. Shown only to the member
+// who created it (see loadAccount); the server refuses everyone else anyway.
+// ---------------------------------------------------------------------------
+async function renderMembers() {
+  const list = await api('/library/members');
+  $('#memberMsg').hidden = true;
+  $('#memberList').innerHTML = list.map((m) => `
+    <li>
+      <span class="member-email">${esc(m.email)}${m.you ? ' <span class="hint">(you)</span>' : ''}${m.owner ? ' <span class="hint">(owner)</span>' : ''}</span>
+      ${m.you || m.owner ? '' : `<button type="button" data-edit="${m.id}" data-email="${esc(m.email)}">Edit</button>
+      <button type="button" class="danger" data-remove="${m.id}" data-email="${esc(m.email)}">Remove</button>`}
+    </li>`).join('');
+}
+
+function memberError(err) {
+  const msg = $('#memberMsg');
+  msg.textContent = err.message;
+  msg.hidden = false;
+}
+
 $('#memberForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const msg = $('#memberMsg');
-  msg.hidden = true;
+  $('#memberMsg').hidden = true;
   try {
     await api('/library/members', { method: 'POST', headers: json(), body: JSON.stringify({ email: e.target.email.value }) });
     e.target.reset();
     await renderMembers();
   } catch (err) {
-    msg.textContent = err.message;
-    msg.hidden = false;
+    memberError(err);
   }
 });
 
 $('#memberList').addEventListener('click', async (e) => {
-  const btn = e.target.closest('button[data-remove]');
+  const btn = e.target.closest('button');
   if (!btn) return;
-  if (!confirm(`Remove ${btn.dataset.email} from ${ACCOUNT.library.display}? They lose access straight away.`)) return;
-  const msg = $('#memberMsg');
-  msg.hidden = true;
+  $('#memberMsg').hidden = true;
+  if (btn.dataset.edit) {
+    // Swap the row for an inline form. Nothing is sent until Save, and Cancel
+    // just redraws the list.
+    const li = btn.closest('li');
+    li.innerHTML = `
+      <input type="email" value="${esc(btn.dataset.email)}" required aria-label="New email address" />
+      <button type="button" class="primary" data-save="${btn.dataset.edit}">Save</button>
+      <button type="button" data-cancel>Cancel</button>`;
+    li.querySelector('input').focus();
+    return;
+  }
   try {
-    await api(`/library/members/${btn.dataset.remove}`, { method: 'DELETE' });
-    await renderMembers();
+    if ('cancel' in btn.dataset) {
+      await renderMembers();
+    } else if (btn.dataset.save) {
+      const input = btn.closest('li').querySelector('input');
+      if (!input.reportValidity()) return;
+      await api(`/library/members/${btn.dataset.save}`, { method: 'PUT', headers: json(), body: JSON.stringify({ email: input.value }) });
+      await renderMembers();
+    } else if (btn.dataset.remove) {
+      if (!confirm(`Remove ${btn.dataset.email} from ${ACCOUNT.library.display}? They lose access straight away.`)) return;
+      await api(`/library/members/${btn.dataset.remove}`, { method: 'DELETE' });
+      await renderMembers();
+    }
   } catch (err) {
-    msg.textContent = err.message;
-    msg.hidden = false;
+    memberError(err);
   }
 });
 
-loadAccount().catch(() => { /* the button stays hidden; nothing else depends on it */ });
-refresh().catch((err) => alert('Failed to load: ' + err.message));
+// Enter inside the inline edit saves it, rather than doing nothing.
+$('#memberList').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.matches('input')) {
+    e.preventDefault();
+    e.target.closest('li').querySelector('[data-save]')?.click();
+  }
+});
+
+// The account before the first refresh: it gates the Users tab, and it names
+// the person and library whose remembered Books filters refresh restores.
+loadAccount()
+  .catch(() => { /* the button stays hidden; the filters use the anonymous bucket */ })
+  .then(() => refresh())
+  .catch((err) => alert('Failed to load: ' + err.message));

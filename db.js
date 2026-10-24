@@ -767,6 +767,12 @@ function legacyAllowlist() {
     if (!colsOf(t).includes('library_id')) db.exec(`ALTER TABLE ${t} ADD COLUMN library_id INTEGER REFERENCES libraries(id)`);
   }
 
+  // Who created each library: the one member who may manage the others (see
+  // accounts.js). NULL reads as the owner — SQLite cannot ADD a NOT NULL
+  // column, and a library with no founder on record is the server's own.
+  const FOUNDER_IS_NEW = !colsOf('libraries').includes('founder_id');
+  if (FOUNDER_IS_NEW) db.exec('ALTER TABLE libraries ADD COLUMN founder_id INTEGER REFERENCES users(id)');
+
   const migrate = db.transaction(() => {
     let first = db.prepare('SELECT id FROM libraries ORDER BY id LIMIT 1').get();
     if (!first) {
@@ -786,6 +792,19 @@ function legacyAllowlist() {
     for (const t of TENANT_TABLES) db.prepare(`UPDATE ${t} SET library_id = ? WHERE library_id IS NULL`).run(first.id);
   });
   migrate();
+
+  // Libraries from before founders were recorded: the founder is the earliest
+  // member who was not added by somebody (createLibrary records no added_by)
+  // and is not the owner, whom a trigger puts in every library. The first
+  // library is nobody's creation — it is the server's own — so it stays NULL
+  // and reads as the owner, as does a library the owner founded.
+  if (FOUNDER_IS_NEW) {
+    db.exec(`UPDATE libraries SET founder_id =
+      (SELECT lu.user_id FROM library_users lu
+        WHERE lu.library_id = libraries.id AND lu.added_by IS NULL AND lu.user_id != ${OWNER_ID}
+        ORDER BY lu.rowid LIMIT 1)
+      WHERE id != (SELECT MIN(id) FROM libraries)`);
+  }
 
   db.exec(`
     -- Identity and uniqueness are per library: two libraries may each own the

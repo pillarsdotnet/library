@@ -406,8 +406,8 @@ export function mountAuth(router, base = '', doFetch = globalThis.fetch) {
       return res.status(403).type('html').send(page('Not a member', `
         <h1>Not a member</h1>
         <p>${esc(claims.email)} is not a member of ${esc(displayName(library.name))}.</p>
-        <p class="hint">A member of that library can add you from its Members screen. Or sign in with another
-          account, or to another library.</p>
+        <p class="hint">The person who created that library can add you from its Users tab. Or sign in with
+          another account, or to another library.</p>
         <a class="btn" href="${esc(base)}/auth/login">Back to sign in</a>`));
     }
 

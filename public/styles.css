@@ -401,6 +401,11 @@ dialog::backdrop { background: rgba(20, 15, 30, 0.55); }
 .genre-row.sub { margin-left: 28px; border-left: 3px solid var(--accent); }
 .genre-main { flex: 1; min-width: 0; }
 .genre-name { font-weight: 600; display: block; }
+.genre-name.has-subs { cursor: pointer; }
+.genre-caret {
+  font: inherit; background: none; border: 0; padding: 0 6px 0 0;
+  color: var(--accent); cursor: pointer;
+}
 .genre-count { font-weight: 400; font-size: 0.78rem; color: var(--muted); }
 .genre-def { font-size: 0.85rem; color: var(--muted); }
 
@@ -504,6 +509,11 @@ legend { padding: 0 6px; font-size: 0.8rem; color: var(--muted); }
 .member-list .member-email { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .member-add { display: flex; gap: 8px; }
 .member-add input { flex: 1 1 auto; min-width: 0; }
+
+/* ---------- Users tab ---------- */
+.users-panel { max-width: 560px; margin: 0 auto; padding: 0 16px 32px; }
+/* The inline edit takes the room the address had. */
+.member-list li input { flex: 1 1 auto; min-width: 0; }
 
 /* ---------- Bookcase visual view ---------- */
 /* The bookcase drawn as the grid its cells describe: the grid's background is

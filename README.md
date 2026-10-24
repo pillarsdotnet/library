@@ -4,7 +4,8 @@ A self-hosted web app to catalogue the books in your private library, or in
 several: one server holds any number of libraries, each with its own books,
 shelves, genres, series and members. Works from
 any phone or desktop browser (Android + iPhone), scans ISBN barcodes with the
-camera, auto-fills metadata from Open Library / Google Books, tracks where each
+camera, auto-fills metadata from Open Library / Google Books / Barnes & Noble,
+tracks where each
 book physically lives, and calculates how many books fit on each shelf.
 
 No native app required — barcode scanning runs client-side in the browser
@@ -15,7 +16,11 @@ both iOS Safari and Android Chrome.
 
 - **ISBN scan & auto-fill** — point your camera at the barcode; title, author,
   publisher, page count, cover image, and (when available) physical dimensions
-  are pulled from **Open Library** and **Google Books**.
+  are pulled from **Open Library**, then **Google Books**, then
+  **Barnes & Noble**, each consulted only for the blanks the ones before it
+  left (Barnes & Noble has no API, so its public product page is scraped, and
+  only as the last resort — it is also the fallback that can supply the
+  binding, which Google Books never carries).
 - **Physical description** — hardback/paperback/e-book/audiobook, dust-jacket
   present/missing/N/A, and book dimensions (height × width × spine thickness).
 - **Genre / subgenre** with autocomplete from what you've already entered.
@@ -901,7 +906,8 @@ All endpoints are under `/api`:
 - `POST /series/:id/genres` — body `{ genre_ids: [...] }`: adds those genres to
   every book in the series (additive; nothing is removed). Backs the two
   copy-across-the-series prompts in the book dialog.
-- `GET /lookup/:isbn` — merged Open Library + Google Books metadata.
+- `GET /lookup/:isbn` — merged Open Library + Google Books + Barnes & Noble
+  metadata, each later source filling only the blanks the earlier ones left.
 - `GET /meta` — distinct rooms, bookcases, genres for autocomplete + counts.
 
 ## Notes

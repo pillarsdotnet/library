@@ -94,7 +94,10 @@ document.querySelectorAll('.tab').forEach((tab) => {
     // Visual bookcases scale themselves to the panel's width, which is 0 while
     // the panel is hidden — so they are drawn on arrival, not at load.
     if (which === 'shelves') renderShelves();
-    if (which === 'users') renderMembers().catch((e) => alert(e.message));
+    if (which === 'users') {
+      renderMembers().catch((e) => alert(e.message));
+      renderLibraryKeys().catch((e) => alert(e.message));
+    }
     $('#addBtn').textContent = ADD_BY_TAB[which].label;
     $('#addBtn').onclick = ADD_BY_TAB[which].fn;
   });
@@ -2962,6 +2965,49 @@ function memberError(err) {
   msg.textContent = err.message;
   msg.hidden = false;
 }
+
+// The library's lookup API keys. The server returns hints, never the keys, so
+// the inputs stay empty and the hint under each says what is already stored.
+function showKeyHints(status) {
+  for (const [name, s] of Object.entries(status)) {
+    const hint = $(`[data-key-hint="${name}"]`);
+    if (!hint) continue;
+    hint.textContent = !s.active ? 'Not set.'
+      : s.from_env ? `Using the server's own key (${s.hint}).`
+      : `Set (${s.hint}).`;
+  }
+}
+
+async function renderLibraryKeys() {
+  showKeyHints(await api('/library/keys'));
+}
+
+$('#libraryKeysForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('#libraryKeysMsg');
+  msg.hidden = true;
+  // Send only what was typed: an untouched field keeps its stored key, and
+  // clearing is explicit (type a space to remove a key — a blank form must
+  // not wipe both keys by accident).
+  const body = {};
+  for (const name of ['google_books', 'isbndb']) {
+    const v = e.target[name].value;
+    if (v !== '') body[name] = v.trim();
+  }
+  if (!Object.keys(body).length) return;
+  try {
+    const status = await api('/library/keys', { method: 'PUT', headers: json(), body: JSON.stringify(body) });
+    showKeyHints(status);
+    e.target.reset();
+    msg.className = 'msg ok';
+    msg.textContent = 'Saved.';
+    msg.hidden = false;
+  } catch (err) {
+    msg.className = 'msg err';
+    msg.textContent = err.message;
+    msg.hidden = false;
+  }
+});
 
 $('#memberForm').addEventListener('submit', async (e) => {
   e.preventDefault();

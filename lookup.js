@@ -20,6 +20,7 @@ const BN_BASE = process.env.BARNESNOBLE_BASE || 'https://www.barnesandnoble.com'
 // The Library of Congress SRU gateway (plain HTTP on the SRU port; there is no
 // TLS endpoint for it). Returns MODS XML; no key, no quota worth noting.
 const LOC_BASE = process.env.LOC_BASE || 'http://lx2.loc.gov:210';
+const ISBNDB_BASE = process.env.ISBNDB_BASE || 'https://api2.isbndb.com';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -161,7 +162,7 @@ export function parseBarnesNoble(html, isbn) {
 // Barnes & Noble has no API; scrape the public product page as a last resort
 // (B&N-exclusive editions often aren't in Open Library or Google Books). This is
 // best-effort and tolerant: any failure just yields null.
-async function fetchBarnesNoble(isbn, doFetch) {
+export async function fetchBarnesNoble(isbn, doFetch) {
   try {
     const r = await doFetch(`${BN_BASE}/w/?ean=${isbn}`, {
       headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'en-US,en;q=0.9' },
@@ -172,6 +173,44 @@ async function fetchBarnesNoble(isbn, doFetch) {
   } catch {
     return null; // network error, timeout, or bot block — don't break the lookup
   }
+}
+
+// ISBNdb names a book's dimensions oddly: "Height" is the spine height,
+// "Length" the cover width, and "Width" the thickness (so says their own flat
+// string, "Height: 9.25 Inches, Length: 6.25 Inches, Width: 1 Inches").
+export function parseIsbndbBook(book) {
+  if (!book?.title) return null;
+  const dim = (name) => {
+    const st = book.dimensions_structured?.[name];
+    if (st?.value) return toMm(`${st.value} ${st.unit || 'in'}`);
+    const m = new RegExp(`${name}:\\s*([\\d.]+)\\s*(\\w+)`, 'i').exec(String(book.dimensions || ''));
+    return m ? toMm(`${m[1]} ${m[2]}`) : null;
+  };
+  return {
+    title: book.title,
+    authors: (book.authors || []).join(', '),
+    publisher: book.publisher || '',
+    published_date: String(book.date_published || ''),
+    page_count: book.pages || null,
+    cover_url: book.image || '',
+    format: normalizeFormat(book.binding),
+    height_mm: dim('height'),
+    width_mm: dim('length'),
+    thickness_mm: dim('width'),
+  };
+}
+
+// ISBNdb is keyed and metered (the basic plan allows one request a second), so
+// it is consulted only when the library has stored a key — see libraryKeys in
+// accounts.js — and, like every fallback, only when it could fill a blank.
+export async function fetchIsbndb(isbn, doFetch, key) {
+  const r = await doFetch(`${ISBNDB_BASE}/book/${isbn}`, {
+    headers: { Authorization: key },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (r.status === 429) throw new RateLimitError('ISBNdb rate-limited');
+  if (!r.ok) return null;
+  return parseIsbndbBook((await r.json()).book);
 }
 
 // Parse a MODS record from the Library of Congress SRU gateway. MODS is XML,
@@ -238,7 +277,7 @@ export function parseLocMods(xml) {
 
 // Best-effort, like the B&N scrape: a public gateway's bad day must not break
 // the lookup, so any failure is just "nothing from this source".
-async function fetchLoc(isbn, doFetch) {
+export async function fetchLoc(isbn, doFetch) {
   try {
     const r = await doFetch(
       `${LOC_BASE}/lcdb?version=1.1&operation=searchRetrieve&query=bath.isbn=${isbn}&maximumRecords=1&recordSchema=mods`,
@@ -291,7 +330,7 @@ function seriesFromWork(work) {
   return tag ? parseSeries(String(tag).replace(/^series:/i, '')) : null;
 }
 
-async function fetchOpenLibrary(isbn, doFetch) {
+export async function fetchOpenLibrary(isbn, doFetch) {
   // The bulk endpoint omits the binding, so ask the edition record for it too.
   // Runs alongside, so it costs no extra wall time, and is optional.
   const [r, edition] = await Promise.all([
@@ -339,7 +378,7 @@ async function fetchOpenLibrary(isbn, doFetch) {
   };
 }
 
-async function fetchGoogleBooks(isbn, doFetch, apiKey) {
+export async function fetchGoogleBooks(isbn, doFetch, apiKey) {
   let url = `${GB_BASE}/books/v1/volumes?q=isbn:${isbn}&country=US`;
   if (apiKey) url += `&key=${apiKey}`;
   const r = await doFetch(url);
@@ -381,6 +420,8 @@ function fillBlanks(target, src) {
 // Open Library carries a usable series, so no fallback is asked for one.
 const GOOGLE_FIELDS = ['title', 'authors', 'publisher', 'published_date',
   'page_count', 'cover_url', 'height_mm', 'width_mm', 'thickness_mm'];
+const ISBNDB_FIELDS = ['title', 'authors', 'publisher', 'published_date',
+  'page_count', 'cover_url', 'format', 'height_mm', 'width_mm', 'thickness_mm'];
 const LOC_FIELDS = ['title', 'authors', 'publisher', 'published_date',
   'page_count', 'height_mm'];
 const BN_FIELDS = ['title', 'authors', 'publisher', 'published_date',
@@ -395,6 +436,7 @@ const BN_FIELDS = ['title', 'authors', 'publisher', 'published_date',
 export async function lookupIsbn(isbn, opts = {}) {
   const baseFetch = opts.fetch || globalThis.fetch;
   const apiKey = opts.apiKey ?? process.env.GOOGLE_BOOKS_API_KEY;
+  const isbndbKey = opts.isbndbKey ?? process.env.ISBNDB_API_KEY ?? null;
   // Retry transient 5xx on the JSON APIs (smooths Google's new-key warm-up 503s).
   const doFetch = withRetry(baseFetch, opts.retries ?? 3, opts.retryDelayMs ?? 250);
 
@@ -419,19 +461,33 @@ export async function lookupIsbn(isbn, opts = {}) {
   // 1. Open Library.
   await consult('openlibrary', () => fetchOpenLibrary(isbn, doFetch));
 
-  // 2. Google Books, only if it could fill something still blank.
+  // The fallbacks run fastest first, each only if it could fill a blank. The
+  // order is measured, not guessed — bench/lookup-sources.mjs, over a dozen of
+  // this library's own ISBNs on 2026-10-24: ISBNdb median 110 ms and every
+  // one found; Library of Congress 208 ms, 6 of 12; Barnes & Noble 878 ms,
+  // 10 of 12. Google Books answered in a median 99 ms but matched none of the
+  // twelve and fell into 503 bursts mid-measurement — a bad day at Google's
+  // end — so its place after ISBNdb rests on ISBNdb's perfect hit rate; worth
+  // re-measuring when the service steadies.
+
+  // 2. ISBNdb — only for a library whose founder stored a key.
+  if (isbndbKey && !allFilled(result, ISBNDB_FIELDS)) {
+    await consult('isbndb', () => fetchIsbndb(isbn, baseFetch, isbndbKey));
+  }
+
+  // 3. Google Books.
   if (!allFilled(result, GOOGLE_FIELDS)) {
     await consult('googlebooks', () => fetchGoogleBooks(isbn, doFetch, apiKey));
   }
 
-  // 3. The Library of Congress catalog, likewise. Free, keyless and reaching
-  // plenty of books the commercial sources miss — but it carries no cover, no
-  // binding, and only the height, so the scrape below still has work.
+  // 4. The Library of Congress catalog. Free, keyless and reaching plenty of
+  // books the commercial sources miss — but it carries no cover, no binding,
+  // and only the height, so the scrape below still has work.
   if (!allFilled(result, LOC_FIELDS)) {
     await consult('loc', () => fetchLoc(isbn, baseFetch));
   }
 
-  // 4. Barnes & Noble, last — a heavy scrape, so only when it might help.
+  // 5. Barnes & Noble, last — a heavy scrape, so only when it might help.
   // Uses baseFetch (it has its own single-shot timeout, no retry). Opt out with
   // { bindingFallback: false }.
   if (opts.bindingFallback !== false && !allFilled(result, BN_FIELDS)) {

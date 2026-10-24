@@ -5,6 +5,27 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.15.0] — 2026-10-24
+
+### Added
+
+- **`ISBNdb` joins the lookup chain** for a library whose founder stores a
+  key: in a measured sample it was the fastest fallback and the only source
+  that knew every book asked about, dimensions and binding included.
+- **Lookup API keys belong to the library.** The Google Books and `ISBNdb`
+  keys are stored per library, sealed at rest, and managed through a Lookup
+  keys form on the Users tab that only the library's founder can reach; even
+  the founder sees only a hint of a stored key, never the key back. The
+  environment variables remain as server-wide defaults for libraries that
+  store none.
+
+### Changed
+
+- **The lookup fallbacks now run fastest first, by measurement** (see
+  `bench/lookup-sources.mjs`): Open Library always leads — it is the source
+  this app gives back to — then `ISBNdb`, Google Books, the Library of
+  Congress, and the Barnes & Noble scrape last.
+
 ## [5.14.0] — 2026-10-24
 
 ### Added

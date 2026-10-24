@@ -232,6 +232,42 @@ test('the owner cannot be removed from a library', async () => {
   assert.match((await r.json()).error, /owner/);
 });
 
+test("the library's lookup keys are the founder's alone, stored sealed, shown only as hints", async () => {
+  const { session } = await signIn('stranger@gmail.com', 'Café Shelf');
+  const keysApi = (opts = {}) => fetch(`${BASE}/api/library/keys`, { headers: { Cookie: session, 'Content-Type': 'application/json' }, ...opts });
+
+  // The founder starts with nothing set (no env defaults in this harness).
+  let status = await (await keysApi()).json();
+  assert.deepEqual(status.isbndb, { active: false, from_env: false });
+
+  // Saving stores the key; the answer is a hint, never the key itself.
+  status = await (await keysApi({ method: 'PUT', body: JSON.stringify({ isbndb: 'test_key_1234' }) })).json();
+  assert.deepEqual(status.isbndb, { active: true, from_env: false, hint: '…1234' });
+  assert.ok(!JSON.stringify(status).includes('test_key'), 'the key never comes back');
+
+  // Sealed at rest: the database row holds ciphertext, not the key.
+  const Database = (await import('better-sqlite3')).default;
+  const db = new Database(join(TMP, 'library.db'));
+  const raw = db.prepare("SELECT isbndb_key FROM libraries WHERE name = 'Café Shelf' COLLATE NOCASE").get();
+  db.close();
+  assert.ok(raw.isbndb_key.startsWith('v1.'), 'stored sealed');
+  assert.ok(!raw.isbndb_key.includes('test_key_1234'));
+
+  // A mere member may not see or set them: the owner is a member of this
+  // library but did not found it.
+  const owner = await signIn('owner@gmail.com', 'Café Shelf');
+  for (const r of [
+    await fetch(`${BASE}/api/library/keys`, { headers: { Cookie: owner.session } }),
+    await fetch(`${BASE}/api/library/keys`, {
+      method: 'PUT', headers: { Cookie: owner.session, 'Content-Type': 'application/json' }, body: JSON.stringify({ isbndb: 'x' }),
+    }),
+  ]) assert.equal(r.status, 403, 'only the founder manages the keys');
+
+  // An empty string clears the key.
+  status = await (await keysApi({ method: 'PUT', body: JSON.stringify({ isbndb: '' }) })).json();
+  assert.deepEqual(status.isbndb, { active: false, from_env: false });
+});
+
 test('without STARTTLS the password is never sent, and sign-in still works', async () => {
   offerStartTls = false;
   try {

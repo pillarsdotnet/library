@@ -118,6 +118,22 @@
         <button type="submit" class="primary">Add</button>
       </form>
       <p id="memberMsg" class="msg err" role="alert" hidden></p>
+
+      <h3 class="keys-head">Lookup keys</h3>
+      <p class="hint">This library's own API keys for the ISBN lookup. Saving a key replaces the
+        old one; saving a blank removes it. Only you can see or change these.</p>
+      <form id="libraryKeysForm" class="keys-form">
+        <label>Google Books key
+          <input name="google_books" type="password" autocomplete="off" placeholder="not set" />
+          <span class="hint" data-key-hint="google_books"></span>
+        </label>
+        <label>ISBNdb key
+          <input name="isbndb" type="password" autocomplete="off" placeholder="not set" />
+          <span class="hint" data-key-hint="isbndb"></span>
+        </label>
+        <button type="submit" class="primary">Save keys</button>
+      </form>
+      <p id="libraryKeysMsg" class="msg" role="alert" hidden></p>
     </main>
   </div>
 

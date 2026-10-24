@@ -12,6 +12,7 @@ import { authConfigured, mountAuth, requireAuth, sessionSecretIsEphemeral, sessi
 import {
   displayName, members, addMember, editMember, removeMember, librariesOf, founderId, OWNER_ID,
   olCredentials, olStatus, setOlCredentials, clearOlCredentials,
+  libraryKeys, libraryKeyStatus, setLibraryKeys,
 } from './accounts.js';
 import { parseEpub } from './epub.js';
 import { mountWishlist, wishlistPath, todayLocalIso } from './wishlist.js';
@@ -1621,6 +1622,24 @@ router.delete('/api/library/members/:userId', needsSignIn, needsFounder, (req, r
   res.status(204).end();
 });
 
+// The library's lookup API keys (Google Books, ISBNdb): the founder's alone to
+// see and change, and even the founder sees only a hint, never the key back.
+router.get('/api/library/keys', needsSignIn, needsFounder, (req, res) => {
+  res.json(libraryKeyStatus(req.library.id));
+});
+
+router.put('/api/library/keys', needsSignIn, needsFounder, (req, res) => {
+  const body = {};
+  for (const name of ['google_books', 'isbndb']) {
+    if (req.body?.[name] === undefined) continue;
+    const v = String(req.body[name]).trim();
+    if (v.length > 200) return res.status(400).json({ error: 'That is not an API key.' });
+    body[name] = v;
+  }
+  setLibraryKeys(req.library.id, body);
+  res.json(libraryKeyStatus(req.library.id));
+});
+
 // ---------------------------------------------------------------------------
 // ISBN lookup — merges Open Library and Google Books (see lookup.js), behind a
 // cache so a re-scan or retry does not spend another query on a book already
@@ -1669,7 +1688,10 @@ router.get('/api/lookup/:isbn', async (req, res) => {
   }
 
   try {
-    const data = await lookupIsbn(isbn);
+    // The keyed sources use THIS library's keys (its founder's to manage),
+    // falling back to the server-wide environment defaults.
+    const keys = libraryKeys(req.library.id);
+    const data = await lookupIsbn(isbn, { apiKey: keys.google_books, isbndbKey: keys.isbndb });
     // Cache the answer either way — found, or a genuine "no source has it".
     putCachedLookup.run({ isbn, found: data ? 1 : 0, data: data ? JSON.stringify(data) : null });
     res.set('X-Lookup-Cache', 'miss');

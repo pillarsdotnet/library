@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { lookupIsbn, RateLimitError, toMm, parseBarnesNoble, parseLocMods, normalizeFormat, parseSeries } from '../lookup.js';
+import { lookupIsbn, RateLimitError, toMm, parseBarnesNoble, parseLocMods, parseIsbndbBook, normalizeFormat, parseSeries } from '../lookup.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const bnFoxglove = readFileSync(join(FIXTURES, 'barnesnoble-foxglove.html'), 'utf8');
@@ -20,11 +20,13 @@ function fakeFetch(routes, calls) {
       : url.includes('openlibrary.org/works/') ? 'olWork'
       : url.includes('openlibrary.org') ? 'ol'
       : url.includes('barnesandnoble.com') ? 'bn'
+      : url.includes('isbndb.com') ? 'isbndb'
       : url.includes('/lcdb?') ? 'loc' : 'gb';
     // The edition record is optional; absent unless a test supplies one, and
-    // so is the Library of Congress.
+    // so are the Library of Congress and ISBNdb.
     const res = routes[which]
-      ?? ((which === 'olEdition' || which === 'olWork' || which === 'loc') ? { status: 404 } : { status: 200, body: {}, text: '' });
+      ?? ((which === 'olEdition' || which === 'olWork' || which === 'loc' || which === 'isbndb')
+        ? { status: 404 } : { status: 200, body: {}, text: '' });
     const status = res.status ?? 200;
     return {
       status,
@@ -493,4 +495,59 @@ test('a Library of Congress outage is harmless: the lookup still answers from th
   });
   assert.equal(d.source, 'openlibrary');
   assert.equal(d.title, 'Catcher');
+});
+
+test('parseIsbndbBook maps fields, binding, and ISBNdb’s oddly named dimensions', () => {
+  const d = parseIsbndbBook({
+    title: 'Oathbringer',
+    authors: ['Brandon Sanderson'],
+    publisher: 'Tor Books',
+    date_published: '2017-11-14',
+    pages: 1248,
+    image: 'https://images.isbndb.com/covers/x.jpg',
+    binding: 'Hardcover',
+    // "Height" is the spine height, "Length" the cover width, "Width" the thickness.
+    dimensions_structured: {
+      height: { unit: 'inches', value: 9.45 },
+      length: { unit: 'inches', value: 6.55 },
+      width: { unit: 'inches', value: 2.4 },
+    },
+  });
+  assert.equal(d.format, 'hardback');
+  assert.equal(d.page_count, 1248);
+  assert.equal(d.height_mm, 240);
+  assert.equal(d.width_mm, 166);
+  assert.equal(d.thickness_mm, 61);
+  // The flat string works too, when the structured form is absent.
+  const flat = parseIsbndbBook({ title: 'X', dimensions: 'Height: 9.25 Inches, Length: 6.25 Inches, Width: 1 Inches' });
+  assert.deepEqual([flat.height_mm, flat.width_mm, flat.thickness_mm], [235, 159, 25]);
+  assert.equal(parseIsbndbBook(undefined), null);
+});
+
+test('ISBNdb is consulted only when a key is supplied, and fills the blanks', async () => {
+  const isbn = '9780765326355';
+  const routes = {
+    ol: { status: 200, body: {} },
+    gb: { status: 200, body: {} },
+    isbndb: { body: { book: { title: 'Oathbringer', authors: ['Brandon Sanderson'], binding: 'Hardcover' } } },
+  };
+  const without = [];
+  assert.equal(await lookupIsbn(isbn, { apiKey: null, bindingFallback: false, fetch: fakeFetch(routes, without) }), null);
+  assert.ok(!without.some((u) => u.includes('isbndb.com')), 'no key, no ISBNdb');
+
+  const calls = [];
+  const d = await lookupIsbn(isbn, { apiKey: null, isbndbKey: 'k', bindingFallback: false, fetch: fakeFetch(routes, calls) });
+  assert.equal(d.source, 'isbndb');
+  assert.equal(d.title, 'Oathbringer');
+  assert.ok(calls.some((u) => u.includes('isbndb.com')), 'the key earns the consultation');
+});
+
+test('a rate-limited ISBNdb surfaces as RateLimitError when nothing else answers', async () => {
+  await assert.rejects(
+    lookupIsbn('9780765326355', {
+      apiKey: null, isbndbKey: 'k', bindingFallback: false,
+      fetch: fakeFetch({ ol: { status: 200, body: {} }, gb: { status: 200, body: {} }, isbndb: { status: 429 } }),
+    }),
+    RateLimitError,
+  );
 });

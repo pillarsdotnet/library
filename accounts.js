@@ -131,18 +131,18 @@ export function removeMember(libraryId, userId, actingUserId) {
 
 const KEY_PURPOSE = 'openlibrary-credentials';
 
-function seal(plain) {
+function seal(plain, purpose = KEY_PURPOSE) {
   const iv = randomBytes(12);
-  const c = createCipheriv('aes-256-gcm', derivedKey(KEY_PURPOSE), iv);
+  const c = createCipheriv('aes-256-gcm', derivedKey(purpose), iv);
   const body = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
   return ['v1', iv, c.getAuthTag(), body].map((p) => (typeof p === 'string' ? p : p.toString('base64url'))).join('.');
 }
 
-function open(sealed) {
+function open(sealed, purpose = KEY_PURPOSE) {
   const [v, iv, tag, body] = String(sealed ?? '').split('.');
   if (v !== 'v1' || !iv || !tag || !body) return null;
   try {
-    const d = createDecipheriv('aes-256-gcm', derivedKey(KEY_PURPOSE), Buffer.from(iv, 'base64url'));
+    const d = createDecipheriv('aes-256-gcm', derivedKey(purpose), Buffer.from(iv, 'base64url'));
     d.setAuthTag(Buffer.from(tag, 'base64url'));
     return Buffer.concat([d.update(Buffer.from(body, 'base64url')), d.final()]).toString('utf8');
   } catch {
@@ -177,4 +177,54 @@ export function olStatus(userId) {
   if (!creds) return { active: false };
   const u = db.prepare('SELECT ol_verified_at FROM users WHERE id = ?').get(userId);
   return { active: true, verified_at: u.ol_verified_at, access_hint: `…${creds.access.slice(-4)}` };
+}
+
+// ─── a library's lookup API keys ───────────────────────────────────────────────
+// Google Books and ISBNdb keys belong to the LIBRARY — paid for (or rationed)
+// by whoever runs it — and only its founder may see or change them (the routes
+// in server.js are gated with needsFounder). Sealed at rest like the Open
+// Library credentials above, under a purpose of their own. An environment
+// variable (GOOGLE_BOOKS_API_KEY / ISBNDB_API_KEY) acts as the server-wide
+// default for libraries that store none.
+
+const LIB_KEY_PURPOSE = 'library-api-keys';
+const LIB_KEY_COLS = { google_books: 'google_books_key', isbndb: 'isbndb_key' };
+const LIB_KEY_ENV = { google_books: 'GOOGLE_BOOKS_API_KEY', isbndb: 'ISBNDB_API_KEY' };
+
+// Store whichever keys the body names: a string seals it, an empty string
+// clears it, an absent field leaves it alone.
+export function setLibraryKeys(libraryId, body) {
+  for (const [name, col] of Object.entries(LIB_KEY_COLS)) {
+    if (body[name] === undefined) continue;
+    const v = String(body[name]).trim();
+    db.prepare(`UPDATE libraries SET ${col} = ? WHERE id = ?`)
+      .run(v ? seal(v, LIB_KEY_PURPOSE) : null, libraryId);
+  }
+}
+
+// The usable keys for a lookup: the library's own, or the server default.
+export function libraryKeys(libraryId) {
+  const row = db.prepare('SELECT google_books_key, isbndb_key FROM libraries WHERE id = ?').get(libraryId) ?? {};
+  const keys = {};
+  for (const [name, col] of Object.entries(LIB_KEY_COLS)) {
+    keys[name] = open(row[col], LIB_KEY_PURPOSE) || process.env[LIB_KEY_ENV[name]] || null;
+  }
+  return keys;
+}
+
+// What the founder's screen may show: whether each key is set, where it came
+// from, and only enough of it to tell two keys apart.
+export function libraryKeyStatus(libraryId) {
+  const row = db.prepare('SELECT google_books_key, isbndb_key FROM libraries WHERE id = ?').get(libraryId) ?? {};
+  const status = {};
+  for (const [name, col] of Object.entries(LIB_KEY_COLS)) {
+    const own = open(row[col], LIB_KEY_PURPOSE);
+    const env = process.env[LIB_KEY_ENV[name]];
+    status[name] = own
+      ? { active: true, from_env: false, hint: `…${own.slice(-4)}` }
+      : env
+        ? { active: true, from_env: true, hint: `…${env.slice(-4)}` }
+        : { active: false, from_env: false };
+  }
+  return status;
 }

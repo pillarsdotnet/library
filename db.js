@@ -856,6 +856,12 @@ function legacyAllowlist() {
   // new address.
   db.exec('DROP TABLE IF EXISTS wishlist_tokens');
 
+  // Lookup API keys belong to the library, sealed at rest (see accounts.js);
+  // the founder alone may see or change them.
+  for (const col of ['google_books_key', 'isbndb_key']) {
+    if (!colsOf('libraries').includes(col)) db.exec(`ALTER TABLE libraries ADD COLUMN ${col} TEXT`);
+  }
+
   db.exec(`
     -- Identity and uniqueness are per library: two libraries may each own the
     -- same ISBN, or each have a genre called Fantasy.

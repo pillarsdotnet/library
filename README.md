@@ -4,8 +4,8 @@ A self-hosted web app to catalogue the books in your private library, or in
 several: one server holds any number of libraries, each with its own books,
 shelves, genres, series and members. Works from
 any phone or desktop browser (Android + iPhone), scans ISBN barcodes with the
-camera, auto-fills metadata from Open Library / Google Books / Library of
-Congress / Barnes & Noble, tracks where each
+camera, auto-fills metadata from Open Library / `ISBNdb` / Google Books /
+Library of Congress / Barnes & Noble, tracks where each
 book physically lives, and calculates how many books fit on each shelf.
 
 No native app required — barcode scanning runs client-side in the browser
@@ -16,12 +16,11 @@ both iOS Safari and Android Chrome.
 
 - **ISBN scan & auto-fill** — point your camera at the barcode; title, author,
   publisher, page count, cover image, and (when available) physical dimensions
-  are pulled from **Open Library**, then **Google Books**, then the
-  **Library of Congress**, then **Barnes & Noble**, each consulted only for
-  the blanks the ones before it left (Barnes & Noble has no API, so its public
-  product page is scraped, and only as the last resort — it is also the
-  fallback that can supply the binding, which neither Google Books nor the
-  catalog carries).
+  are pulled from **Open Library** first and then the fallbacks, fastest
+  first — **`ISBNdb`** (for a library with a key), **Google Books**, the
+  **Library of Congress**, **Barnes & Noble** — each consulted only for the
+  blanks the ones before it left. See
+  [ISBN lookup sources](#isbn-lookup-sources--the-google-books-quota).
 - **Physical description** — hardback/paperback/e-book/audiobook, dust-jacket
   present/missing/N/A, and book dimensions (height × width × spine thickness).
 - **Genre / subgenre** with autocomplete from what you've already entered.
@@ -488,20 +487,32 @@ putting it back on starts a fresh wish that can be bought again.
 
 ### ISBN lookup sources & the Google Books quota
 
-Lookups draw on four sources, **in order, stopping as soon as the record is
-complete**:
+Lookups draw on five sources. **Open Library is always first** — it is the
+source this app contributes back to — and the fallbacks run fastest first
+(measured over a sample of books already in the library with
+[`bench/lookup-sources.mjs`](bench/lookup-sources.mjs)),
+each consulted **only if a field it could supply is still blank**, stopping as
+soon as the record is complete:
 
 1. **Open Library** — always consulted first.
-2. **Google Books** — only if a field it could supply is still blank (title,
-   author, publisher, date, page count, cover, dimensions; it has no binding).
-3. **Library of Congress** — only if a field it could supply is still blank
-   (title, author, publisher, date, page count, spine height). The catalog's
-   SRU gateway is free and keyless and reaches plenty of books the commercial
-   sources miss, but it carries no cover, no binding, and only the one
-   dimension MARC records.
-4. **Barnes & Noble** — only if a field it could supply is still blank (cover
-   and binding included, but no dimensions). This is a page scrape, so it runs
-   last and only when it might actually help.
+2. **`ISBNdb`** — only for a library whose founder has stored a key (see
+   below): keyed and metered, but the fastest fallback measured and the one
+   with the deepest coverage, dimensions and binding included.
+3. **Google Books** — title, author, publisher, date, page count, cover,
+   dimensions; it has no binding.
+4. **Library of Congress** — title, author, publisher, date, page count, spine
+   height. The catalog's SRU gateway is free and keyless and reaches plenty of
+   books the commercial sources miss, but it carries no cover, no binding, and
+   only the one dimension MARC records.
+5. **Barnes & Noble** — cover and binding included, but no dimensions. This is
+   a page scrape, so it runs last and only when it might actually help.
+
+**API keys belong to the library.** The Google Books and `ISBNdb` keys are
+stored per library — sealed at rest like every stored credential — and the
+Users tab shows a **Lookup keys** form to the library's founder alone; even
+the founder is shown only a hint of a stored key, never the key back. A
+server-wide environment variable (`GOOGLE_BOOKS_API_KEY`, `ISBNDB_API_KEY`)
+serves as the default for libraries that store none.
 
 Each source fills only the blanks the previous ones left, so a book Open Library
 describes completely costs a single request. Series information comes from Open
@@ -912,9 +923,11 @@ All endpoints are under `/api`:
 - `POST /series/:id/genres` — body `{ genre_ids: [...] }`: adds those genres to
   every book in the series (additive; nothing is removed). Backs the two
   copy-across-the-series prompts in the book dialog.
-- `GET /lookup/:isbn` — merged Open Library + Google Books + Library of
-  Congress + Barnes & Noble metadata, each later source filling only the
-  blanks the earlier ones left.
+- `GET /lookup/:isbn` — merged Open Library + `ISBNdb` + Google Books +
+  Library of Congress + Barnes & Noble metadata, each later source filling
+  only the blanks the earlier ones left.
+- `GET/PUT /library/keys` — the library's own Google Books and `ISBNdb` keys
+  (founder only; answers carry hints, never the keys).
 - `GET /meta` — distinct rooms, bookcases, genres for autocomplete + counts.
 
 ## Notes

@@ -143,6 +143,8 @@ test('normalizeFormat maps the bindings sources actually publish', () => {
     ['Library Binding', 'hardback'],
     ['Paperback', 'paperback'], ['https://schema.org/Paperback', 'paperback'],
     ['Mass Market Paperback', 'paperback'], ['Trade pbk.', 'paperback'],
+    ['Staple Bound', 'stapled'], ['Saddle Stitch', 'stapled'],
+    ['Comic', 'stapled'], ['Pamphlet', 'stapled'], ['Magazine', 'stapled'],
     ['Kindle Edition', 'ebook'], ['Audio CD', 'audiobook'],
   ]) assert.equal(normalizeFormat(raw), want, `${raw} -> ${want}`);
   // Never guess: an unknown or missing binding stays empty.

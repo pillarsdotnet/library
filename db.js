@@ -140,7 +140,7 @@ db.exec(`
 
     -- Physical facts of the edition. Fixed by the ISBN: every copy of one ISBN
     -- is the same format and the same size.
-    format          TEXT DEFAULT 'paperback',   -- hardback | paperback | ebook | audiobook | other
+    format          TEXT DEFAULT 'paperback',   -- hardback | paperback | stapled | ebook | audiobook | other
     height_mm       INTEGER,           -- upright height
     width_mm        INTEGER,           -- cover width (depth into the shelf)
     thickness_mm    INTEGER,           -- spine thickness (run along the shelf)

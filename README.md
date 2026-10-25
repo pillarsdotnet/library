@@ -21,7 +21,8 @@ both iOS Safari and Android Chrome.
   **Library of Congress**, **Barnes & Noble** — each consulted only for the
   blanks the ones before it left. See
   [ISBN lookup sources](#isbn-lookup-sources--the-google-books-quota).
-- **Physical description** — hardback/paperback/e-book/audiobook, dust-jacket
+- **Physical description** — hardback/paperback/stapled (comic books and cheap
+  magazines)/e-book/audiobook, dust-jacket
   present/missing/N/A, and book dimensions (height × width × spine thickness).
 - **Genre / subgenre** with autocomplete from what you've already entered.
   Genres follow a series both ways, each time with a prompt first: leaving the
@@ -80,7 +81,8 @@ both iOS Safari and Android Chrome.
   the primary author's surname then given and middle names (any suffix and the
   co-authors tie-break), then series title (a standalone
   book files under its own title), then position in the series, then title with
-  the leading article skipped, then binding (`ebook`, `hardback`, `paperback`).
+  the leading article skipped, then binding (`ebook`, `hardback`, `paperback`,
+  `stapled`).
   Filtering to one series switches to reading order, and the borrowed-books
   filter to due date, as above.
 - **Give back to Open Library** — measurements, binding, page count and cover

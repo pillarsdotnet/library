@@ -14,7 +14,7 @@ const api = (path, opts) => fetch('api' + path, opts).then(async (r) => {
 });
 
 const STATUS_LABELS = { tbr: 'To be read', reading: 'Reading', read: 'Read', loaned: 'Loaned out', wishlist: 'Wishlist' };
-const FORMAT_LABELS = { paperback: 'Paperback', hardback: 'Hardback', ebook: 'E-book', audiobook: 'Audiobook', other: 'Other' };
+const FORMAT_LABELS = { paperback: 'Paperback', hardback: 'Hardback', stapled: 'Stapled', ebook: 'E-book', audiobook: 'Audiobook', other: 'Other' };
 const SOURCE_LABELS = { openlibrary: 'Open Library', googlebooks: 'Google Books', loc: 'Library of Congress', barnesnoble: 'Barnes & Noble', bookofthemonth: 'Book of the Month', epub: 'EPUB file', kindle: 'Kindle', manual: 'Manual' };
 
 // --- Bookcase visual view ---
@@ -43,6 +43,8 @@ const MIN_SPINE_PX = Math.ceil(MIN_SPINE_FONT * 0.95 + 2 * INK_MARGIN);
 const FALLBACK_DIMS = {
   hardback: { height_mm: 236, width_mm: 160, thickness_mm: 31 },
   softcover: { height_mm: 213, width_mm: 138, thickness_mm: 23 },
+  // A comic book or cheap magazine: tall, wide, and nearly flat on the shelf.
+  stapled: { height_mm: 260, width_mm: 168, thickness_mm: 3 },
 };
 
 // --- Units. Everything is stored in mm; the toggle only affects display/input. ---
@@ -397,7 +399,7 @@ function viewShelfBooks(shelfId) {
 //
 // Everything unmeasured is presumed: shelves share their column's width and
 // their row's height; an unmeasured book is the average of the library's books
-// of its type (hardcover vs softcover), or failing that FALLBACK_DIMS; a shelf
+// of its type (hardcover vs stapled vs softcover), or failing that FALLBACK_DIMS; a shelf
 // is at least big enough to contain its books.
 // ---------------------------------------------------------------------------
 
@@ -410,7 +412,7 @@ function setVizPref(key, visual) {
   try { localStorage.setItem('libVizPrefs', JSON.stringify(vizPrefs)); } catch { /* per-viewer nicety only */ }
 }
 
-const dimType = (format) => (format === 'hardback' ? 'hardback' : 'softcover');
+const dimType = (format) => (['hardback', 'stapled'].includes(format) ? format : 'softcover');
 function effectiveDims(b) {
   const type = dimType(b.format);
   const avg = META.avg_dims[type] || {};

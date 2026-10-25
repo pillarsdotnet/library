@@ -70,6 +70,8 @@ export function normalizeFormat(value) {
   if (/audio|cd|cassette/.test(s)) return 'audiobook';
   if (/ebook|e-book|kindle|epub|digital/.test(s)) return 'ebook';
   if (/hardcover|hardback|hardbound|casebound|library binding/.test(s)) return 'hardback';
+  // Saddle-stitched things: comic books and cheap magazines.
+  if (/staple|saddle[ -]?stitch|pamphlet|comic|magazine/.test(s)) return 'stapled';
   if (/paperback|softcover|soft cover|paper back|trade pbk|pbk|mass market/.test(s)) return 'paperback';
   return '';
 }

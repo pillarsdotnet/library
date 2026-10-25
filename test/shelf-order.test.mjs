@@ -2,8 +2,8 @@
 // specific order applies: primary author's surname, given name, series title
 // (a standalone book files under its own title), position in the series,
 // title with the leading article skipped, then binding (ebook, hardback,
-// paperback). Through HTTP, because the order is produced by the one query
-// every view reads.
+// paperback, stapled). Through HTTP, because the order is produced by the one
+// query every view reads.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -56,8 +56,9 @@ test('a listing files by author, series, position, title, then binding', async (
     // Le Guin: the particle belongs to the surname, so she files under L
     // after Herbert, not under G.
     { title: 'The Dispossessed', authors: 'Ursula K. Le Guin' },
-    // Asimov: two bindings of one title — ebook before hardback before paperback.
+    // Asimov: four bindings of one title — ebook, hardback, paperback, stapled.
     { title: 'Nightfall', authors: 'Isaac Asimov', format: 'paperback', isbn: '9780553290998' },
+    { title: 'Nightfall', authors: 'Isaac Asimov', format: 'stapled' },
     { title: 'Nightfall', authors: 'Isaac Asimov', format: 'hardback', isbn: '9780385249379' },
     { title: 'Nightfall', authors: 'Isaac Asimov', format: 'ebook', isbn: '9780307792396' },
     // Herbert: a standalone title interleaves with the series by its own name.
@@ -85,8 +86,9 @@ test('a listing files by author, series, position, title, then binding', async (
   const { body } = await api('GET', '/api/books?limit=0');
   assert.deepEqual(body.map((b) => `${b.title} (${b.format})`), [
     'Nightfall (ebook)',                // Asimov before Herbert
-    'Nightfall (hardback)',             // same book: ebook, hardback, paperback
-    'Nightfall (paperback)',
+    'Nightfall (hardback)',             // same book: ebook, hardback,
+    'Nightfall (paperback)',            // paperback, stapled
+    'Nightfall (stapled)',
     'The Ascension Factor (paperback)', // Brian Herbert before Frank
     'Dune (paperback)',                 // "The Dune Chronicles" files before "green brain"…
     'Dune Messiah (paperback)',         // …and inside it, reading order beats the alphabet

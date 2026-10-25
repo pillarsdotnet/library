@@ -542,8 +542,8 @@ router.get('/api/books', (req, res) => {
   // series title where there is one (a standalone book files under its own
   // title, so it interleaves with its author's series), then position in the
   // series (unnumbered entries after the numbered ones), then title with the
-  // leading article skipped, then binding — ebook, hardback, paperback, the
-  // rest. The series subqueries pick one series per edition (alphabetically
+  // leading article skipped, then binding — ebook, hardback, paperback,
+  // stapled, the rest. The series subqueries pick one series per edition (alphabetically
   // first) so a book in two series files in one place, not two.
   const orderBy = library
     ? 'b.due_date IS NULL, b.due_date, sort_title(b.title)'
@@ -557,7 +557,7 @@ router.get('/api/books', (req, res) => {
                  WHERE sb.edition = b.edition_id ORDER BY 1 LIMIT 1), sort_title(b.title)),
        COALESCE((SELECT MIN(sb."order") FROM series_books sb WHERE sb.edition = b.edition_id), 9e99),
        sort_title(b.title),
-       CASE b.format WHEN 'ebook' THEN 0 WHEN 'hardback' THEN 1 WHEN 'paperback' THEN 2 ELSE 3 END`;
+       CASE b.format WHEN 'ebook' THEN 0 WHEN 'hardback' THEN 1 WHEN 'paperback' THEN 2 WHEN 'stapled' THEN 3 ELSE 4 END`;
   const sql = `SELECT ${BOOK_SELECT}, s.room, s.bookcase, s.label AS shelf_label ${from}
     ORDER BY ${orderBy}${page}`;
   res.set('X-Total-Count', String(total));
@@ -1319,12 +1319,13 @@ router.get('/api/meta', (req, res) => {
     db.prepare(`SELECT DISTINCT ${col} AS v FROM ${table}
                 WHERE library_id = ? AND ${col} IS NOT NULL AND ${col} != '' ORDER BY v COLLATE NOCASE`)
       .all(lib).map((r) => r.v);
-  // Average size of a catalogued book, hardbacks apart from everything else, so
-  // the visual shelf view can draw a plausible spine for a book that was never
-  // measured. NULL where nothing of that type has a measurement yet.
+  // Average size of a catalogued book — hardbacks and stapled things (comic
+  // books, magazines) each apart from everything else — so the visual shelf
+  // view can draw a plausible spine for a book that was never measured. NULL
+  // where nothing of that type has a measurement yet.
   const avg_dims = {};
   for (const r of db.prepare(`
-    SELECT CASE WHEN format = 'hardback' THEN 'hardback' ELSE 'softcover' END AS type,
+    SELECT CASE WHEN format IN ('hardback', 'stapled') THEN format ELSE 'softcover' END AS type,
            AVG(CASE WHEN height_mm > 0 THEN height_mm END) AS height_mm,
            AVG(CASE WHEN width_mm > 0 THEN width_mm END) AS width_mm,
            AVG(CASE WHEN thickness_mm > 0 THEN thickness_mm END) AS thickness_mm

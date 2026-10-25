@@ -102,7 +102,7 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({
 }[c]));
 
 const FORMAT_LABELS = {
-  paperback: 'Paperback', hardback: 'Hardback', ebook: 'E-book', audiobook: 'Audiobook', other: '',
+  paperback: 'Paperback', hardback: 'Hardback', stapled: 'Stapled', ebook: 'E-book', audiobook: 'Audiobook', other: '',
 };
 
 function page(title, body) {

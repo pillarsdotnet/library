@@ -5,6 +5,17 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.21.0] — 2026-10-25
+
+### Added
+
+- **A `stapled` format** for comic books and cheap magazines. It appears in
+  the format filter and the edit form, lookups map saddle-stitched bindings
+  ("Staple Bound", "Comic", "Pamphlet", "Magazine") onto it, listings file it
+  after `paperback`, and the visual shelf draws an unmeasured stapled spine
+  from the averages of the library's other stapled things — tall, wide and
+  nearly flat — rather than presuming a paperback's thickness.
+
 ## [5.20.0] — 2026-10-25
 
 ### Changed

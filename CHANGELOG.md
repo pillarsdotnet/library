@@ -5,6 +5,18 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.19.0] — 2026-10-25
+
+### Changed
+
+- **The Users tab now spans every library you manage.** It lists each library
+  you founded — whichever one you are signed in to — and, for the server's
+  owner (user 1), every library the server hosts, each with its own member
+  list, add form, inline edit and remove. The founder and owner are marked in
+  each list. Managing another library's users goes through new
+  `/api/managed/libraries` routes; a library that is not yours answers 404,
+  the same as one that does not exist.
+
 ## [5.18.0] — 2026-10-25
 
 ### Changed

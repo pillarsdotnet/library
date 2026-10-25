@@ -61,6 +61,13 @@ export function librariesOf(userId) {
 // one from before founders were recorded — is the owner's.
 export const founderId = (library) => library.founder_id ?? OWNER_ID;
 
+// The libraries whose users this person manages: every one they founded —
+// and for the server's owner, every library hosted here.
+export function managedLibraries(userId) {
+  const all = db.prepare('SELECT * FROM libraries ORDER BY name COLLATE NOCASE').all();
+  return userId === OWNER_ID ? all : all.filter((l) => founderId(l) === userId);
+}
+
 // A new library, its founding member and its starter genres, all or nothing.
 // A library that exists without a member is one nobody can ever sign in to.
 // OR IGNORE because the owner founding one is already in it, by trigger.

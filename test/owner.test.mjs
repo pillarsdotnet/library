@@ -268,6 +268,45 @@ test("the library's lookup keys are the founder's alone, stored sealed, shown on
   assert.deepEqual(status.isbndb, { active: false, from_env: false });
 });
 
+test('the Users tab spans every library you manage: yours as founder, all of them as owner', async () => {
+  // The stranger founded Café Shelf and nothing else: one library, theirs,
+  // with the founder and the owner marked.
+  const stranger = await signIn('stranger@gmail.com', 'Café Shelf');
+  const mine = await (await fetch(`${BASE}/api/managed/libraries`, { headers: { Cookie: stranger.session } })).json();
+  assert.deepEqual(mine.map((l) => l.name), ['Café Shelf']);
+  assert.deepEqual(mine[0].members.map((m) => [m.email, m.founder, m.owner]),
+    [['owner@gmail.com', false, true], ['stranger@gmail.com', true, false]]);
+
+  // The owner sees every hosted library, signed in to any one of them…
+  const owner = await signIn('owner@gmail.com', 'First');
+  const all = await (await fetch(`${BASE}/api/managed/libraries`, { headers: { Cookie: owner.session } })).json();
+  assert.ok(all.map((l) => l.name).includes('Café Shelf'), 'the owner sees a library they did not found');
+  assert.ok(all.length >= 2);
+
+  // …and manages the users of one they did not found.
+  const cafe = all.find((l) => l.name === 'Café Shelf');
+  const add = await fetch(`${BASE}/api/managed/libraries/${cafe.id}/members`, {
+    method: 'POST', headers: { Cookie: owner.session, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'guest@gmail.com' }),
+  });
+  assert.equal(add.status, 201);
+  const guest = (await add.json()).members.find((m) => m.email === 'guest@gmail.com');
+  assert.ok(guest, 'the owner added a member to another library');
+  const drop = await fetch(`${BASE}/api/managed/libraries/${cafe.id}/members/${guest.id}`, {
+    method: 'DELETE', headers: { Cookie: owner.session },
+  });
+  assert.equal(drop.status, 204);
+
+  // A founder reaching for a library that is not theirs is told it does not
+  // exist — the same answer a stranger to the server would get.
+  const first = all.find((l) => l.name === 'First');
+  const refused = await fetch(`${BASE}/api/managed/libraries/${first.id}/members`, {
+    method: 'POST', headers: { Cookie: stranger.session, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'sneak@gmail.com' }),
+  });
+  assert.equal(refused.status, 404);
+});
+
 test('without STARTTLS the password is never sent, and sign-in still works', async () => {
   offerStartTls = false;
   try {

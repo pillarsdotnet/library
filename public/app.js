@@ -94,7 +94,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     // Visual bookcases scale themselves to the panel's width, which is 0 while
     // the panel is hidden — so they are drawn on arrival, not at load.
     if (which === 'shelves') renderShelves();
-    if (which === 'users') renderMembers().catch((e) => alert(e.message));
+    if (which === 'users') renderManaged().catch((e) => alert(e.message));
     $('#addBtn').textContent = ADD_BY_TAB[which].label;
     $('#addBtn').onclick = ADD_BY_TAB[which].fn;
   });
@@ -2874,9 +2874,9 @@ let ACCOUNT = null;
 async function loadAccount() {
   ACCOUNT = await api('/account');
   $('#contributeBtn').hidden = !(ACCOUNT.openlibrary.from_env || ACCOUNT.openlibrary.active);
-  // The Users tab is the founder's alone: whoever created this library manages
-  // who may sign in to it.
-  $('#usersTab').hidden = !ACCOUNT.founder;
+  // The Users tab belongs to whoever manages any library's sign-in list:
+  // founders see every library they created, the server's owner sees them all.
+  $('#usersTab').hidden = !ACCOUNT.manages;
   return ACCOUNT;
 }
 
@@ -2990,42 +2990,53 @@ $('#libraryKeysForm').addEventListener('submit', async (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// The Users tab: who may sign in to this library. Shown only to the member
-// who created it (see loadAccount); the server refuses everyone else anyway.
+// The Users tab: who may sign in, for every library you manage — each one you
+// founded, all of them for the server's owner (see loadAccount); the server
+// refuses everyone else anyway.
 // ---------------------------------------------------------------------------
-async function renderMembers() {
-  const list = await api('/library/members');
-  $('#memberMsg').hidden = true;
-  $('#memberList').innerHTML = list.map((m) => `
-    <li>
-      <span class="member-email">${esc(m.email)}${m.you ? ' <span class="hint">(you)</span>' : ''}${m.owner ? ' <span class="hint">(owner)</span>' : ''}</span>
-      ${m.you || m.owner ? '' : `<button type="button" data-edit="${m.id}" data-email="${esc(m.email)}">Edit</button>
-      <button type="button" class="danger" data-remove="${m.id}" data-email="${esc(m.email)}">Remove</button>`}
-    </li>`).join('');
+async function renderManaged() {
+  const libs = await api('/managed/libraries');
+  $('#managedLibraries').innerHTML = libs.map((l) => `
+    <section class="managed-library" data-lib="${l.id}" data-display="${esc(l.display)}">
+      <h3>${esc(l.display)}</h3>
+      <ul class="member-list">${l.members.map((m) => `
+        <li>
+          <span class="member-email">${esc(m.email)}${m.you ? ' <span class="hint">(you)</span>' : ''}${m.owner ? ' <span class="hint">(owner)</span>' : ''}${m.founder && !m.owner ? ' <span class="hint">(founder)</span>' : ''}</span>
+          ${m.you || m.owner ? '' : `<button type="button" data-edit="${m.id}" data-email="${esc(m.email)}">Edit</button>
+          <button type="button" class="danger" data-remove="${m.id}" data-email="${esc(m.email)}">Remove</button>`}
+        </li>`).join('')}</ul>
+      <form class="member-add">
+        <input name="email" type="email" required placeholder="name@gmail.com" aria-label="Email address to add to ${esc(l.display)}" />
+        <button type="submit" class="primary">Add</button>
+      </form>
+      <p class="msg err" role="alert" hidden></p>
+    </section>`).join('');
 }
 
-function memberError(err) {
-  const msg = $('#memberMsg');
+// Each library's section reports its own errors, under its own form.
+function memberError(section, err) {
+  const msg = section.querySelector('.msg');
   msg.textContent = err.message;
   msg.hidden = false;
 }
 
-$('#memberForm').addEventListener('submit', async (e) => {
+$('#managedLibraries').addEventListener('submit', async (e) => {
   e.preventDefault();
-  $('#memberMsg').hidden = true;
+  const section = e.target.closest('.managed-library');
   try {
-    await api('/library/members', { method: 'POST', headers: json(), body: JSON.stringify({ email: e.target.email.value }) });
-    e.target.reset();
-    await renderMembers();
+    await api(`/managed/libraries/${section.dataset.lib}/members`,
+      { method: 'POST', headers: json(), body: JSON.stringify({ email: e.target.email.value }) });
+    await renderManaged();
   } catch (err) {
-    memberError(err);
+    memberError(section, err);
   }
 });
 
-$('#memberList').addEventListener('click', async (e) => {
+$('#managedLibraries').addEventListener('click', async (e) => {
   const btn = e.target.closest('button');
-  if (!btn) return;
-  $('#memberMsg').hidden = true;
+  if (!btn || btn.type === 'submit') return;
+  const section = btn.closest('.managed-library');
+  section.querySelector('.msg').hidden = true;
   if (btn.dataset.edit) {
     // Swap the row for an inline form. Nothing is sent until Save, and Cancel
     // just redraws the list.
@@ -3039,25 +3050,26 @@ $('#memberList').addEventListener('click', async (e) => {
   }
   try {
     if ('cancel' in btn.dataset) {
-      await renderMembers();
+      await renderManaged();
     } else if (btn.dataset.save) {
       const input = btn.closest('li').querySelector('input');
       if (!input.reportValidity()) return;
-      await api(`/library/members/${btn.dataset.save}`, { method: 'PUT', headers: json(), body: JSON.stringify({ email: input.value }) });
-      await renderMembers();
+      await api(`/managed/libraries/${section.dataset.lib}/members/${btn.dataset.save}`,
+        { method: 'PUT', headers: json(), body: JSON.stringify({ email: input.value }) });
+      await renderManaged();
     } else if (btn.dataset.remove) {
-      if (!confirm(`Remove ${btn.dataset.email} from ${ACCOUNT.library.display}? They lose access straight away.`)) return;
-      await api(`/library/members/${btn.dataset.remove}`, { method: 'DELETE' });
-      await renderMembers();
+      if (!confirm(`Remove ${btn.dataset.email} from ${section.dataset.display}? They lose access straight away.`)) return;
+      await api(`/managed/libraries/${section.dataset.lib}/members/${btn.dataset.remove}`, { method: 'DELETE' });
+      await renderManaged();
     }
   } catch (err) {
-    memberError(err);
+    memberError(section, err);
   }
 });
 
 // Enter inside the inline edit saves it, rather than doing nothing.
-$('#memberList').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && e.target.matches('input')) {
+$('#managedLibraries').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.matches('input[aria-label="New email address"]')) {
     e.preventDefault();
     e.target.closest('li').querySelector('[data-save]')?.click();
   }

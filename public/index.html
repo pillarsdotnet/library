@@ -108,17 +108,10 @@
   <!-- ============ USERS TAB ============ -->
   <div id="tab-users" class="tab-panel" hidden>
     <section class="toolbar">
-      <p class="hint grow">Who may sign in to this library. Only you, as the one who created it, can see and
-        change this list.</p>
+      <p class="hint grow">Who may sign in, for every library you manage: each one you founded — all of
+        them, if you are the server's owner — whichever library you are signed in to.</p>
     </section>
-    <main class="users-panel">
-      <ul id="memberList" class="member-list"></ul>
-      <form id="memberForm" class="member-add">
-        <input name="email" type="email" required placeholder="name@gmail.com" aria-label="Email address to add" />
-        <button type="submit" class="primary">Add</button>
-      </form>
-      <p id="memberMsg" class="msg err" role="alert" hidden></p>
-    </main>
+    <main id="managedLibraries" class="users-panel"></main>
   </div>
 
   <!-- ============ GENRE DIALOG ============ -->

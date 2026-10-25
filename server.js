@@ -11,6 +11,7 @@ import { mailConfig } from './mail.js';
 import { authConfigured, mountAuth, requireAuth, sessionSecretIsEphemeral, sessionIdleDays } from './auth.js';
 import {
   displayName, members, addMember, editMember, removeMember, librariesOf, founderId, OWNER_ID,
+  managedLibraries, libraryById,
   olCredentials, olStatus, setOlCredentials, clearOlCredentials,
   libraryKeys, libraryKeyStatus, setLibraryKeys,
 } from './accounts.js';
@@ -1561,16 +1562,19 @@ router.get('/api/account', (req, res) => {
     // Sign-in off: the keys, if any, are the environment's, and the wishlist
     // is the anonymous user's (user 0 — see wishlist.js).
     return res.json({
-      email: null, founder: false, library, libraries: [],
+      email: null, founder: false, manages: 0, library, libraries: [],
       wishlist_path: wishlistPath(req.library.name, null),
       openlibrary: { active: !!envCredentials(), from_env: true },
     });
   }
   res.json({
     email: req.user.email,
-    // Whether this is the member who created the library — the one the Users
-    // tab is shown to.
+    // Whether this is the member who created the library — whose lookup keys
+    // are theirs to manage.
     founder: req.user.id === founderId(req.library),
+    // How many libraries' users they manage — every one they founded, all of
+    // them for the server's owner. Nonzero shows the Users tab.
+    manages: managedLibraries(req.user.id).length,
     library,
     libraries: librariesOf(req.user.id).map((l) => ({ id: l.id, name: l.name })),
     // The shareable address of this person's wishlist in THIS library (see
@@ -1632,6 +1636,51 @@ router.put('/api/library/members/:userId', needsSignIn, needsFounder, (req, res)
 
 router.delete('/api/library/members/:userId', needsSignIn, needsFounder, (req, res) => {
   const refusal = removeMember(req.library.id, Number(req.params.userId), req.user.id);
+  if (refusal) return res.status(409).json({ error: refusal });
+  res.status(204).end();
+});
+
+// The Users tab's view: every library whose users are yours to manage — each
+// one you founded, and all of them for the server's owner — whichever library
+// the session was opened for. A library that is not yours answers 404, the
+// same as one that does not exist.
+const managedLibrary = (req, res, next) => {
+  const library = libraryById(Number(req.params.libId));
+  if (!library || !(req.user.id === OWNER_ID || req.user.id === founderId(library))) {
+    return res.status(404).json({ error: 'No such library of yours.' });
+  }
+  req.managed = library;
+  next();
+};
+
+const managedView = (req, library) => ({
+  id: library.id, name: library.name, display: displayName(library.name),
+  members: members(library.id).map((m) => ({
+    ...m, you: m.id === req.user.id, founder: m.id === founderId(library),
+  })),
+});
+
+router.get('/api/managed/libraries', needsSignIn, (req, res) => {
+  res.json(managedLibraries(req.user.id).map((l) => managedView(req, l)));
+});
+
+router.post('/api/managed/libraries/:libId/members', needsSignIn, managedLibrary, (req, res) => {
+  const email = String(req.body?.email ?? '').trim().toLowerCase();
+  if (!EMAIL.test(email) || email.length > 254) return res.status(400).json({ error: 'That is not an email address.' });
+  addMember(req.managed.id, email, req.user.id);
+  res.status(201).json(managedView(req, req.managed));
+});
+
+router.put('/api/managed/libraries/:libId/members/:userId', needsSignIn, managedLibrary, (req, res) => {
+  const email = String(req.body?.email ?? '').trim().toLowerCase();
+  if (!EMAIL.test(email) || email.length > 254) return res.status(400).json({ error: 'That is not an email address.' });
+  const refusal = editMember(req.managed.id, Number(req.params.userId), email, req.user.id);
+  if (refusal) return res.status(409).json({ error: refusal });
+  res.json(managedView(req, req.managed));
+});
+
+router.delete('/api/managed/libraries/:libId/members/:userId', needsSignIn, managedLibrary, (req, res) => {
+  const refusal = removeMember(req.managed.id, Number(req.params.userId), req.user.id);
   if (refusal) return res.status(409).json({ error: refusal });
   res.status(204).end();
 });

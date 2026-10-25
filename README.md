@@ -202,11 +202,14 @@ Signing in names a library, and the header then says whose it is: a user in the
 - **The form remembers you.** Signing in leaves a year-long `hl_last` cookie with
   your address and library, so the form is filled in next time and Google offers
   the same account first. Signing out keeps it.
-- **Members are managed on the Users tab**, shown to the library's creator
-  alone: list who may sign in, add an address, edit one in place (fixing a typo
-  moves the membership to the corrected address), or remove it. Removing
-  yourself, the owner, or the last member, is refused. Membership is checked on
-  every request, so a removed member is out on their next click.
+- **Members are managed on the Users tab**, shown to anyone who founded a
+  library. It lists **every library you founded** — whichever one you are
+  signed in to — and, for the server's owner (user 1), **every library the
+  server hosts**. For each: who may sign in, with the founder and owner
+  marked; add an address; edit one in place (fixing a typo moves the
+  membership to the corrected address); or remove it. Removing yourself, the
+  owner, or the last member, is refused. Membership is checked on every
+  request, so a removed member is out on their next click.
 - **The owner is in every library.** User 1, the first account the database
   held, is added to each library as it is created, and to every existing one.
   The Members screen marks them **(owner)**.

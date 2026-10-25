@@ -76,6 +76,13 @@ both iOS Safari and Android Chrome.
 - **Search & filter** by text, status, library/overdue, format, genre, series, room,
   bookcase, or shelf (incl. `Unshelved`). Filters compose. While filtering to a
   shelf, **Add book** starts with that shelf chosen.
+- **Filed like a library** — every listing, on a shelf or in a search, orders by
+  the primary author's surname then given and middle names (any suffix and the
+  co-authors tie-break), then series title (a standalone
+  book files under its own title), then position in the series, then title with
+  the leading article skipped, then binding (`ebook`, `hardback`, `paperback`).
+  Filtering to one series switches to reading order, and the borrowed-books
+  filter to due date, as above.
 - **Give back to Open Library** — measurements, binding, page count and cover
   photos from your own copies can fill gaps in Open Library's records, through a
   review queue where you approve each one, sent under your own Open Library keys.

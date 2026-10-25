@@ -5,6 +5,22 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.18.0] — 2026-10-25
+
+### Changed
+
+- **Listings are filed the way a librarian shelves.** Books on a shelf, in a
+  search, or anywhere no more specific order applies now sort by the primary
+  author's surname, then given and middle names (with any generational suffix
+  and the co-authors as tie-breakers), then series title (a standalone book
+  files under its own title, so it interleaves with its author's series), then
+  position in the series, then title with the leading article skipped, then
+  binding — `ebook`, then hardback, then paperback. Surname particles (Le
+  Guin, van Gogh)
+  and generational suffixes file correctly. Filtering to one series still
+  reads in series order, and the borrowed-books filter still sorts by due
+  date.
+
 ## [5.17.0] — 2026-10-24
 
 ### Changed

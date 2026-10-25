@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { sortTitle } from './sorttitle.js';
+import { sortAuthor, sortTitle } from './sorttitle.js';
 import { GENRE_SEED } from './genres-seed.js';
 
 const DB_PATH = process.env.DB_PATH || './data/library.db';
@@ -11,8 +11,10 @@ const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
-// Custom SQL function for alphabetizing titles with a leading article skipped.
+// Custom SQL functions for filing books: titles alphabetized with a leading
+// article skipped, authors by the primary author's surname.
 db.function('sort_title', { deterministic: true }, (t) => sortTitle(t));
+db.function('sort_author', { deterministic: true }, (a) => sortAuthor(a));
 
 // ─── the edition / copy split ───────────────────────────────────────────────────
 // Book data divides in two, and the dividing line is the ISBN:

@@ -526,6 +526,15 @@ router.get('/api/books', (req, res) => {
   // only order that answers it — the same reasoning as the series case that follows.
   // Undated borrowings sort LAST: SQLite orders NULL before any value, which would
   // otherwise bury the genuinely urgent books beneath ones with no deadline at all.
+  //
+  // Every other listing — a shelf, a search, the whole library — files the way
+  // a librarian shelves: primary author's surname then given name, then the
+  // series title where there is one (a standalone book files under its own
+  // title, so it interleaves with its author's series), then position in the
+  // series (unnumbered entries after the numbered ones), then title with the
+  // leading article skipped, then binding — ebook, hardback, paperback, the
+  // rest. The series subqueries pick one series per edition (alphabetically
+  // first) so a book in two series files in one place, not two.
   const orderBy = library
     ? 'b.due_date IS NULL, b.due_date, sort_title(b.title)'
     : (series_id && series_id !== 'none')
@@ -533,7 +542,12 @@ router.get('/api/books', (req, res) => {
        (SELECT MAX(sb."order") FROM series_books sb WHERE sb.edition = b.edition_id AND sb.series = @series_id),
        s.room IS NULL, s.room COLLATE NOCASE, s.bookcase COLLATE NOCASE, s.label COLLATE NOCASE,
        sort_title(b.title)`
-    : 'sort_title(b.title)';
+    : `sort_author(b.authors),
+       COALESCE((SELECT sort_title(sr.title) FROM series_books sb JOIN series sr ON sr.id = sb.series
+                 WHERE sb.edition = b.edition_id ORDER BY 1 LIMIT 1), sort_title(b.title)),
+       COALESCE((SELECT MIN(sb."order") FROM series_books sb WHERE sb.edition = b.edition_id), 9e99),
+       sort_title(b.title),
+       CASE b.format WHEN 'ebook' THEN 0 WHEN 'hardback' THEN 1 WHEN 'paperback' THEN 2 ELSE 3 END`;
   const sql = `SELECT ${BOOK_SELECT}, s.room, s.bookcase, s.label AS shelf_label ${from}
     ORDER BY ${orderBy}${page}`;
   res.set('X-Total-Count', String(total));

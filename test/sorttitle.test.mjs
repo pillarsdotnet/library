@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sortTitle } from '../sorttitle.js';
+import { sortAuthor, sortTitle } from '../sorttitle.js';
 
 test('strips a leading article (A / An / The)', () => {
   assert.equal(sortTitle('The Winter of the Witch'), 'winter of the witch');
@@ -33,4 +33,34 @@ test('sorts a list the way a reader expects', () => {
   const titles = ['The Winter of the Witch', 'Belladonna', 'A Study in Scarlet', 'James', 'The Girl in the Tower'];
   const sorted = [...titles].sort((a, b) => sortTitle(a).localeCompare(sortTitle(b)));
   assert.deepEqual(sorted, ['Belladonna', 'The Girl in the Tower', 'James', 'A Study in Scarlet', 'The Winter of the Witch']);
+});
+
+test('files an author surname first, given name after', () => {
+  assert.equal(sortAuthor('Frank Herbert'), 'herbert frank');
+  assert.equal(sortAuthor('Kevin J. Anderson'), 'anderson kevin j');
+  assert.equal(sortAuthor('Homer'), 'homer');
+});
+
+test('the primary (first listed) author files the book; the rest tie-break', () => {
+  assert.equal(sortAuthor('Frank Herbert, Kevin J. Anderson'), 'herbert frank kevin j anderson');
+  assert.equal(sortAuthor('Terry Pratchett; Neil Gaiman'), 'pratchett terry neil gaiman');
+  // Herbert alone, then Herbert with a co-author: the solo books file first.
+  assert.ok(sortAuthor('Frank Herbert') < sortAuthor('Frank Herbert, Kevin J. Anderson'));
+});
+
+test('surname particles stay with the surname', () => {
+  assert.equal(sortAuthor('Ursula K. Le Guin'), 'le guin ursula k');
+  assert.equal(sortAuthor('Vincent van Gogh'), 'van gogh vincent');
+  // …but a two-word name keeps its given name even when it looks like one.
+  assert.equal(sortAuthor('Di Morrissey'), 'morrissey di');
+});
+
+test('generational suffixes do not change where a name files, only tie-break', () => {
+  assert.equal(sortAuthor('Martin Luther King Jr.'), 'king martin luther jr');
+  assert.equal(sortAuthor('Davis Grubb III'), 'grubb davis iii');
+});
+
+test('an empty or missing author files first, quietly', () => {
+  assert.equal(sortAuthor(''), '');
+  assert.equal(sortAuthor(null), '');
 });

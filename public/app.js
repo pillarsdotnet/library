@@ -94,10 +94,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     // Visual bookcases scale themselves to the panel's width, which is 0 while
     // the panel is hidden — so they are drawn on arrival, not at load.
     if (which === 'shelves') renderShelves();
-    if (which === 'users') {
-      renderMembers().catch((e) => alert(e.message));
-      renderLibraryKeys().catch((e) => alert(e.message));
-    }
+    if (which === 'users') renderMembers().catch((e) => alert(e.message));
     $('#addBtn').textContent = ADD_BY_TAB[which].label;
     $('#addBtn').onclick = ADD_BY_TAB[which].fn;
   });
@@ -2891,6 +2888,8 @@ function renderAccount() {
   $('#accountSignedIn').hidden = !signedIn;
   $('#accountSignedOff').hidden = signedIn;
   $('#olSection').hidden = !signedIn;
+  // The library's lookup keys are the founder's alone to see or change.
+  $('#libraryKeysSection').hidden = !ACCOUNT.founder;
   if (!signedIn) return;
 
   const ol = ACCOUNT.openlibrary;
@@ -2906,6 +2905,7 @@ function renderAccount() {
 async function openAccount() {
   await loadAccount();
   renderAccount();
+  if (ACCOUNT.founder) await renderLibraryKeys();
   accountDialog.showModal();
 }
 
@@ -2945,29 +2945,9 @@ $('#olRemoveBtn').addEventListener('click', async () => {
   await loadAccount();
 });
 
-// ---------------------------------------------------------------------------
-// The Users tab: who may sign in to this library. Shown only to the member
-// who created it (see loadAccount); the server refuses everyone else anyway.
-// ---------------------------------------------------------------------------
-async function renderMembers() {
-  const list = await api('/library/members');
-  $('#memberMsg').hidden = true;
-  $('#memberList').innerHTML = list.map((m) => `
-    <li>
-      <span class="member-email">${esc(m.email)}${m.you ? ' <span class="hint">(you)</span>' : ''}${m.owner ? ' <span class="hint">(owner)</span>' : ''}</span>
-      ${m.you || m.owner ? '' : `<button type="button" data-edit="${m.id}" data-email="${esc(m.email)}">Edit</button>
-      <button type="button" class="danger" data-remove="${m.id}" data-email="${esc(m.email)}">Remove</button>`}
-    </li>`).join('');
-}
-
-function memberError(err) {
-  const msg = $('#memberMsg');
-  msg.textContent = err.message;
-  msg.hidden = false;
-}
-
-// The library's lookup API keys. The server returns hints, never the keys, so
-// the inputs stay empty and the hint under each says what is already stored.
+// The library's lookup API keys, a founder-only section of the Account dialog.
+// The server returns hints, never the keys, so the inputs stay empty and the
+// hint under each says what is already stored.
 function showKeyHints(status) {
   for (const [name, s] of Object.entries(status)) {
     const hint = $(`[data-key-hint="${name}"]`);
@@ -3008,6 +2988,27 @@ $('#libraryKeysForm').addEventListener('submit', async (e) => {
     msg.hidden = false;
   }
 });
+
+// ---------------------------------------------------------------------------
+// The Users tab: who may sign in to this library. Shown only to the member
+// who created it (see loadAccount); the server refuses everyone else anyway.
+// ---------------------------------------------------------------------------
+async function renderMembers() {
+  const list = await api('/library/members');
+  $('#memberMsg').hidden = true;
+  $('#memberList').innerHTML = list.map((m) => `
+    <li>
+      <span class="member-email">${esc(m.email)}${m.you ? ' <span class="hint">(you)</span>' : ''}${m.owner ? ' <span class="hint">(owner)</span>' : ''}</span>
+      ${m.you || m.owner ? '' : `<button type="button" data-edit="${m.id}" data-email="${esc(m.email)}">Edit</button>
+      <button type="button" class="danger" data-remove="${m.id}" data-email="${esc(m.email)}">Remove</button>`}
+    </li>`).join('');
+}
+
+function memberError(err) {
+  const msg = $('#memberMsg');
+  msg.textContent = err.message;
+  msg.hidden = false;
+}
 
 $('#memberForm').addEventListener('submit', async (e) => {
   e.preventDefault();

@@ -5,6 +5,14 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.17.0] — 2026-10-24
+
+### Changed
+
+- **The Lookup keys form moved from the Users tab to the Account dialog.** It
+  is still the founder's alone — everyone else sees no such section — and the
+  Users tab is back to being only about who may sign in.
+
 ## [5.16.0] — 2026-10-24
 
 ### Removed

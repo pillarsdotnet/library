@@ -279,8 +279,8 @@ soon as the record is complete:
 
 **API keys belong to the library.** The Google Books and `ISBNdb` keys are
 stored per library — sealed at rest like every stored credential — and the
-Users tab shows a **Lookup keys** form to the library's founder alone; even
-the founder is shown only a hint of a stored key, never the key back. A
+Account dialog shows a **Lookup keys** form to the library's founder alone;
+even the founder is shown only a hint of a stored key, never the key back. A
 server-wide environment variable (`GOOGLE_BOOKS_API_KEY`, `ISBNDB_API_KEY`)
 serves as the default for libraries that store none.
 

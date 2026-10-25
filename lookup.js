@@ -1,6 +1,8 @@
 // ISBN metadata lookup: merges Open Library, Google Books, the Library of
 // Congress and Barnes & Noble, including physical size. fetch and the Google
-// Books API key are injectable so this is unit-testable.
+// Books API key are injectable so this is unit-testable. A Library of
+// Congress Control Number works in place of an ISBN (see lookupIsbn).
+import { canonicalIsbn, canonicalLccn } from './isbn.js';
 
 // Thrown when a source refuses due to rate limiting / quota, so the caller can
 // tell "temporarily throttled" apart from "book genuinely not found".
@@ -279,10 +281,10 @@ export function parseLocMods(xml) {
 
 // Best-effort, like the B&N scrape: a public gateway's bad day must not break
 // the lookup, so any failure is just "nothing from this source".
-export async function fetchLoc(isbn, doFetch) {
+export async function fetchLoc(isbn, doFetch, kind = 'isbn') {
   try {
     const r = await doFetch(
-      `${LOC_BASE}/lcdb?version=1.1&operation=searchRetrieve&query=bath.isbn=${isbn}&maximumRecords=1&recordSchema=mods`,
+      `${LOC_BASE}/lcdb?version=1.1&operation=searchRetrieve&query=bath.${kind}=${isbn}&maximumRecords=1&recordSchema=mods`,
       { signal: AbortSignal.timeout(8000) },
     );
     if (!r.ok) return null;
@@ -332,17 +334,27 @@ function seriesFromWork(work) {
   return tag ? parseSeries(String(tag).replace(/^series:/i, '')) : null;
 }
 
-export async function fetchOpenLibrary(isbn, doFetch) {
+export async function fetchOpenLibrary(isbn, doFetch, kind = 'isbn') {
   // The bulk endpoint omits the binding, so ask the edition record for it too.
-  // Runs alongside, so it costs no extra wall time, and is optional.
-  const [r, edition] = await Promise.all([
-    doFetch(`${OL_BASE}/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`),
-    doFetch(`${OL_BASE}/isbn/${isbn}.json`).then((x) => (x.ok ? x.json() : null)).catch(() => null),
+  // Runs alongside, so it costs no extra wall time, and is optional. An LCCN
+  // has no direct edition endpoint; its edition is fetched by key afterwards.
+  const bibkey = `${kind.toUpperCase()}:${isbn}`;
+  const [r, editionDirect] = await Promise.all([
+    doFetch(`${OL_BASE}/api/books?bibkeys=${bibkey}&format=json&jscmd=data`),
+    kind === 'isbn'
+      ? doFetch(`${OL_BASE}/isbn/${isbn}.json`).then((x) => (x.ok ? x.json() : null)).catch(() => null)
+      : Promise.resolve(null),
   ]);
   if (r.status === 429) throw new RateLimitError('Open Library rate-limited');
   if (!r.ok) return null;
-  const data = (await r.json())[`ISBN:${isbn}`];
+  const data = (await r.json())[bibkey];
   if (!data) return null;
+  let edition = editionDirect;
+  if (!edition && /^\/books\/OL\d+M$/.test(data.key || '')) {
+    edition = await doFetch(`${OL_BASE}${data.key}.json`)
+      .then((x) => (x.ok ? x.json() : null))
+      .catch(() => null);
+  }
 
   // e.g. "20.3 x 13.3 x 2.5 centimeters"
   let h = null, w = null, t = null;
@@ -380,8 +392,8 @@ export async function fetchOpenLibrary(isbn, doFetch) {
   };
 }
 
-export async function fetchGoogleBooks(isbn, doFetch, apiKey) {
-  let url = `${GB_BASE}/books/v1/volumes?q=isbn:${isbn}&country=US`;
+export async function fetchGoogleBooks(isbn, doFetch, apiKey, kind = 'isbn') {
+  let url = `${GB_BASE}/books/v1/volumes?q=${kind}:${isbn}&country=US`;
   if (apiKey) url += `&key=${apiKey}`;
   const r = await doFetch(url);
   // Keyless Google Books has a tiny shared daily quota; surface that distinctly.
@@ -435,6 +447,12 @@ const BN_FIELDS = ['title', 'authors', 'publisher', 'published_date',
 // blank. Each source fills only the blanks the previous ones left. Returns the merged
 // record, null if no source has the book, or throws RateLimitError if a source
 // was throttled and nothing else answered.
+//
+// A normalized LCCN (see canonicalLccn) is accepted in place of an ISBN, for
+// the pre-ISBN books that only the Library of Congress numbered. The chain
+// is then LoC first — it assigned the number, so it is the surest match —
+// then Open Library and Google Books, which both take LCCN queries. ISBNdb
+// and Barnes & Noble answer only to ISBNs and are skipped.
 export async function lookupIsbn(isbn, opts = {}) {
   const baseFetch = opts.fetch || globalThis.fetch;
   const apiKey = opts.apiKey ?? process.env.GOOGLE_BOOKS_API_KEY;
@@ -459,6 +477,24 @@ export async function lookupIsbn(isbn, opts = {}) {
     }
     if (data) { if (!sourceName) sourceName = name; fillBlanks(result, data); }
   };
+
+  // An LCCN takes its own, shorter chain. Only canonicalIsbn's rejects are
+  // candidates: an LCCN has no check digit, so a ten-digit VALID ISBN wins.
+  if (!canonicalIsbn(isbn) && canonicalLccn(isbn)) {
+    await consult('loc', () => fetchLoc(isbn, baseFetch, 'lccn'));
+    if (!allFilled(result, ISBNDB_FIELDS)) {
+      await consult('openlibrary', () => fetchOpenLibrary(isbn, doFetch, 'lccn'));
+    }
+    if (!allFilled(result, GOOGLE_FIELDS)) {
+      await consult('googlebooks', () => fetchGoogleBooks(isbn, doFetch, apiKey, 'lccn'));
+    }
+    if (!sourceName) {
+      if (throttled) throw new RateLimitError();
+      return null;
+    }
+    result.source = sourceName;
+    return result;
+  }
 
   // 1. Open Library.
   await consult('openlibrary', () => fetchOpenLibrary(isbn, doFetch));

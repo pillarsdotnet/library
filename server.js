@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import db from './db.js';
-import { canonicalIsbn } from './isbn.js';
+import { canonicalIsbn, canonicalLccn } from './isbn.js';
 import { parseDataUrl, writeCover, coverPath, removeCover, mimeForFile } from './covers.js';
 import { lookupIsbn, RateLimitError } from './lookup.js';
 import { mailConfig } from './mail.js';
@@ -1753,7 +1753,13 @@ function serveCached(res, row, state) {
 }
 
 router.get('/api/lookup/:isbn', async (req, res) => {
-  const isbn = req.params.isbn.replace(/[^0-9Xx]/g, '');
+  // A Library of Congress number stands in for an ISBN on pre-ISBN books.
+  // Recognized only when the input is NOT an ISBN: an LCCN has no check
+  // digit, so a valid ISBN always reads as the ISBN it is. Normalizing here
+  // (not just stripping) keeps "68-12345" and "68012345" one cache entry.
+  const raw = req.params.isbn;
+  const lccn = canonicalIsbn(raw) ? null : canonicalLccn(raw);
+  const isbn = lccn ?? raw.replace(/[^0-9Xx]/g, '');
   if (!isbn) return res.status(400).json({ error: 'invalid isbn' });
 
   if (req.query.refresh !== '1') {

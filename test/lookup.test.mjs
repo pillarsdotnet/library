@@ -553,3 +553,40 @@ test('a rate-limited ISBNdb surfaces as RateLimitError when nothing else answers
     RateLimitError,
   );
 });
+
+// ─── LCCN lookups: pre-ISBN books carry a Library of Congress number ─────────
+
+test('an LCCN consults the Library of Congress first, by its own index', async () => {
+  const calls = [];
+  const d = await lookupIsbn('68012345', {
+    apiKey: null,
+    isbndbKey: 'key-that-must-not-be-used',
+    fetch: fakeFetch({
+      ol: { status: 200, body: {} },
+      gb: { status: 200, body: {} },
+      loc: { text: locMods },
+    }, calls),
+  });
+  assert.equal(d.source, 'loc');
+  assert.equal(d.title, 'The catcher in the rye');
+  assert.ok(calls.some((u) => u.includes('bath.lccn=68012345')), 'asked by LCCN, not ISBN');
+  assert.ok(!calls.some((u) => u.includes('isbndb.com')), 'ISBNdb answers only to ISBNs');
+  assert.ok(!calls.some((u) => u.includes('barnesandnoble.com')), 'so does Barnes & Noble');
+});
+
+test('an LCCN falls through to Open Library and Google Books by their LCCN keys', async () => {
+  const lccn = '68012345';
+  const calls = [];
+  const d = await lookupIsbn(lccn, {
+    apiKey: null,
+    fetch: fakeFetch({
+      loc: { status: 404 },
+      ol: { body: { [`LCCN:${lccn}`]: { title: 'Nineteen Sixty-Eight', authors: [{ name: 'Somebody Older' }] } } },
+      gb: { status: 200, body: {} },
+    }, calls),
+  });
+  assert.equal(d.source, 'openlibrary');
+  assert.equal(d.title, 'Nineteen Sixty-Eight');
+  assert.ok(calls.some((u) => u.includes(`bibkeys=LCCN:${lccn}`)), 'Open Library asked by LCCN bibkey');
+  assert.ok(calls.some((u) => u.includes(`q=lccn:${lccn}`)), 'Google Books asked by lccn query');
+});

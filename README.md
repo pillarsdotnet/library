@@ -21,6 +21,12 @@ both iOS Safari and Android Chrome.
   **Library of Congress**, **Barnes & Noble** — each consulted only for the
   blanks the ones before it left. See
   [ISBN lookup sources](#isbn-lookup-sources--the-google-books-quota).
+- **Pre-ISBN books look up by their Library of Congress number** — type an
+  LCCN such as `68-12345` (or its padded form `68012345`) into the same
+  field. Anything that validates as an ISBN is treated as one; an LCCN is
+  consulted at the **Library of Congress** first — it assigned the number —
+  then **Open Library** and **Google Books**, which both answer to LCCN
+  queries.
 - **Physical description** — hardback/paperback/stapled (comic books and cheap
   magazines)/e-book/audiobook, dust-jacket
   present/missing/N/A, and book dimensions (height × width × spine thickness).
@@ -295,6 +301,13 @@ Account dialog shows a **Lookup keys** form to the library's founder alone;
 even the founder is shown only a hint of a stored key, never the key back. A
 server-wide environment variable (`GOOGLE_BOOKS_API_KEY`, `ISBNDB_API_KEY`)
 serves as the default for libraries that store none.
+
+**A Library of Congress Control Number works in the same field** for books
+older than the ISBN (US publishers adopted it around 1970). An LCCN has no
+check digit, so whatever validates as an ISBN is treated as one, and the rest
+is tried as an LCCN — hyphenated (`68-12345`) or normalized (`68012345`).
+The chain is then Library of Congress, Open Library, Google Books; `ISBNdb`
+and Barnes & Noble answer only to an ISBN and are skipped.
 
 Each source fills only the blanks the previous ones left, so a book Open Library
 describes completely costs a single request. Series information comes from Open

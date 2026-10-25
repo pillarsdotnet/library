@@ -5,6 +5,18 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.22.0] — 2026-10-25
+
+### Added
+
+- **A Library of Congress Control Number works in the lookup field**, for
+  books older than the ISBN. An LCCN has no check digit, so anything that
+  validates as an ISBN is still treated as one; the rest is tried as an
+  LCCN, hyphenated (`68-12345`) or normalized (`68012345`), against the
+  Library of Congress first — it assigned the number — then Open Library
+  and Google Books. `ISBNdb` and Barnes & Noble answer only to an ISBN and
+  are skipped.
+
 ## [5.21.1] — 2026-10-25
 
 ### Fixed

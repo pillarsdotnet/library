@@ -3,7 +3,7 @@
 // reduce to the same string.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalIsbn } from '../isbn.js';
+import { canonicalIsbn, canonicalLccn } from '../isbn.js';
 
 test('a valid ISBN-13 passes through unchanged', () => {
   assert.equal(canonicalIsbn('9780441013593'), '9780441013593');
@@ -47,4 +47,33 @@ test('both spellings of one book reduce to the same string', () => {
   ]) {
     assert.equal(canonicalIsbn(ten), canonicalIsbn(thirteen), `${ten} and ${thirteen} must agree`);
   }
+});
+
+// ─── Library of Congress Control Numbers ─────────────────────────────────────
+
+test('an LCCN is normalized the way the Library of Congress normalizes it', () => {
+  // The serial after the hyphen is zero-padded to six digits.
+  assert.equal(canonicalLccn('68-12345'), '68012345');
+  assert.equal(canonicalLccn('75-425165'), '75425165');
+  assert.equal(canonicalLccn('2001-12345'), '2001012345');
+  // Alphabetic prefixes survive, lowercased.
+  assert.equal(canonicalLccn('AGR68-1234'), 'agr68001234');
+  // Blanks are dropped; a revision suffix after a slash is dropped.
+  assert.equal(canonicalLccn(' 75-425165//r75 '), '75425165');
+  // An already-normalized number passes through.
+  assert.equal(canonicalLccn('68012345'), '68012345');
+});
+
+test('an LCCN that is not one yields null', () => {
+  for (const bad of ['', null, undefined, '123', '68-', '68-12x45', '9780441013593', 'abcd68012345']) {
+    assert.equal(canonicalLccn(bad), null, `${bad} should not be an LCCN`);
+  }
+});
+
+test('a ten-digit string can read as both, so the ISBN check must run first', () => {
+  // A VALID ISBN-10 also matches the LCCN shape — it has no way to know.
+  // Callers resolve the ambiguity by asking canonicalIsbn first.
+  const tenDigits = '0441013597';
+  assert.equal(canonicalIsbn(tenDigits), '9780441013593');
+  assert.notEqual(canonicalLccn(tenDigits), null);
 });

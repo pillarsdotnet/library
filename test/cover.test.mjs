@@ -15,12 +15,11 @@ const PORT = 3196;
 const BASE = `http://127.0.0.1:${PORT}/library`;
 const DB_PATH = `/tmp/home-library-cover-${process.pid}.db`;
 // Covers default to a `covers/` directory beside the database, so every test
-// database sitting in /tmp shares /tmp/covers — and a cover file is named after
-// its copy's id, which restarts at 1 in every fresh database. `node --test` runs
-// files in parallel, so this test's book 1 and another file's book 1 were the
-// same path: contribute.test.mjs stores `data:image/jpeg;base64,AAAA`, and this
-// test read those three NUL bytes back instead of its own image. Isolated per
-// file, not just per test, since the collision is between files.
+// database sitting in /tmp would share /tmp/covers — and a cover file is named
+// by its content hash, so identical test payloads in two suites would be one
+// path, with each database's reference counting blind to the other's rows.
+// `node --test` runs files in parallel, so isolation is per file, not just per
+// test, since the collision is between files.
 const COVERS_DIR = DB_PATH.replace(/\.db$/, '-covers');
 let server;
 
@@ -93,6 +92,27 @@ test('saving a book that echoes back the cover reference keeps the image', async
   assert.equal(after.title, 'Echo edited');
   assert.equal(after.cover_url, ref, 'the reference did not overwrite the image');
   assert.match(await (await fetch(`${BASE}/${ref}`)).text(), /fake-jpeg-keep/);
+});
+
+test('the same image on two copies is one file, kept until the last copy goes', async () => {
+  const { readdirSync } = await import('node:fs');
+  const image = dataUrl('shared-print-and-ebook');
+  const print = (await api('/books', send('POST', { title: 'Print Run', cover_url: image }))).body;
+  const ebook = (await api('/books', send('POST', { title: 'Ebook Twin', cover_url: image }))).body;
+
+  const holding = (marker) => readdirSync(COVERS_DIR)
+    .filter((f) => readFileSync(join(COVERS_DIR, f)).includes(marker));
+  assert.equal(holding('shared-print-and-ebook').length, 1, 'two copies, one file');
+
+  // Losing one copy may not take the other's picture with it…
+  await api(`/books/${print.id}`, { method: 'DELETE' });
+  assert.equal(holding('shared-print-and-ebook').length, 1, 'still referenced, still there');
+  const ref = (await api(`/books/${ebook.id}`)).body.cover_url;
+  assert.match(await (await fetch(`${BASE}/${ref}`)).text(), /shared-print-and-ebook/);
+
+  // …and losing the last reference removes the file.
+  await api(`/books/${ebook.id}`, { method: 'DELETE' });
+  assert.equal(holding('shared-print-and-ebook').length, 0, 'last reference gone, file gone');
 });
 
 // Served assets carry the app version, so a release is a new URL. Without it a

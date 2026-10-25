@@ -384,8 +384,15 @@ function resolveEdition(editionData, isbnRaw, lib) {
   });
 }
 
-// Write a copy's images to disk and point its row at them. Called once the copy
-// has an id, because that id is the filename.
+// Cover files are named by their content (see covers.js), so the same photo on
+// two copies — an ebook reusing the printed cover, say — is one file with two
+// rows pointing at it. Deleting is therefore a shared decision: a file goes
+// only when no row references it any more, checked AFTER the referencing row
+// has been repointed or removed.
+const coverInUse = db.prepare('SELECT 1 FROM copies WHERE cover_file = ? OR cover_source_file = ? LIMIT 1');
+const dropCover = (file) => { if (file && !coverInUse.get(file, file)) removeCover(file); };
+
+// Write a copy's images to disk and point its row at them.
 //
 // The file is written before the row is updated, so the worst an interruption can
 // leave behind is an unreferenced image — which costs disk. The other order would
@@ -396,18 +403,20 @@ function applyImages(copyId, images, lib) {
   if (!cur) return;
   const set = {};
   if (images.cover) {
-    const w = writeCover(String(copyId), images.cover.buf, images.cover.mime, cur?.cover_file);
+    const w = writeCover(images.cover.buf, images.cover.mime);
     if (w) { set.cover_file = w.file; set.cover_token = w.token; }
   }
   if (images.source) {
-    const w = writeCover(`${copyId}-source`, images.source.buf, images.source.mime, cur?.cover_source_file);
+    const w = writeCover(images.source.buf, images.source.mime);
     if (w) { set.cover_source_file = w.file; set.cover_source_token = w.token; }
   } else if (images.clearSource && cur?.cover_source_file) {
-    removeCover(cur.cover_source_file);
     set.cover_source_file = null;
     set.cover_source_token = null;
   }
   if (Object.keys(set).length) update('copies', copyId, set, lib);
+  // Only now may a replaced image go, and only if this was its last reference.
+  if ('cover_file' in set && cur.cover_file !== set.cover_file) dropCover(cur.cover_file);
+  if ('cover_source_file' in set && cur.cover_source_file !== set.cover_source_file) dropCover(cur.cover_source_file);
 }
 
 // Replace an edition's genres with the given list of genre ids (ignores unknown
@@ -693,8 +702,9 @@ router.delete('/api/books/:id', (req, res) => {
   const files = db.prepare('SELECT cover_file, cover_source_file FROM copies WHERE id = ? AND library_id = ?').get(req.params.id, lib);
   const info = db.prepare('DELETE FROM copies WHERE id = ? AND library_id = ?').run(req.params.id, lib);
   if (info.changes === 0) return res.status(404).json({ error: 'Not found' });
-  removeCover(files?.cover_file);
-  removeCover(files?.cover_source_file);
+  // Content-addressed, so another copy may share the file; drop checks first.
+  dropCover(files?.cover_file);
+  dropCover(files?.cover_source_file);
   res.status(204).end();
 });
 
@@ -963,8 +973,8 @@ router.post('/api/ol-contributions/:id/approve', async (req, res) => {
     // an unreferenced image on disk rather than a row naming a file that is
     // gone. Same order, and the same reasoning, as applyImages above.
     for (const c of copies) {
-      if (c.cover_file) removeCover(c.cover_file);
-      if (c.cover_source_file) removeCover(c.cover_source_file);
+      dropCover(c.cover_file);
+      dropCover(c.cover_source_file);
     }
     return res.json({ ok: true, adopted: row.value, photographsRemoved: copies.length });
   }

@@ -168,9 +168,9 @@ landfill.
 
 Before a handoff replaces a database, the old one is kept as a timestamped
 **copy** (`.backup`, so it is consistent even against an open database), ten
-generations deep. Covers are _not_ snapshotted: they are named after the copy
-that owns them and are rarely replaced, so a restored database of any recent
-vintage still finds its images. These were once hard links, which is not a snapshot at all — a
+generations deep. Covers are _not_ snapshotted: they are named by the hash of
+their content and never change once written — a new photo is a new file — so a
+restored database of any recent vintage still finds its images. These were once hard links, which is not a snapshot at all — a
 hard link is another name for the same `inode`, and SQLite writes in place, so every
 "generation" tracked the live file and the rotation preserved nothing while
 looking exactly like a working backup rotation.

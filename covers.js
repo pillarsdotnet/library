@@ -6,6 +6,15 @@
 // files now, beside the database, and the database holds only a filename and a
 // token.
 //
+// FILES ARE NAMED BY THEIR CONTENT
+// The filename is the SHA-256 of the image bytes, so the same photo stored
+// twice — an ebook reusing the printed edition's cover, two copies shot with
+// one camera roll — lands in one file, automatically. Nothing ever overwrites
+// a cover file in place: a different image is a different name. The flip side
+// is that deleting is a shared decision — a file may only go when the LAST
+// row referencing it lets go, which is the caller's check to make (see
+// dropCover in server.js).
+//
 // WHAT THE TOKEN IS FOR
 // The URL a client is given must change when the image changes, or a browser
 // holding a cached copy goes on showing the old photo after a new one is saved —
@@ -35,9 +44,13 @@ const MIME_FOR_EXT = Object.fromEntries(Object.entries(EXT_FOR_MIME).map(([m, e]
 
 export const mimeForFile = (file) => MIME_FOR_EXT[String(file).split('.').pop()] || 'application/octet-stream';
 
+// The full content hash names the file; dedup rides on it, so it is not
+// truncated. URL-safe base64 of SHA-256: 43 characters.
+const coverHash = (buf) => createHash('sha256').update(buf).digest('base64url');
+
 // Short, URL-safe, and derived from the bytes. Truncated because this is a cache
 // key, not a security claim: it only has to change when the image does.
-export const coverToken = (buf) => createHash('sha256').update(buf).digest('base64url').slice(0, 12);
+export const coverToken = (buf) => coverHash(buf).slice(0, 12);
 
 /** Split a data: URL into its type and bytes. Returns null for anything else. */
 export function parseDataUrl(s) {
@@ -49,24 +62,29 @@ export function parseDataUrl(s) {
 }
 
 /**
- * Write an image and return { file, token }, or null if the type is not one we
- * serve. `stem` names the copy it belongs to ("125", "125-source").
+ * Store an image under its content hash and return { file, token }, or null if
+ * the type is not one we serve. Identical bytes always land in (and share) one
+ * file, whichever copy they arrive for.
  *
  * Written to a temporary name and renamed into place, so a reader can never see
  * a half-written image: rename within a directory is atomic, a partial write is
- * not. The previous file for this stem is removed only after the new one lands,
- * and only if the extension changed — otherwise the rename has already replaced it.
+ * not. A file already present needs no write at all — its name says its content
+ * is already right. The temporary name is unique per write, so two requests
+ * storing the same image race only at the rename, where either winner leaves
+ * the same bytes.
  */
-export function writeCover(stem, buf, mime, previousFile = null) {
+export function writeCover(buf, mime) {
   const ext = EXT_FOR_MIME[String(mime).toLowerCase()];
   if (!ext) return null;
-  mkdirSync(COVERS_DIR, { recursive: true });
-  const file = `${stem}.${ext}`;
-  const tmp = join(COVERS_DIR, `.${file}.tmp`);
-  writeFileSync(tmp, buf);
-  renameSync(tmp, join(COVERS_DIR, file));
-  if (previousFile && previousFile !== file) removeCover(previousFile);
-  return { file, token: coverToken(buf) };
+  const hash = coverHash(buf);
+  const file = `${hash}.${ext}`;
+  if (!existsSync(join(COVERS_DIR, file))) {
+    mkdirSync(COVERS_DIR, { recursive: true });
+    const tmp = join(COVERS_DIR, `.${hash}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`);
+    writeFileSync(tmp, buf);
+    renameSync(tmp, join(COVERS_DIR, file));
+  }
+  return { file, token: hash.slice(0, 12) };
 }
 
 /** Absolute path of a stored cover, or null if the name is not one of ours. */

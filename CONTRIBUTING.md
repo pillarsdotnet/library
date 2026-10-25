@@ -64,8 +64,12 @@ a book fits if its height ≤ shelf height and its width ≤ shelf depth.
 ### Covers are files
 
 A photographed cover is a **file** in a `covers/` directory beside the database,
-named after the copy it belongs to. The row holds only that filename and
-`cover_token`, a hash of the bytes.
+named by the SHA-256 of its bytes — so the same photo stored for two copies (an
+`ebook` reusing the printed edition's cover, say) is one file, automatically.
+The row holds only that filename and `cover_token`, a short prefix of the same
+hash. Because the file is shared, deleting goes through a reference count: a
+file is removed only when the last row naming it lets go (`dropCover` in
+`server.js`).
 
 **A copy of `library.db` on its own is therefore not a backup.** Every row
 naming a missing file is a broken picture, so the covers directory has to travel

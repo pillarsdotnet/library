@@ -5,6 +5,17 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.20.0] — 2026-10-25
+
+### Changed
+
+- **Cover files are named by the hash of their content.** The same photo
+  stored for two copies — an `ebook` reusing the printed edition's cover, two
+  copies of one book — now lands in a single shared file automatically. A
+  shared file is removed only when the last copy referencing it is deleted or
+  pointed at a new image. Files written under the old per-copy names keep working; they
+  take the new name the next time their image is saved.
+
 ## [5.19.0] — 2026-10-25
 
 ### Changed

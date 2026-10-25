@@ -22,8 +22,8 @@ both iOS Safari and Android Chrome.
   blanks the ones before it left. See
   [ISBN lookup sources](#isbn-lookup-sources--the-google-books-quota).
 - **Pre-ISBN books look up by their Library of Congress number** — type an
-  LCCN such as `68-12345` (or its padded form `68012345`) into the same
-  field. Anything that validates as an ISBN is treated as one; an LCCN is
+  LCCN such as `68-12345` into the same field, with or without its hyphen.
+  Anything that validates as an ISBN is treated as one; an LCCN is
   consulted at the **Library of Congress** first — it assigned the number —
   then **Open Library** and **Google Books**, which both answer to LCCN
   queries.
@@ -305,9 +305,13 @@ serves as the default for libraries that store none.
 **A Library of Congress Control Number works in the same field** for books
 older than the ISBN (US publishers adopted it around 1970). An LCCN has no
 check digit, so whatever validates as an ISBN is treated as one, and the rest
-is tried as an LCCN — hyphenated (`68-12345`) or normalized (`68012345`).
-The chain is then Library of Congress, Open Library, Google Books; `ISBNdb`
-and Barnes & Noble answer only to an ISBN and are skipped.
+is tried as an LCCN. The hyphen is optional — the year is always the first
+two digits (or four, beginning `20`), so `6812345` reads as `68-12345`; the
+one shape that needs its hyphen is a 2001-or-later number typed without its
+serial padded, such as `2008-1234`, which as bare `20081234` reads as the
+1920 number it spells. The chain is then Library of Congress, Open Library,
+Google Books; `ISBNdb` and Barnes & Noble answer only to an ISBN and are
+skipped.
 
 Each source fills only the blanks the previous ones left, so a book Open Library
 describes completely costs a single request. Series information comes from Open

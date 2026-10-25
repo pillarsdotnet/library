@@ -5,6 +5,16 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.22.1] — 2026-10-25
+
+### Changed
+
+- **An LCCN no longer needs its hyphen.** The year is always the first two
+  digits — or four, beginning `20` — so `6812345` reads as `68-12345` and
+  pads itself; a phone's numeric keypad has no hyphen to give. The one shape
+  that still needs one is a 2001-or-later number whose serial is not padded:
+  bare `20081234` reads literally as the 1920 number, `2008-1234` as 2008's.
+
 ## [5.22.0] — 2026-10-25
 
 ### Added

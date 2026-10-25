@@ -45,12 +45,18 @@ function isbn13CheckDigit(first12) {
  * Reduce a Library of Congress Control Number to its normalized form, the
  * way the Library of Congress itself normalizes them: blanks dropped, any
  * revision suffix after a slash dropped ("75-425165//r75"), and the serial
- * after the hyphen zero-padded to six digits, so "68-12345" becomes
- * "68012345". Pre-2001 numbers are eight digits with an optional alphabetic
- * prefix of up to three letters; 2001 onward they are ten.
+ * zero-padded to six digits, so "68-12345" becomes "68012345". Pre-2001
+ * numbers are two year digits and the serial, with an optional alphabetic
+ * prefix of up to three letters; 2001 onward the year has four digits.
  *
- * Returns null for anything else. An LCCN has no check digit, so a ten-digit
- * string can read as either an LCCN or a mistyped ISBN-10 — callers must try
+ * The hyphen is optional: the year is always exactly two digits — or four
+ * beginning "20" — so "6812345" can only mean 68-12345 and is padded the
+ * same way. The one shape this cannot settle is eight digits beginning "20"
+ * ("20081234": 1920's 20-081234, or 2008-1234 unpadded?), which is read
+ * literally as the 1920 number; the hyphen settles it.
+ *
+ * Returns null for anything else. An LCCN has no check digit, so a string
+ * can read as both an LCCN and a mistyped ISBN — callers must try
  * canonicalIsbn() FIRST and treat only its rejects as candidate LCCNs.
  */
 export function canonicalLccn(raw) {
@@ -64,7 +70,14 @@ export function canonicalLccn(raw) {
     if (!/^[0-9]{1,6}$/.test(serial)) return null;
     s = s.slice(0, hyphen) + serial.padStart(6, '0');
   }
-  return /^[a-z]{0,3}([0-9]{8}|[0-9]{10})$/.test(s) ? s : null;
+  const m = /^([a-z]{0,3})([0-9]{3,10})$/.exec(s);
+  if (!m) return null;
+  const [, prefix, digits] = m;
+  // A four-digit year exists only from 2001 on, so only "20…" can start one.
+  const year = digits.startsWith('20') && digits.length >= 9 ? 4 : 2;
+  const serial = digits.slice(year).padStart(6, '0');
+  if (serial.length !== 6) return null;
+  return prefix + digits.slice(0, year) + serial;
 }
 
 /**

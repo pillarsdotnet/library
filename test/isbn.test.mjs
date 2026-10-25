@@ -64,16 +64,37 @@ test('an LCCN is normalized the way the Library of Congress normalizes it', () =
   assert.equal(canonicalLccn('68012345'), '68012345');
 });
 
-test('an LCCN that is not one yields null', () => {
-  for (const bad of ['', null, undefined, '123', '68-', '68-12x45', '9780441013593', 'abcd68012345']) {
-    assert.equal(canonicalLccn(bad), null, `${bad} should not be an LCCN`);
-  }
+test('the hyphen is optional: the year digits settle where the serial starts', () => {
+  // Two year digits, the rest is the serial — a phone's numeric keypad has
+  // no hyphen, so the number types as it reads.
+  assert.equal(canonicalLccn('6812345'), '68012345');
+  assert.equal(canonicalLccn('681234'), '68001234');
+  assert.equal(canonicalLccn('agr681234'), 'agr68001234');
+  // Nine or ten digits beginning "20" are a 2001-or-later four-digit year.
+  assert.equal(canonicalLccn('200112345'), '2001012345');
+  assert.equal(canonicalLccn('2001012345'), '2001012345');
+  // Eight digits beginning "20" read literally — 1920, not an unpadded 2008.
+  // The hyphen is what distinguishes "2008-1234".
+  assert.equal(canonicalLccn('20081234'), '20081234');
+  assert.equal(canonicalLccn('2008-1234'), '2008001234');
 });
 
-test('a ten-digit string can read as both, so the ISBN check must run first', () => {
-  // A VALID ISBN-10 also matches the LCCN shape — it has no way to know.
-  // Callers resolve the ambiguity by asking canonicalIsbn first.
-  const tenDigits = '0441013597';
-  assert.equal(canonicalIsbn(tenDigits), '9780441013593');
-  assert.notEqual(canonicalLccn(tenDigits), null);
+test('an LCCN that is not one yields null', () => {
+  for (const bad of ['', null, undefined, '12', '68-', '68-12x45', '9780441013593', 'abcd68012345']) {
+    assert.equal(canonicalLccn(bad), null, `${bad} should not be an LCCN`);
+  }
+  // Ten digits that do not begin "20" would need an eight-digit serial —
+  // that is a mistyped ISBN-10, not an LCCN.
+  assert.equal(canonicalLccn('0441013598'), null);
+});
+
+test('a string can read as both, so the ISBN check must run first', () => {
+  // A VALID ISBN-10 beginning "20" also matches the LCCN shape — it has no
+  // way to know. Callers resolve the ambiguity by asking canonicalIsbn first.
+  const both = '2036850001';
+  assert.notEqual(canonicalLccn(both), null);
+  // And a short digit string is an LCCN candidate even when it was meant as
+  // a partial ISBN; only the full ISBN's check digit outranks it.
+  assert.equal(canonicalLccn('6812345'), '68012345');
+  assert.equal(canonicalIsbn('0441013597'), '9780441013593');
 });

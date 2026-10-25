@@ -99,8 +99,13 @@ sqlite3 "$DB" ".backup '$SNAP'"
 # Destination is relative: rrsync on the far side confines it to the directory
 # named in authorized_keys, so this cannot address anything else on that host.
 # Past this point a failure is a real one and is allowed to be noisy.
+# The destination must be a DIRECTORY (the snapshot is already named
+# library.db, so the bare destination lands it right): rsync 3.5.0's rrsync
+# confines the server with --confine-root and hands the destination over as
+# an open directory descriptor, and a file name there makes every run fail
+# with "could not make way for new regular file".
 RSH="ssh -i $KEY -p $PEER_PORT -o BatchMode=yes -o ConnectTimeout=10"
-rsync -a --checksum -e "$RSH" "$SNAP" "root@$PEER:library.db"
+rsync -a --checksum -e "$RSH" "$SNAP" "root@$PEER:"
 
 # Cover images live beside the database as files and are useless without it —
 # and it is useless without them, since every row naming a missing file is a

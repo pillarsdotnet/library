@@ -87,8 +87,13 @@ runuser -u "$APP_USER" -- sqlite3 "$DB" ".backup '$SNAP'"
 
 # Destinations are relative: rrsync confines them to the directory named in
 # the peer's authorized_keys. Past this point a failure is real and noisy.
+# Both destinations must be DIRECTORIES (the snapshot is already named
+# library.db, so the bare destination lands it right): rsync 3.5.0's rrsync
+# confines the server with --confine-root and hands the destination over as
+# an open directory descriptor, and a file name there makes every run fail
+# with "could not make way for new regular file".
 RSH="ssh -i $SYNC_KEY -p $PEER_PORT -o BatchMode=yes -o ConnectTimeout=10"
-rsync -a --checksum -e "$RSH" "$SNAP" "root@$PEER:library.db"
+rsync -a --checksum -e "$RSH" "$SNAP" "root@$PEER:"
 # Covers travel in the same run, and --delete keeps the copy a copy rather
 # than a pile of images no row refers to any more.
 if [ -d "$COVERS_DIR" ]; then

@@ -5,6 +5,21 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.21.1] — 2026-10-25
+
+### Fixed
+
+- **The hourly disaster copy works again under `rsync` 3.5.0.** That release's
+  `rrsync` confines the receiving side with `--confine-root` and hands the
+  destination over as an open directory descriptor, which made the database
+  transfer fail on a file-name destination — every run since the upgrade
+  ended in "could not make way for new regular file". The sync now names
+  the directory and lets the snapshot's own filename land it.
+- **A takeover no longer aborts when `Tailscale` is absent.** Advertising the
+  floating address is skipped with a logged warning on a node where
+  `tailscaled` is not running, instead of failing the handoff at its last
+  step.
+
 ## [5.21.0] — 2026-10-25
 
 ### Added

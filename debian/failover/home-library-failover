@@ -254,7 +254,10 @@ set_owner() {   # $1 = owning node name
 # ─── floating IP ───────────────────────────────────────────────────────────────
 vip_up_local() {
   ip addr show dev "$VIP_DEV" | grep -q "inet $VIP/32" || ip addr add "$VIP/32" dev "$VIP_DEV"
-  tailscale set --advertise-routes="$VIP/32"
+  # On a node that does not run Tailscale the VIP is assigned but goes
+  # unadvertised; that must not abort a takeover that is otherwise done.
+  tailscale set --advertise-routes="$VIP/32" 2>/dev/null \
+    || log "warning: tailscale is not running; the VIP is assigned but not advertised"
 }
 vip_down_local() {
   tailscale set --advertise-routes= 2>/dev/null || true

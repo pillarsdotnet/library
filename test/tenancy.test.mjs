@@ -168,7 +168,9 @@ test('two libraries, each with its own things', async () => {
 });
 
 test('lists show only your own library', async () => {
-  assert.deepEqual((await B.get('/api/books')).data, [], 'no books');
+  // seed=0: a seedless unfiltered listing is a 302 to a seeded URL (see
+  // sample-order.test.mjs), and this helper does not follow redirects.
+  assert.deepEqual((await B.get('/api/books?seed=0')).data, [], 'no books');
   assert.deepEqual((await B.get('/api/shelves')).data, [], 'no shelves');
   assert.deepEqual((await B.get('/api/series')).data, [], 'no series');
   const genres = (await B.get('/api/genres')).data;

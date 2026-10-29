@@ -91,6 +91,14 @@ both iOS Safari and Android Chrome.
   `stapled`).
   Filtering to one series switches to reading order, and the borrowed-books
   filter to due date, as above.
+- **A blank Books tab shows a random sampling** — with the search box and every
+  filter cleared there is no question being asked, so instead of always opening
+  on the same first names of the alphabet the tab deals a cross-section of the
+  whole library, a fresh one each visit. **Load more** continues the same deal
+  (no book repeated or skipped), and any search or filter returns the listing
+  to its filed order. The API itself keeps the promise: an unfiltered
+  `GET /api/books` without a usable `seed` redirects to the same URL with a
+  freshly minted one, and `seed=0` explicitly asks for the filed catalogue.
 - **Give back to Open Library** — measurements, binding, page count and cover
   photos from your own copies can fill gaps in Open Library's records, through a
   review queue where you approve each one, sent under your own Open Library keys.

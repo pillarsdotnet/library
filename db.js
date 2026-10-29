@@ -16,6 +16,20 @@ db.pragma('foreign_keys = ON');
 db.function('sort_title', { deterministic: true }, (t) => sortTitle(t));
 db.function('sort_author', { deterministic: true }, (a) => sortAuthor(a));
 
+// Seeded shuffle for the unfiltered listing's random sampling: an integer hash
+// of (id, seed), so one seed names one complete ordering of the whole library —
+// "Load more" pages onward through the same deal instead of re-dealing, which
+// would repeat some books and skip others. ORDER BY RANDOM() cannot do that;
+// it has no seed. The mixer is lowbias32, chosen because adjacent ids must land
+// far apart (rowids are assigned in entry order, and a linear map would merely
+// rotate the alphabet-of-arrival).
+db.function('shuffle_key', { deterministic: true }, (id, seed) => {
+  let h = (Number(id) ^ Number(seed)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x21f0aaad) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 0x735a2d97) >>> 0;
+  return (h ^ (h >>> 15)) >>> 0;
+});
+
 // ─── the edition / copy split ───────────────────────────────────────────────────
 // Book data divides in two, and the dividing line is the ISBN:
 //

@@ -476,6 +476,30 @@ function attachGenres(books) {
 
 router.get('/api/books', (req, res) => {
   const { q, status, room, bookcase, genre_id, series_id, format, shelf_id, library } = req.query;
+
+  // A `seed` asks for a random sampling in place of the librarian's filing —
+  // one seed is one complete shuffle of the library, so limit/offset paging
+  // walks it exactly once (ORDER BY RANDOM() cannot: it has no seed). Zero is
+  // the explicit refusal: `seed=0` says "filed order, the whole catalogue",
+  // which is what the shelf visual and anything else that files needs.
+  const seedNum = Number(req.query.seed);
+  const seedValid = req.query.seed !== undefined && req.query.seed !== '' && Number.isSafeInteger(seedNum);
+  const seed = seedValid ? seedNum : 0;
+
+  // An unfiltered browse with no usable seed gets one MINTED, by redirect: the
+  // server draws a seed and points the client at the same URL carrying it, so
+  // the address the client ends up on names the exact deal it is looking at —
+  // paging continues it, reloading it repeats it. The redirect, not a silent
+  // default, because a seed invented quietly server-side would deal every page
+  // of "Load more" from a different shuffle. With any filter present there is
+  // a real question being asked and the filed order answers it, so a missing
+  // or junk seed is simply ignored there, never bounced.
+  if (!seedValid && !(q || status || room || bookcase || genre_id || series_id || format || shelf_id || library)) {
+    const to = new URL(req.originalUrl, 'resolve://');
+    to.searchParams.set('seed', String(1 + Math.floor(Math.random() * 0x7ffffffe)));
+    return res.redirect(to.pathname + to.search);
+  }
+
   const where = ['b.library_id = @lib'];
   const params = { lib: req.library.id };
 
@@ -552,6 +576,10 @@ router.get('/api/books', (req, res) => {
        (SELECT MAX(sb."order") FROM series_books sb WHERE sb.edition = b.edition_id AND sb.series = @series_id),
        s.room IS NULL, s.room COLLATE NOCASE, s.bookcase COLLATE NOCASE, s.label COLLATE NOCASE,
        sort_title(b.title)`
+    : seed
+    // Interpolated, not bound: the count query shares `params`, and a named
+    // parameter it does not use would fail the bind. Validated integer above.
+    ? `shuffle_key(b.id, ${seed})`
     : `sort_author(b.authors),
        COALESCE((SELECT sort_title(sr.title) FROM series_books sb JOIN series sr ON sr.id = sb.series
                  WHERE sb.edition = b.edition_id ORDER BY 1 LIMIT 1), sort_title(b.title)),

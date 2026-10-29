@@ -5,6 +5,27 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [5.23.0] — 2026-10-29
+
+### Added
+
+- **A blank Books tab shows a random sampling.** With the search box and every
+  filter cleared, the listing comes back in a seeded shuffle instead of filed
+  alphabetically — a cross-section of the library rather than the same first
+  authors every time, re-dealt on each page load. The client draws one seed
+  per visit and sends it as `seed` on `GET /api/books`; one seed names one
+  complete ordering, so **Load more** pages onward through the same shuffle
+  with nothing repeated or skipped, and saving a book does not reshuffle the
+  screen. Any filter or search drops the seed and the filed order returns.
+- **The server guarantees the sampling.** An unfiltered `GET /api/books` whose
+  `seed` is missing or junk is redirected (302) to the same URL carrying a
+  freshly minted seed, so the address always names the deal it shows; the
+  client adopts a seed minted this way. `seed=0` is the one explicit refusal —
+  the filed catalogue, no sampling — used by the bookcase visual, which needs
+  spines in shelving order. A filtered listing ignores seeds entirely and is
+  never redirected: a filter asks a real question, and the filed order
+  answers it.
+
 ## [5.22.1] — 2026-10-25
 
 ### Changed

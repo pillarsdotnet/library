@@ -107,8 +107,9 @@ test('overdue filter returns only books past their due date', async () => {
 
 test('unfiltered listing is still alphabetical by sort title', async () => {
   // The due-date order must apply only to the library view; the default list is
-  // still a catalogue, not a deadline queue.
-  const { body } = await api('/books?limit=0');
+  // still a catalogue, not a deadline queue. seed=0 names the filed order —
+  // seedless and unfiltered would be redirected to a random sampling.
+  const { body } = await api('/books?limit=0&seed=0');
   const idx = (t) => titles(body).indexOf(t);
   assert.ok(idx('Aardvark Care') < idx('Owned Paperback'));
   assert.ok(idx('Owned Paperback') < idx('Zebra Husbandry'));

@@ -144,6 +144,16 @@ const PAGE_SIZE = 20;
 let booksOffset = 0;   // how many books are already on screen
 let booksTotal = 0;
 
+// With every search field blank the tab shows a random sampling instead of the
+// first page of the alphabet. One seed, minted per page load: "Load more"
+// pages through the one shuffle the seed names, and saving a book (which
+// reloads the list) keeps what is on screen instead of re-dealing it. The next
+// visit mints a new seed and so a new sample. Minted here rather than left to
+// the server — a seedless request comes back as a redirect to a seeded URL,
+// which works but costs a round trip. Never zero: to the server, `seed=0` is
+// the explicit "filed order" the bookcase visual asks for.
+let sampleSeed = Math.floor(Math.random() * 0x7fffffff) + 1;
+
 // append=false starts a fresh page (filter change); append=true adds the next page.
 async function loadBooks(appendArg = false) {
   // Coerce: these handlers are sometimes wired straight to events, and an Event
@@ -159,6 +169,8 @@ async function loadBooks(appendArg = false) {
   saveFilters();
   showWishlistUrl($('#filterStatus').value === 'wishlist');
 
+  if (!anyActive) params.set('seed', String(sampleSeed));
+
   if (!append) booksOffset = 0;
   params.set('limit', String(PAGE_SIZE));
   params.set('offset', String(booksOffset));
@@ -166,6 +178,13 @@ async function loadBooks(appendArg = false) {
   // Fetch directly (not via api()) so we can read the X-Total-Count header.
   const res = await fetch('api/books?' + params.toString());
   if (!res.ok) throw new Error(res.statusText);
+  // Landed somewhere else than asked: the server judged our seed unusable,
+  // minted one and redirected. Adopt it, so every later page and reload names
+  // the same shuffle the screen now shows.
+  if (res.redirected) {
+    const minted = Number(new URL(res.url).searchParams.get('seed'));
+    if (Number.isSafeInteger(minted) && minted) sampleSeed = minted;
+  }
   const books = await res.json();
   booksTotal = Number(res.headers.get('X-Total-Count')) || books.length;
 
@@ -725,7 +744,9 @@ function polishSpineText(spine) {
 async function renderBookcaseVisual(el, shelves) {
   const ids = new Set(shelves.map((s) => s.id));
   const { room, bookcase } = shelves[0];
-  const params = new URLSearchParams({ limit: '0' });
+  // seed=0 asks the filed order by name: spines must stand in shelving order,
+  // and a seedless unfiltered listing is redirected to a random sampling.
+  const params = new URLSearchParams({ limit: '0', seed: '0' });
   if (room) params.set('room', room);
   if (bookcase) params.set('bookcase', bookcase);
   let books;

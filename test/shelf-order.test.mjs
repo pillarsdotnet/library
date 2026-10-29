@@ -83,7 +83,9 @@ test('a listing files by author, series, position, title, then binding', async (
     assert.equal(r.status, 201);
   }
 
-  const { body } = await api('GET', '/api/books?limit=0');
+  // seed=0 names the filed order; seedless and unfiltered would be redirected
+  // to a random sampling (see sample-order.test.mjs).
+  const { body } = await api('GET', '/api/books?limit=0&seed=0');
   assert.deepEqual(body.map((b) => `${b.title} (${b.format})`), [
     'Nightfall (ebook)',                // Asimov before Herbert
     'Nightfall (hardback)',             // same book: ebook, hardback,

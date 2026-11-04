@@ -19,7 +19,7 @@
 # captured upstream pages, kept verbatim so tests see what the scraper saw.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-merge-conflict
       - id: check-json
@@ -29,8 +29,8 @@ repos:
       - id: trailing-whitespace
         exclude: ^(\.github/workflows/|test/fixtures/)
 
-  - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v3.1.0
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.9.10
     hooks:
       - id: prettier
         # Markdown and YAML only: the app's own JS and CSS are formatted and
@@ -39,7 +39,7 @@ repos:
         exclude: ^\.github/workflows/
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.49.0
+    rev: v0.50.0
     hooks:
       - id: markdownlint
         # Like vale below: CLAUDE.md and .claude/ are instructions for an
@@ -47,7 +47,7 @@ repos:
         exclude: ^(CLAUDE\.md|\.claude/)
 
   - repo: https://github.com/adrienverge/yamllint
-    rev: v1.35.1
+    rev: v1.38.0
     hooks:
       - id: yamllint
         exclude: ^\.github/workflows/

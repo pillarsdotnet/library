@@ -81,12 +81,19 @@ DDNS_URL="${DDNS_URL:-https://dyn.dns.he.net/nic/update}"
 SERVICE=home-library.service
 SOCKET=home-library.socket
 APP_USER=home-library
-DATA_DIR=/var/lib/home-library
-DB=$DATA_DIR/library.db
-COVERS_DIR=$DATA_DIR/covers
-OWNER_FILE=$DATA_DIR/OWNER
-APP_SOCK=/run/home-library/home-library.sock
-LOCK=/run/home-library-failover.lock
+# Overridable only so the test suite can point them at a sandbox; the
+# defaults are the real paths and nothing in production sets them. Without
+# this the script cannot be exercised without a machine to break, and the two
+# bugs test/failover.test.mjs guards -- a standby's shutdown pushing its
+# stale copy over the live database, and every step of a handoff refusing
+# because it found its own parent holding the lock -- were both found the
+# hard way, in a handoff, rather than by a test.
+DATA_DIR="${DATA_DIR:-/var/lib/home-library}"
+DB="${DB:-$DATA_DIR/library.db}"
+COVERS_DIR="${COVERS_DIR:-$DATA_DIR/covers}"
+OWNER_FILE="${OWNER_FILE:-$DATA_DIR/OWNER}"
+APP_SOCK="${APP_SOCK:-/run/home-library/home-library.sock}"
+LOCK="${LOCK:-/run/home-library-failover.lock}"
 DROPIN_SRC=/usr/share/home-library-failover/dropins
 STANDBY_DIR=$DATA_DIR/standby
 

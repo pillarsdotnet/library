@@ -24,7 +24,10 @@
 set -eu
 
 [ $# -gt 0 ] || { echo "usage: SEED_DB=<library.db> $0 <image[,KEY=VALUE...]>..." >&2; exit 1; }
-[ -n "${SEED_DB:-}" ] && [ -f "$SEED_DB" ] || { echo "SEED_DB must name a library database" >&2; exit 1; }
+if [ -z "${SEED_DB:-}" ] || [ ! -f "$SEED_DB" ]; then
+    echo "SEED_DB must name a library database" >&2
+    exit 1
+fi
 BENCH=$(cd "$(dirname "$0")" && pwd)
 ROUNDS=${ROUNDS:-5}
 SERVER_CPUS=${SERVER_CPUS:-2,4}

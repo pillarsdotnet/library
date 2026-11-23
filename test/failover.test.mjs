@@ -1,4 +1,5 @@
-// deploy/failover.sh, run in a sandbox with every outside command stubbed.
+// debian/failover/home-library-failover, run in a sandbox with every outside
+// command stubbed.
 //
 // Each stub records its arguments and succeeds, so a test can ask what the
 // script tried to do to the other node without there being one. These guard
@@ -19,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SCRIPT = join(ROOT, 'deploy/failover.sh');
+const SCRIPT = join(ROOT, 'debian/failover/home-library-failover');
 
 function sandbox(owner) {
   const dir = mkdtempSync(join(tmpdir(), 'home-library-failover-'));
@@ -39,9 +40,26 @@ case "$last" in
   health) echo 200 ;;
 esac
 `);
-  for (const name of ['tailscale', 'ip', 'systemctl', 'sqlite3', 'curl', 'docker']) stub(name);
+  // runuser: the packaged script drops to the app user to touch the database.
+  for (const name of ['tailscale', 'ip', 'systemctl', 'curl', 'docker']) stub(name);
+  // runuser must be transparent, not inert. The script runs every database
+  // command through `runuser -u "$APP_USER" -- ...`, so a stub that only
+  // records and exits 0 swallows the command it was asked to run -- and an
+  // integrity_check that prints nothing reads as a corrupt database.
+  stub('runuser', 'while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done\n'
+                + '[ "$1" = "--" ] && shift\n'
+                + '[ $# -gt 0 ] && exec "$@"\n');
+  // sqlite3 has to answer, not just record: the packaged script refuses to
+  // hand over a database whose integrity_check does not say "ok", so a stub
+  // that prints nothing reads as a corrupt database.
+  stub('sqlite3', 'echo ok\n');
   writeFileSync(join(dir, 'OWNER'), `${owner}\n`);
   writeFileSync(join(dir, 'library.db'), 'not really a database');
+  // The packaged script checks the failover key exists before it will do
+  // anything, which the copy under deploy/ did not. Nothing reads it here:
+  // ssh is stubbed.
+  writeFileSync(join(dir, 'key'), 'not really a key');
+  chmodSync(join(dir, 'key'), 0o600);
   return { dir, calls };
 }
 
@@ -51,7 +69,10 @@ function run(box, mode) {
       PATH: `${box.dir}:${process.env.PATH}`,
       ME: 'homelab',
       PEER: 'racknerd',
-      KEY: join(box.dir, 'no-such-key'),
+      // Both nodes run identical units, so the packaged script refuses to
+      // act until something breaks the tie.
+      PREFERRED: 'homelab',
+      KEY: join(box.dir, 'key'),
       DATA_DIR: box.dir,
       OWNER_FILE: join(box.dir, 'OWNER'),
       ACTIVE_FLAG: join(box.dir, 'active'),
@@ -92,27 +113,44 @@ test('the owner shutting down does hand over', () => {
 });
 
 test('to-remote gets past its first step instead of tripping its own lock', () => {
-  const box = sandbox('racknerd 25');
+  // homelab owns, so to-remote has real work to do. With racknerd owning, the
+  // packaged script short-circuits with "nothing to hand over" and the test
+  // would pass without ever reaching the step it exists to check.
+  const box = sandbox('homelab 25');
   try {
     const r = run(box, 'to-remote');
+    // The point of the test: every step of a handoff used to find its own
+    // parent holding the lock and refuse.
     assert.doesNotMatch(r.stderr, /another failover is already running/);
-    assert.match(r.stderr, /released the VIP on homelab/);
+    assert.ok(r.acted.some((l) => l.startsWith('ssh ')), `expected calls to the peer, got:\n${r.acted.join('\n')}`);
     assert.equal(r.status, 0, r.stderr);
   } finally {
     rmSync(box.dir, { recursive: true, force: true });
   }
 });
 
-test('a second, separate run is still refused while one holds the lock', () => {
+test('a run that moves the database is refused while one holds the lock', () => {
   const box = sandbox('racknerd 25');
+  const env = (extra) =>
+    `ME=homelab PEER=racknerd PREFERRED=homelab KEY='${box.dir}/key' `
+    + `DATA_DIR='${box.dir}' OWNER_FILE='${box.dir}/OWNER' `
+    + `ACTIVE_FLAG='${box.dir}/active' LOCK='${box.dir}/lock' PATH='${box.dir}':"$PATH" `
+    + `sh '${SCRIPT}' ${extra}`;
   try {
-    // flock(1) holds the lock while the script tries to take it.
-    const r = spawnSync('flock', [join(box.dir, 'lock'), 'sh', '-c',
-      `ME=homelab PEER=racknerd KEY=x DATA_DIR='${box.dir}' OWNER_FILE='${box.dir}/OWNER' `
-      + `ACTIVE_FLAG='${box.dir}/active' LOCK='${box.dir}/lock' PATH='${box.dir}':"$PATH" `
-      + `sh '${SCRIPT}' status`], { encoding: 'utf8', timeout: 30000 });
-    assert.match(r.stderr, /another failover is already running/);
-    assert.notEqual(r.status, 0);
+    // flock(1) holds the lock while the script tries to take it. Only the two
+    // steps that actually move the database take it.
+    const claim = spawnSync('flock', [join(box.dir, 'lock'), 'sh', '-c', env('db-claim')],
+      { encoding: 'utf8', timeout: 30000 });
+    assert.match(claim.stderr, /another failover is already running/);
+    assert.notEqual(claim.status, 0);
+
+    // ...and the ones that do not must NOT take it. This is the second bug
+    // the suite exists for: when every step locked, to-local and to-remote
+    // re-ran the script per step and each step found its own parent holding
+    // the lock and refused. A status that blocks here is that bug returning.
+    const status = spawnSync('flock', [join(box.dir, 'lock'), 'sh', '-c', env('status')],
+      { encoding: 'utf8', timeout: 30000 });
+    assert.doesNotMatch(status.stderr, /another failover is already running/);
   } finally {
     rmSync(box.dir, { recursive: true, force: true });
   }

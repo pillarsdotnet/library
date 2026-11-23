@@ -5,7 +5,18 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [5.23.1] — 2026-11-23
+
+### Changed
+
+- **`home-library-failover` takes environment overrides for its paths.**
+  `DATA_DIR`, `OWNER_FILE`, `LOCK` and `APP_SOCK` now default to the same
+  values they were hard-coded to, and nothing in production sets them. They
+  exist so the script can be pointed at a sandbox: without them it could not
+  be exercised without a machine to break, and the two bugs its test suite
+  guards — a standby's shutdown pushing its stale copy over the live
+  database, and every step of a handoff refusing because it found its own
+  parent holding the lock — were both found the hard way, during a handoff.
 
 ### Removed
 

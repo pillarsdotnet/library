@@ -97,7 +97,8 @@ app works at `/` or under any prefix with no rebuild.
 
 ## Two-node failover (optional)
 
-`deploy/failover.sh` and the two units beside it move the app between two nodes, so
+`home-library-failover`, installed by the package of the same name along with its
+two units, moves the app between two nodes, so
 exactly one node is writable at a time. **Both nodes run identical units**, so either
 one hands the database over when it shuts down — without that, shutting down whichever
 node happens to be active strands the only authoritative copy on a powered-off box. The SQLite database
@@ -176,7 +177,8 @@ hard link is another name for the same `inode`, and SQLite writes in place, so e
 looking exactly like a working backup rotation.
 
 Requirements: `ssh` between the nodes with no password, for a key restricted by
-`command=` to `deploy/failover-peer.sh` (a fixed verb list, so the credential cannot
+`command=` to `/usr/sbin/home-library-failover-peer` (a fixed verb list, so the
+credential cannot
 do more than its job), and if the floating address is a mesh-VPN route, an
 auto-approver for it — otherwise the standby's advertisement is unapproved and the
 address points nowhere for exactly as long as it takes someone to notice.
@@ -184,10 +186,10 @@ address points nowhere for exactly as long as it takes someone to notice.
 ### Hourly copy to the standby
 
 A handoff only moves the database when someone shuts a node down in an orderly
-way. `deploy/db-sync.sh`, run hourly from `/etc/cron.d/home-library-db-sync`,
-covers the other case: a node that dies outright then costs at most an hour.
+way. `home-library-db-sync`, run hourly by `home-library-db-sync.timer`, covers
+the other case: a node that dies outright then costs at most an hour.
 
-Install it on **both** nodes. It exits immediately unless the node holds the
+The package installs it on **both** nodes. It exits immediately unless the node holds the
 activity flag, so it follows the database through a handoff rather than naming a
 fixed master, and it never pulls — two diverged SQLite databases cannot be merged
 afterwards.
@@ -237,7 +239,8 @@ the certificate's name from a phone when you want to scan.
 
 If TLS is terminated ahead of `nginx` and passed onward over `http`, keep
 `absolute_redirect off` on the `/library` redirect (as
-[`deploy/nginx-library.conf`](./deploy/nginx-library.conf) does) so the redirect
+[`debian/nginx/home-library.conf`](./debian/nginx/home-library.conf), installed to
+`/etc/nginx/snippets/`, does) so the redirect
 preserves the client's scheme instead of forcing `https` clients back to `http`.
 
 ## API

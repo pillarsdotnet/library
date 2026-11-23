@@ -5,6 +5,24 @@ it stands now; this file is where the history lives.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Removed
+
+- **The `deploy/` directory.** It shipped nothing — the package installs
+  only from `debian/` — so it was a second, hand-maintained copy of the
+  failover logic that nobody was obliged to keep current, and it had
+  drifted: 430 lines against 562, carrying an apostrophe inside
+  `"${PEER:?…the peer's hostname}"` that parses under `dash` but not under
+  `bash`, so `bash deploy/failover.sh` died with a syntax error eighty
+  lines below its cause. Two hand-maintained copies of a script that hands
+  a database between nodes is its own hazard. Every file had a better
+  counterpart under `debian/`, and `svc-start`, the one verb unique to the
+  old peer script, is dead: nothing ever called it. The systemd deadlock
+  lesson and the whole disaster-copy rationale for `db-sync` survive in the
+  packaged copies. `INSTALLING.md` now names the installed paths and the
+  `home-library-db-sync.timer` instead of the cron.
+
 ## [5.23.0] — 2026-10-29
 
 ### Added
